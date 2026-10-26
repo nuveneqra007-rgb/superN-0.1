@@ -1,6 +1,138 @@
-[gd_scene load_steps=7 format=3 uid="uid://player_main"]
+[gd_scene load_steps=8 format=3 uid="uid://player_main"]
 
 [ext_resource type="Script" path="res://src/Player/Player.cs" id="1_player"]
+[ext_resource type="Texture2D" path="res://assets/sprites/player/idle.png" id="2_sprite"]
+
+[sub_resource type="SpriteFrames" id="SpriteFrames_player"]
+animations = [{
+"frames": [{
+"duration": 1.0,
+"texture": ExtResource("2_sprite")
+}],
+"loop": true,
+"name": &"idle",
+"speed": 5.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": ExtResource("2_sprite")
+}],
+"loop": true,
+"name": &"walk",
+"speed": 8.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": ExtResource("2_sprite")
+}],
+"loop": true,
+"name": &"run",
+"speed": 10.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": ExtResource("2_sprite")
+}],
+"loop": false,
+"name": &"jump",
+"speed": 8.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": ExtResource("2_sprite")
+}],
+"loop": true,
+"name": &"fall",
+"speed": 8.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": ExtResource("2_sprite")
+}],
+"loop": false,
+"name": &"roll",
+"speed": 12.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": ExtResource("2_sprite")
+}],
+"loop": true,
+"name": &"crouch",
+"speed": 5.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": ExtResource("2_sprite")
+}],
+"loop": false,
+"name": &"slide",
+"speed": 10.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": ExtResource("2_sprite")
+}],
+"loop": false,
+"name": &"melee_1",
+"speed": 12.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": ExtResource("2_sprite")
+}],
+"loop": false,
+"name": &"melee_2",
+"speed": 12.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": ExtResource("2_sprite")
+}],
+"loop": false,
+"name": &"melee_3",
+"speed": 12.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": ExtResource("2_sprite")
+}],
+"loop": false,
+"name": &"fire",
+"speed": 10.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": ExtResource("2_sprite")
+}],
+"loop": false,
+"name": &"hitstun",
+"speed": 8.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": ExtResource("2_sprite")
+}],
+"loop": false,
+"name": &"knockdown",
+"speed": 8.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": ExtResource("2_sprite")
+}],
+"loop": false,
+"name": &"getup",
+"speed": 8.0
+}, {
+"frames": [{
+"duration": 1.0,
+"texture": ExtResource("2_sprite")
+}],
+"loop": false,
+"name": &"dead",
+"speed": 5.0
+}]
 
 [sub_resource type="CapsuleShape2D" id="CapsuleShape2D_stand"]
 radius = 14.0
@@ -9,137 +141,6 @@ height = 20.0
 [sub_resource type="CapsuleShape2D" id="CapsuleShape2D_crouch"]
 radius = 14.0
 height = 4.0
-
-[sub_resource type="SpriteFrames" id="SpriteFrames_player"]
-animations = [{
-"frames": [{
-"duration": 1.0,
-"texture": null
-}],
-"loop": true,
-"name": &"idle",
-"speed": 8.0
-}, {
-"frames": [{
-"duration": 1.0,
-"texture": null
-}],
-"loop": true,
-"name": &"walk",
-"speed": 10.0
-}, {
-"frames": [{
-"duration": 1.0,
-"texture": null
-}],
-"loop": true,
-"name": &"run",
-"speed": 12.0
-}, {
-"frames": [{
-"duration": 1.0,
-"texture": null
-}],
-"loop": true,
-"name": &"jump",
-"speed": 8.0
-}, {
-"frames": [{
-"duration": 1.0,
-"texture": null
-}],
-"loop": true,
-"name": &"fall",
-"speed": 8.0
-}, {
-"frames": [{
-"duration": 1.0,
-"texture": null
-}],
-"loop": false,
-"name": &"roll",
-"speed": 12.0
-}, {
-"frames": [{
-"duration": 1.0,
-"texture": null
-}],
-"loop": true,
-"name": &"crouch",
-"speed": 8.0
-}, {
-"frames": [{
-"duration": 1.0,
-"texture": null
-}],
-"loop": false,
-"name": &"slide",
-"speed": 10.0
-}, {
-"frames": [{
-"duration": 1.0,
-"texture": null
-}],
-"loop": false,
-"name": &"melee_1",
-"speed": 12.0
-}, {
-"frames": [{
-"duration": 1.0,
-"texture": null
-}],
-"loop": false,
-"name": &"melee_2",
-"speed": 12.0
-}, {
-"frames": [{
-"duration": 1.0,
-"texture": null
-}],
-"loop": false,
-"name": &"melee_3",
-"speed": 12.0
-}, {
-"frames": [{
-"duration": 1.0,
-"texture": null
-}],
-"loop": false,
-"name": &"fire",
-"speed": 10.0
-}, {
-"frames": [{
-"duration": 1.0,
-"texture": null
-}],
-"loop": false,
-"name": &"hitstun",
-"speed": 8.0
-}, {
-"frames": [{
-"duration": 1.0,
-"texture": null
-}],
-"loop": false,
-"name": &"knockdown",
-"speed": 8.0
-}, {
-"frames": [{
-"duration": 1.0,
-"texture": null
-}],
-"loop": false,
-"name": &"getup",
-"speed": 8.0
-}, {
-"frames": [{
-"duration": 1.0,
-"texture": null
-}],
-"loop": false,
-"name": &"dead",
-"speed": 6.0
-}]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_hb"]
 size = Vector2(24, 8)
@@ -150,7 +151,7 @@ collision_mask = 3
 script = ExtResource("1_player")
 
 [node name="Sprite" type="AnimatedSprite2D" parent="."]
-position = Vector2(0, 0)
+scale = Vector2(0.5, 0.5)
 sprite_frames = SubResource("SpriteFrames_player")
 animation = &"idle"
 autoplay = "idle"
@@ -162,27 +163,30 @@ shape = SubResource("CapsuleShape2D_stand")
 shape = SubResource("CapsuleShape2D_crouch")
 disabled = true
 
-[node name="HealthBar" type="Node" parent="."]
+[node name="HealthBar" type="Control" parent="."]
 
 [node name="Bar" type="ProgressBar" parent="HealthBar"]
-offset_left = -20.0
-offset_top = -52.0
-offset_right = 20.0
-offset_bottom = -44.0
+offset_left = -24.0
+offset_top = -60.0
+offset_right = 24.0
+offset_bottom = -50.0
 min_value = 0.0
 max_value = 100.0
 value = 100.0
+show_percentage = false
 
 [node name="Label" type="Label" parent="HealthBar"]
-offset_left = -20.0
-offset_top = -56.0
-offset_right = 20.0
-offset_bottom = -44.0
+offset_left = -24.0
+offset_top = -74.0
+offset_right = 24.0
+offset_bottom = -62.0
 text = "100"
 horizontal_alignment = 1
-label_settings = null
+theme_override_font_sizes/font_size = 10
 
 [node name="MeleeHitbox" type="Area2D" parent="."]
+collision_layer = 16
+collision_mask = 4
 
 [node name="MeleeShape" type="CollisionShape2D" parent="MeleeHitbox"]
 position = Vector2(28, 0)

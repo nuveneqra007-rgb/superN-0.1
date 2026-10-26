@@ -52,7 +52,7 @@ public partial class BotController : Node
 		bool  melee  = false;
 		bool  fire   = false;
 
-		float targetDist = target != null
+	float targetDist = target != null
 			? MathF.Abs(target.X - bot.X)
 			: float.MaxValue;
 

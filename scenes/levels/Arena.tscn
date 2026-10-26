@@ -1,9 +1,9 @@
-[gd_scene load_steps=12 format=3 uid="uid://arena_main"]
+[gd_scene load_steps=16 format=3 uid="uid://arena_main"]
 
 [ext_resource type="Script" path="res://src/World/BattleScene.cs" id="1_battle"]
 [ext_resource type="Script" path="res://src/Bots/BotController.cs" id="2_bot"]
 [ext_resource type="PackedScene" path="res://scenes/entities/Player.tscn" id="3_player"]
-[ext_resource type="PackedScene" path="res://scenes/ui/HUD.tscn" id="4_hud"]
+[ext_resource type="Script" path="res://src/UI/HUD.cs" id="4_hud"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_floor"]
 size = Vector2(960, 20)
@@ -41,6 +41,8 @@ z_index = -10
 
 [node name="Floor" type="StaticBody2D" parent="World"]
 position = Vector2(480, 510)
+collision_layer = 1
+collision_mask = 6
 
 [node name="Shape" type="CollisionShape2D" parent="World/Floor"]
 shape = SubResource("RectangleShape2D_floor")
@@ -50,10 +52,11 @@ offset_left = -480.0
 offset_top = -10.0
 offset_right = 480.0
 offset_bottom = 10.0
-color = Color(0.25, 0.25, 0.3, 1)
+color = Color(0.3, 0.32, 0.38, 1)
 
 [node name="WallLeft" type="StaticBody2D" parent="World"]
 position = Vector2(10, 270)
+collision_layer = 1
 
 [node name="Shape" type="CollisionShape2D" parent="World/WallLeft"]
 shape = SubResource("RectangleShape2D_wall_l")
@@ -67,6 +70,7 @@ color = Color(0.2, 0.2, 0.25, 1)
 
 [node name="WallRight" type="StaticBody2D" parent="World"]
 position = Vector2(950, 270)
+collision_layer = 1
 
 [node name="Shape" type="CollisionShape2D" parent="World/WallRight"]
 shape = SubResource("RectangleShape2D_wall_r")
@@ -80,6 +84,7 @@ color = Color(0.2, 0.2, 0.25, 1)
 
 [node name="Platform1" type="StaticBody2D" parent="World"]
 position = Vector2(480, 380)
+collision_layer = 1
 
 [node name="Shape" type="CollisionShape2D" parent="World/Platform1"]
 shape = SubResource("RectangleShape2D_plat1")
@@ -93,6 +98,7 @@ color = Color(0.3, 0.45, 0.55, 1)
 
 [node name="Platform2" type="StaticBody2D" parent="World"]
 position = Vector2(200, 300)
+collision_layer = 1
 
 [node name="Shape" type="CollisionShape2D" parent="World/Platform2"]
 shape = SubResource("RectangleShape2D_plat2")
@@ -106,6 +112,7 @@ color = Color(0.3, 0.45, 0.55, 1)
 
 [node name="Platform3" type="StaticBody2D" parent="World"]
 position = Vector2(760, 300)
+collision_layer = 1
 
 [node name="Shape" type="CollisionShape2D" parent="World/Platform3"]
 shape = SubResource("RectangleShape2D_plat3")
@@ -119,6 +126,7 @@ color = Color(0.3, 0.45, 0.55, 1)
 
 [node name="Platform4" type="StaticBody2D" parent="World"]
 position = Vector2(480, 220)
+collision_layer = 1
 
 [node name="Shape" type="CollisionShape2D" parent="World/Platform4"]
 shape = SubResource("RectangleShape2D_plat4")
@@ -132,11 +140,16 @@ color = Color(0.3, 0.45, 0.55, 1)
 
 [node name="Players" type="Node2D" parent="."]
 
-[node name="Human" type="Node" parent="Players"]
+[node name="Human" parent="Players" instance=ExtResource("3_player")]
 position = Vector2(200, 460)
+PlayerId = 1
+IsBot = false
 
-[node name="Bot" type="Node" parent="Players"]
+[node name="Bot" parent="Players" instance=ExtResource("3_player")]
 position = Vector2(760, 460)
+PlayerId = 2
+IsBot = true
+BotFaction = 0
 
 [node name="BotController" type="Node" parent="."]
 script = ExtResource("2_bot")

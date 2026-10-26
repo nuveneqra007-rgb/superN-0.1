@@ -1,0 +1,23 @@
+# Godot 4
+.godot/
+*.uid
+
+# Mono/C#
+.mono/
+data_*/
+mono_crash.*.json
+*.user
+
+# Build
+bin/
+obj/
+
+# OS
+.DS_Store
+Thumbs.db
+*~
+
+# IDE
+.vscode/
+.idea/
+*.swp

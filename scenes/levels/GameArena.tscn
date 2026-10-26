@@ -1,0 +1,263 @@
+[gd_scene load_steps=8 format=3 uid="uid://game_arena"]
+
+[ext_resource type="Script" path="res://src/World/GameArena.cs" id="1_arena"]
+[ext_resource type="Script" path="res://src/Player/GamePlayer.cs" id="2_player"]
+
+[sub_resource type="RectangleShape2D" id="floor_shape"]
+size = Vector2(980, 30)
+
+[sub_resource type="RectangleShape2D" id="wall_l_shape"]
+size = Vector2(20, 620)
+
+[sub_resource type="RectangleShape2D" id="wall_r_shape"]
+size = Vector2(20, 620)
+
+[sub_resource type="CapsuleShape2D" id="player_shape"]
+radius = 14.0
+height = 20.0
+
+[sub_resource type="RectangleShape2D" id="melee_shape"]
+size = Vector2(36, 32)
+
+[node name="GameArena" type="Node2D"]
+script = ExtResource("1_arena")
+
+[node name="Camera" type="Camera2D" parent="."]
+position = Vector2(480, 270)
+zoom = Vector2(1, 1)
+enabled = true
+
+[node name="Background" type="ColorRect" parent="."]
+position = Vector2(0, 0)
+size = Vector2(960, 540)
+color = Color(0.06, 0.06, 0.12, 1)
+z_index = -10
+
+[node name="World" type="Node2D" parent="."]
+
+[node name="Floor" type="StaticBody2D" parent="World"]
+position = Vector2(480, 515)
+collision_layer = 1
+collision_mask = 0
+
+[node name="Col" type="CollisionShape2D" parent="World/Floor"]
+shape = SubResource("floor_shape")
+
+[node name="Vis" type="ColorRect" parent="World/Floor"]
+position = Vector2(-490, -15)
+size = Vector2(980, 30)
+color = Color(0.28, 0.30, 0.36, 1)
+
+[node name="WallL" type="StaticBody2D" parent="World"]
+position = Vector2(10, 270)
+collision_layer = 1
+
+[node name="Col" type="CollisionShape2D" parent="World/WallL"]
+shape = SubResource("wall_l_shape")
+
+[node name="Vis" type="ColorRect" parent="World/WallL"]
+position = Vector2(-10, -310)
+size = Vector2(20, 620)
+color = Color(0.18, 0.18, 0.22, 1)
+
+[node name="WallR" type="StaticBody2D" parent="World"]
+position = Vector2(950, 270)
+collision_layer = 1
+
+[node name="Col" type="CollisionShape2D" parent="World/WallR"]
+shape = SubResource("wall_r_shape")
+
+[node name="Vis" type="ColorRect" parent="World/WallR"]
+position = Vector2(-10, -310)
+size = Vector2(20, 620)
+color = Color(0.18, 0.18, 0.22, 1)
+
+[node name="Plat1" type="StaticBody2D" parent="World"]
+position = Vector2(480, 370)
+collision_layer = 1
+
+[node name="Col" type="CollisionShape2D" parent="World/Plat1"]
+shape = SubResource("floor_shape")
+
+[node name="Vis" type="ColorRect" parent="World/Plat1"]
+position = Vector2(-100, -8)
+size = Vector2(200, 16)
+color = Color(0.25, 0.50, 0.65, 1)
+
+[node name="Plat2" type="StaticBody2D" parent="World"]
+position = Vector2(195, 290)
+collision_layer = 1
+
+[node name="Col" type="CollisionShape2D" parent="World/Plat2"]
+shape = SubResource("floor_shape")
+
+[node name="Vis" type="ColorRect" parent="World/Plat2"]
+position = Vector2(-80, -8)
+size = Vector2(160, 16)
+color = Color(0.25, 0.50, 0.65, 1)
+
+[node name="Plat3" type="StaticBody2D" parent="World"]
+position = Vector2(765, 290)
+collision_layer = 1
+
+[node name="Col" type="CollisionShape2D" parent="World/Plat3"]
+shape = SubResource("floor_shape")
+
+[node name="Vis" type="ColorRect" parent="World/Plat3"]
+position = Vector2(-80, -8)
+size = Vector2(160, 16)
+color = Color(0.25, 0.50, 0.65, 1)
+
+[node name="Plat4" type="StaticBody2D" parent="World"]
+position = Vector2(480, 210)
+collision_layer = 1
+
+[node name="Col" type="CollisionShape2D" parent="World/Plat4"]
+shape = SubResource("floor_shape")
+
+[node name="Vis" type="ColorRect" parent="World/Plat4"]
+position = Vector2(-60, -8)
+size = Vector2(120, 16)
+color = Color(0.25, 0.50, 0.65, 1)
+
+[node name="Players" type="Node2D" parent="."]
+
+[node name="P1" type="CharacterBody2D" parent="Players" groups=["players"]]
+position = Vector2(180, 460)
+collision_layer = 4
+collision_mask = 1
+script = ExtResource("2_player")
+PlayerId = 1
+IsBot = false
+PlayerColor = Color(0.2, 0.6, 1.0, 1)
+
+[node name="Body" type="ColorRect" parent="Players/P1"]
+position = Vector2(-16, -40)
+size = Vector2(32, 40)
+color = Color(0.2, 0.6, 1.0, 1)
+
+[node name="Head" type="ColorRect" parent="Players/P1"]
+position = Vector2(-10, -54)
+size = Vector2(20, 16)
+color = Color(0.5, 0.8, 1.0, 1)
+
+[node name="NameLabel" type="Label" parent="Players/P1"]
+position = Vector2(-16, -72)
+size = Vector2(40, 16)
+text = "P1"
+theme_override_font_sizes/font_size = 12
+theme_override_colors/font_color = Color(0.4, 0.9, 1, 1)
+
+[node name="StateLabel" type="Label" parent="Players/P1"]
+position = Vector2(-24, -86)
+size = Vector2(60, 14)
+text = "idle"
+theme_override_font_sizes/font_size = 10
+theme_override_colors/font_color = Color(0.7, 0.7, 0.7, 1)
+
+[node name="HPBar" type="ProgressBar" parent="Players/P1"]
+position = Vector2(-24, -100)
+size = Vector2(48, 8)
+min_value = 0.0
+max_value = 100.0
+value = 100.0
+show_percentage = false
+
+[node name="Col" type="CollisionShape2D" parent="Players/P1"]
+shape = SubResource("player_shape")
+
+[node name="MeleeBox" type="Area2D" parent="Players/P1"]
+collision_layer = 16
+collision_mask = 4
+monitoring = true
+
+[node name="MeleeCol" type="CollisionShape2D" parent="Players/P1/MeleeBox"]
+position = Vector2(30, -20)
+shape = SubResource("melee_shape")
+
+[node name="Bot" type="CharacterBody2D" parent="Players" groups=["players"]]
+position = Vector2(780, 460)
+collision_layer = 4
+collision_mask = 1
+script = ExtResource("2_player")
+PlayerId = 2
+IsBot = true
+PlayerColor = Color(1.0, 0.25, 0.25, 1)
+
+[node name="Body" type="ColorRect" parent="Players/Bot"]
+position = Vector2(-16, -40)
+size = Vector2(32, 40)
+color = Color(1.0, 0.25, 0.25, 1)
+
+[node name="Head" type="ColorRect" parent="Players/Bot"]
+position = Vector2(-10, -54)
+size = Vector2(20, 16)
+color = Color(1.0, 0.6, 0.6, 1)
+
+[node name="NameLabel" type="Label" parent="Players/Bot"]
+position = Vector2(-16, -72)
+size = Vector2(40, 16)
+text = "BOT"
+theme_override_font_sizes/font_size = 12
+theme_override_colors/font_color = Color(1, 0.5, 0.5, 1)
+
+[node name="StateLabel" type="Label" parent="Players/Bot"]
+position = Vector2(-24, -86)
+size = Vector2(60, 14)
+text = "idle"
+theme_override_font_sizes/font_size = 10
+theme_override_colors/font_color = Color(0.7, 0.7, 0.7, 1)
+
+[node name="HPBar" type="ProgressBar" parent="Players/Bot"]
+position = Vector2(-24, -100)
+size = Vector2(48, 8)
+min_value = 0.0
+max_value = 100.0
+value = 100.0
+show_percentage = false
+
+[node name="Col" type="CollisionShape2D" parent="Players/Bot"]
+shape = SubResource("player_shape")
+
+[node name="MeleeBox" type="Area2D" parent="Players/Bot"]
+collision_layer = 16
+collision_mask = 4
+monitoring = true
+
+[node name="MeleeCol" type="CollisionShape2D" parent="Players/Bot/MeleeBox"]
+position = Vector2(30, -20)
+shape = SubResource("melee_shape")
+
+[node name="HUD" type="CanvasLayer" parent="."]
+
+[node name="RoundLabel" type="Label" parent="HUD"]
+position = Vector2(360, 8)
+size = Vector2(240, 32)
+text = "Round 1 / 5"
+horizontal_alignment = 1
+theme_override_font_sizes/font_size = 20
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+
+[node name="ScoreLabel" type="Label" parent="HUD"]
+position = Vector2(330, 38)
+size = Vector2(300, 28)
+text = "P1: 0   BOT: 0"
+horizontal_alignment = 1
+theme_override_font_sizes/font_size = 18
+theme_override_colors/font_color = Color(0.8, 0.9, 1, 1)
+
+[node name="MsgLabel" type="Label" parent="HUD"]
+position = Vector2(200, 200)
+size = Vector2(560, 60)
+text = ""
+horizontal_alignment = 1
+vertical_alignment = 1
+theme_override_font_sizes/font_size = 40
+theme_override_colors/font_color = Color(1, 0.9, 0.2, 1)
+
+[node name="ControlsLabel" type="Label" parent="HUD"]
+position = Vector2(10, 510)
+size = Vector2(600, 20)
+text = "WASD/Flechas: mover   N: golpear   R: reiniciar   ESC: menú"
+theme_override_font_sizes/font_size = 12
+theme_override_colors/font_color = Color(0.5, 0.5, 0.5, 1)

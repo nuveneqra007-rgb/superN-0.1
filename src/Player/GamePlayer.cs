@@ -195,19 +195,29 @@ public partial class GamePlayer : CharacterBody2D
         }
     }
 
+    private AnimatedSprite2D? _sprite;
+
     private void UpdateVisuals()
     {
-        // Color según estado
-        _body.Color = _currentState switch
-        {
-            "attack"  => PlayerColor.Lightened(0.5f),
-            "hitstun" => new Color(1f, 0.3f, 0.1f),
-            "dead"    => new Color(0.3f, 0.05f, 0.05f),
-            _         => PlayerColor,
-        };
+        _sprite ??= GetNodeOrNull<AnimatedSprite2D>("Sprite");
+        var hpBar = GetNodeOrNull<ProgressBar>("HPBar");
+        if (hpBar != null) hpBar.Value = Health;
+        if (_sprite == null) return;
 
-        _stateLabel.Text = _currentState;
-        _hpBar.Value     = Health;
+        _sprite.FlipH = !_facingRight;
+
+        string anim = _currentState switch
+        {
+            "run"       => "run",
+            "walk"      => "walk",
+            "jump"      => "jump",
+            "fall"      => "fall",
+            "attack"    => "attack",
+            "hitstun"   => "hitstun",
+            "dead"      => "dead",
+            _           => "idle",
+        };
+        if (_sprite.Animation != anim) _sprite.Play(anim);
     }
 
     public void SetTarget(GamePlayer target) => _target = target;

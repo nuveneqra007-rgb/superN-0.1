@@ -1,0 +1,29 @@
+[gd_scene load_steps=3 format=3 uid="uid://worldweapon_main"]
+
+[ext_resource type="Script" path="res://src/World/Entities.cs" id="1_wpn"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_wpn"]
+size = Vector2(20, 10)
+
+[node name="WorldWeapon" type="Area2D" groups=["world_weapons"]]
+collision_layer = 32
+collision_mask = 4
+script = ExtResource("1_wpn")
+
+[node name="Shape" type="CollisionShape2D" parent="."]
+shape = SubResource("RectangleShape2D_wpn")
+
+[node name="Visual" type="ColorRect" parent="."]
+offset_left = -10.0
+offset_top = -5.0
+offset_right = 10.0
+offset_bottom = 5.0
+color = Color(0.9, 0.7, 0.1, 1)
+
+[node name="Label" type="Label" parent="."]
+offset_left = -20.0
+offset_top = -20.0
+offset_right = 20.0
+offset_bottom = -8.0
+text = "WPN"
+horizontal_alignment = 1

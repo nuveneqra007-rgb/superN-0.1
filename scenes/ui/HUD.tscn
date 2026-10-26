@@ -1,0 +1,69 @@
+[gd_scene load_steps=2 format=3 uid="uid://hud_main"]
+
+[ext_resource type="Script" path="res://src/UI/HUD.cs" id="1_hud"]
+
+[node name="HUD" type="CanvasLayer"]
+script = ExtResource("1_hud")
+
+[node name="RoundLabel" type="Label" parent="."]
+offset_left = 360.0
+offset_top = 8.0
+offset_right = 600.0
+offset_bottom = 36.0
+text = "Round 1/3"
+horizontal_alignment = 1
+theme_override_font_sizes/font_size = 20
+
+[node name="ScoreLabel" type="Label" parent="."]
+offset_left = 420.0
+offset_top = 36.0
+offset_right = 540.0
+offset_bottom = 60.0
+text = "0 - 0"
+horizontal_alignment = 1
+theme_override_font_sizes/font_size = 24
+
+[node name="AmmoLabel" type="Label" parent="."]
+offset_left = 16.0
+offset_top = 490.0
+offset_right = 300.0
+offset_bottom = 520.0
+text = "Fists"
+theme_override_font_sizes/font_size = 16
+theme_override_colors/font_color = Color(1, 0.9, 0.3, 1)
+
+[node name="StaminaBar" type="ProgressBar" parent="."]
+offset_left = 16.0
+offset_top = 466.0
+offset_right = 200.0
+offset_bottom = 484.0
+max_value = 100.0
+value = 100.0
+
+[node name="StaminaLabel" type="Label" parent="."]
+offset_left = 16.0
+offset_top = 452.0
+offset_right = 100.0
+offset_bottom = 468.0
+text = "STAMINA"
+theme_override_font_sizes/font_size = 11
+theme_override_colors/font_color = Color(0.7, 0.7, 0.7, 1)
+
+[node name="P1Label" type="Label" parent="."]
+offset_left = 16.0
+offset_top = 8.0
+offset_right = 160.0
+offset_bottom = 28.0
+text = "PLAYER 1"
+theme_override_font_sizes/font_size = 13
+theme_override_colors/font_color = Color(0.4, 0.8, 1, 1)
+
+[node name="P2Label" type="Label" parent="."]
+offset_left = 800.0
+offset_top = 8.0
+offset_right = 944.0
+offset_bottom = 28.0
+text = "BOT"
+horizontal_alignment = 2
+theme_override_font_sizes/font_size = 13
+theme_override_colors/font_color = Color(1, 0.4, 0.4, 1)

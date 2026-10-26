@@ -1,0 +1,60 @@
+[gd_scene load_steps=1 format=3 uid="uid://test_minimal"]
+
+[node name="TestScene" type="Node2D"]
+
+[node name="Camera" type="Camera2D" parent="."]
+position = Vector2(480, 270)
+zoom = Vector2(1, 1)
+enabled = true
+
+[node name="Background" type="ColorRect" parent="."]
+position = Vector2(0, 0)
+size = Vector2(960, 540)
+color = Color(0.08, 0.08, 0.15, 1)
+
+[node name="Floor" type="ColorRect" parent="."]
+position = Vector2(0, 500)
+size = Vector2(960, 40)
+color = Color(0.3, 0.32, 0.38, 1)
+
+[node name="Platform1" type="ColorRect" parent="."]
+position = Vector2(380, 360)
+size = Vector2(200, 16)
+color = Color(0.3, 0.6, 0.8, 1)
+
+[node name="Platform2" type="ColorRect" parent="."]
+position = Vector2(120, 280)
+size = Vector2(160, 16)
+color = Color(0.3, 0.6, 0.8, 1)
+
+[node name="Platform3" type="ColorRect" parent="."]
+position = Vector2(680, 280)
+size = Vector2(160, 16)
+color = Color(0.3, 0.6, 0.8, 1)
+
+[node name="Player1" type="ColorRect" parent="."]
+position = Vector2(180, 450)
+size = Vector2(32, 48)
+color = Color(0.2, 0.6, 1.0, 1)
+
+[node name="Label1" type="Label" parent="Player1"]
+position = Vector2(-10, -20)
+text = "P1"
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+
+[node name="Player2" type="ColorRect" parent="."]
+position = Vector2(748, 450)
+size = Vector2(32, 48)
+color = Color(1.0, 0.3, 0.3, 1)
+
+[node name="Label2" type="Label" parent="Player2"]
+position = Vector2(-10, -20)
+text = "BOT"
+theme_override_colors/font_color = Color(1, 1, 1, 1)
+
+[node name="Title" type="Label" parent="."]
+position = Vector2(350, 20)
+size = Vector2(260, 40)
+text = "superN — TEST"
+theme_override_font_sizes/font_size = 24
+theme_override_colors/font_color = Color(0.4, 0.8, 1, 1)

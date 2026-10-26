@@ -4,6 +4,8 @@
 // Basado en PlayerState.as y Weapons.as
 // =============================================================
 
+using System;
+
 namespace SuperN;
 
 public record HitResult(

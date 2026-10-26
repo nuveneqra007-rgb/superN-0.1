@@ -4,6 +4,7 @@
 // =============================================================
 
 using Godot;
+using System;
 
 namespace SuperN;
 
@@ -160,7 +161,7 @@ public partial class BattleScene : Node2D
         var spawnPoints = GetTree().GetNodesInGroup("weapon_spawn");
         Vector2 pos = spawnPoints.Count > 0
             ? ((Node2D)spawnPoints[GD.RandRange(0, spawnPoints.Count - 1)]).GlobalPosition
-            : new Vector2(GD.RandfRange(100, 860), 200f);
+            : new Vector2(100f + GD.Randf() * 760f, 200f);
 
         wpnNode.Init(SpawnableWeapons[idx], pos);
     }

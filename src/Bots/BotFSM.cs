@@ -3,6 +3,8 @@
 // Basado en BotExtended BotAI types + BotInfos.cs
 // =============================================================
 
+using System;
+
 namespace SuperN;
 
 public enum BotAIState

@@ -1,6 +1,6 @@
 // =============================================================
-// GamePlayer.cs — Jugador completo y funcional para Godot 4
-// Auto-contenido: física, input, animación, salud, combate
+// GamePlayer.cs — Jugador/Bot con sprite real, sin deformación
+// Usa Sprite2D.FlipH para girar — NUNCA modifica Scale
 // =============================================================
 
 using Godot;
@@ -11,216 +11,211 @@ namespace SuperN;
 public partial class GamePlayer : CharacterBody2D
 {
     // ─── Exports ──────────────────────────────────────────────
-    [Export] public int   PlayerId    { get; set; } = 1;
-    [Export] public bool  IsBot       { get; set; } = false;
-    [Export] public Color PlayerColor { get; set; } = new Color(0.2f, 0.6f, 1f);
+    [Export] public int  PlayerId { get; set; } = 1;
+    [Export] public bool IsBot    { get; set; } = false;
 
     // ─── Física ───────────────────────────────────────────────
-    private const float Gravity     = 980f;
-    private const float RunSpeed    = 220f;
-    private const float JumpVelocity = -520f;
-    private const float Friction    = 0.78f;
+    private const float Gravity      = 980f;
+    private const float RunSpeed     = 230f;
+    private const float JumpVelocity = -530f;
+    private const float Friction     = 0.80f;
 
     // ─── Combate ──────────────────────────────────────────────
     public float Health    { get; private set; } = 100f;
-    public float MaxHealth { get; private set; } = 100f;
+    public const float MaxHealth = 100f;
     public bool  IsAlive   => Health > 0f;
 
-    private int  _attackCooldown  = 0;
-    private bool _facingRight     = true;
+    private int   _attackCooldown = 0;
+    private int   _hitstunTimer   = 0;
+    private bool  _facingRight    = true;
+    private string _state         = "idle";
 
-    // ─── Nodos hijos ──────────────────────────────────────────
-    private ColorRect    _body      = null!;
-    private ColorRect    _head      = null!;
-    private Label        _nameLabel = null!;
-    private ProgressBar  _hpBar     = null!;
-    private Label        _stateLabel = null!;
-    private Area2D       _meleeBox  = null!;
+    // ─── Nodos ────────────────────────────────────────────────
+    private Sprite2D    _sprite  = null!;
+    private ProgressBar _hpBar   = null!;
+    private Area2D      _melee   = null!;
 
-    // ─── Bot IA simple ────────────────────────────────────────
+    // ─── Bot IA ───────────────────────────────────────────────
     private GamePlayer? _target;
-    private float _botActionTimer = 0f;
-    private float _botJumpTimer   = 0f;
-    private string _currentState  = "idle";
+    private float _botJumpTimer = 0f;
 
+    // ─── Señales ──────────────────────────────────────────────
+    [Signal] public delegate void PlayerDiedEventHandler(int playerId);
+
+    // ══════════════════════════════════════════════════════════
     public override void _Ready()
     {
-        _body       = GetNode<ColorRect>("Body");
-        _head       = GetNode<ColorRect>("Head");
-        _nameLabel  = GetNode<Label>("NameLabel");
-        _hpBar      = GetNode<ProgressBar>("HPBar");
-        _stateLabel = GetNode<Label>("StateLabel");
-        _meleeBox   = GetNode<Area2D>("MeleeBox");
+        _sprite = GetNode<Sprite2D>("Sprite");
+        _hpBar  = GetNode<ProgressBar>("HPBar");
+        _melee  = GetNode<Area2D>("MeleeBox");
 
-        _body.Color = PlayerColor;
-        _head.Color = PlayerColor.Lightened(0.3f);
-        _nameLabel.Text = IsBot ? "BOT" : $"P{PlayerId}";
-
-        _hpBar.MaxValue = MaxHealth;
-        _hpBar.Value    = Health;
+        // Sprite arranca mirando a la derecha
+        _sprite.FlipH = false;
 
         AddToGroup("players");
     }
 
+    // ══════════════════════════════════════════════════════════
     public override void _PhysicsProcess(double delta)
     {
         if (!IsAlive) return;
 
-        float dt = (float)delta;
-        var vel = Velocity;
+        float dt  = (float)delta;
+        var   vel = Velocity;
 
-        // ─── Gravedad ─────────────────────────────────────────
+        // ── Gravedad ──────────────────────────────────────────
         if (!IsOnFloor())
             vel.Y += Gravity * dt;
-        else if (vel.Y > 0)
-            vel.Y = 0;
+        else if (vel.Y > 0f)
+            vel.Y = 0f;
 
-        // ─── Input ────────────────────────────────────────────
+        // ── Hitstun: no puede moverse ──────────────────────────
+        if (_hitstunTimer > 0)
+        {
+            _hitstunTimer--;
+            vel.X *= 0.85f;
+            Velocity = vel;
+            MoveAndSlide();
+            UpdateSprite();
+            return;
+        }
+
+        // ── Input ─────────────────────────────────────────────
         float moveX = 0f;
         bool  jump  = false;
         bool  melee = false;
 
         if (!IsBot)
-        {
-            moveX = Input.GetAxis("move_left", "move_right");
-            jump  = Input.IsActionJustPressed("jump");
-            melee = Input.IsActionJustPressed("attack_melee");
-        }
+            GetPlayerInput(ref moveX, ref jump, ref melee);
         else
-        {
             GetBotInput(dt, ref moveX, ref jump, ref melee);
-        }
 
-        // ─── Movimiento horizontal ────────────────────────────
-        if (MathF.Abs(moveX) > 0.1f)
+        // ── Movimiento horizontal ──────────────────────────────
+        if (MathF.Abs(moveX) > 0.05f)
         {
-            vel.X = moveX * RunSpeed;
-            _facingRight = moveX > 0;
-            _currentState = "run";
+            vel.X        = moveX * RunSpeed;
+            _facingRight = moveX > 0f;
+            _state       = IsOnFloor() ? "run" : _state;
         }
         else
         {
             vel.X *= Friction;
-            if (MathF.Abs(vel.X) < 5f) { vel.X = 0; _currentState = "idle"; }
+            if (MathF.Abs(vel.X) < 4f) { vel.X = 0f; }
+            if (IsOnFloor()) _state = "idle";
         }
 
-        // ─── Salto ────────────────────────────────────────────
+        // ── Salto ─────────────────────────────────────────────
         if (jump && IsOnFloor())
         {
-            vel.Y = JumpVelocity;
-            _currentState = "jump";
+            vel.Y  = JumpVelocity;
+            _state = "jump";
         }
 
+        // ── Estado en el aire ─────────────────────────────────
         if (!IsOnFloor())
-            _currentState = vel.Y < 0 ? "jump" : "fall";
+            _state = vel.Y < 0f ? "jump" : "fall";
 
-        // ─── Melee ────────────────────────────────────────────
+        // ── Melee ─────────────────────────────────────────────
         if (_attackCooldown > 0) _attackCooldown--;
 
         if (melee && _attackCooldown == 0 && IsOnFloor())
         {
-            _attackCooldown = 30; // 0.5s cooldown
-            _currentState = "attack";
-            DoMeleeAttack();
+            _attackCooldown = 28;   // ~0.47 s a 60 fps
+            _state          = "attack";
+            DoMelee();
         }
-
-        // ─── Flip del sprite ──────────────────────────────────
-        Scale = new Vector2(_facingRight ? 1 : -1, 1);
 
         Velocity = vel;
         MoveAndSlide();
-
-        UpdateVisuals();
+        UpdateSprite();
     }
 
+    // ── Input jugador humano ───────────────────────────────────
+    private static void GetPlayerInput(ref float moveX, ref bool jump, ref bool melee)
+    {
+        moveX = Input.GetAxis("move_left", "move_right");
+        jump  = Input.IsActionJustPressed("jump");
+        melee = Input.IsActionJustPressed("attack_melee");
+    }
+
+    // ── IA del bot ────────────────────────────────────────────
     private void GetBotInput(float dt, ref float moveX, ref bool jump, ref bool melee)
     {
         if (_target == null || !_target.IsAlive) return;
 
-        float dist = _target.GlobalPosition.X - GlobalPosition.X;
-        float absDist = MathF.Abs(dist);
+        float dx    = _target.GlobalPosition.X - GlobalPosition.X;
+        float absDx = MathF.Abs(dx);
 
-        // Moverse hacia el objetivo
-        moveX = dist > 0 ? 1f : -1f;
-
-        // Atacar si está cerca
-        if (absDist < 60f)
+        if (absDx > 55f)
+            moveX = dx > 0f ? 1f : -1f;   // perseguir
+        else
         {
-            moveX = 0;
-            melee = true;
+            moveX = 0f;
+            melee = true;                   // atacar si está cerca
         }
 
-        // Saltar ocasionalmente
+        // Salto aleatorio
         _botJumpTimer -= dt;
-        if (_botJumpTimer <= 0 && IsOnFloor())
+        if (_botJumpTimer <= 0f && IsOnFloor())
         {
-            if (GD.Randf() < 0.3f) jump = true;
-            _botJumpTimer = 0.8f + GD.Randf() * 1.5f;
+            if (GD.Randf() < 0.25f) jump = true;
+            _botJumpTimer = 0.9f + GD.Randf() * 1.4f;
         }
     }
 
-    private void DoMeleeAttack()
+    // ── Golpe melee ───────────────────────────────────────────
+    private void DoMelee()
     {
-        // Detectar jugadores en el área de melee
-        var bodies = _meleeBox.GetOverlappingBodies();
-        foreach (var body in bodies)
+        foreach (var body in _melee.GetOverlappingBodies())
         {
-            if (body is GamePlayer other && other != this)
+            if (body is GamePlayer other && other != this && other.IsAlive)
             {
-                other.TakeDamage(15f, (_facingRight ? 1 : -1) * 180f, -300f);
+                float kbX = (_facingRight ? 1f : -1f) * 200f;
+                other.TakeDamage(14f, kbX, -280f);
             }
         }
     }
 
+    // ── Recibir daño ──────────────────────────────────────────
     public void TakeDamage(float amount, float knockX, float knockY)
     {
         if (!IsAlive) return;
-        Health = MathF.Max(0, Health - amount);
+
+        Health = MathF.Max(0f, Health - amount);
         _hpBar.Value = Health;
 
-        // Knockback
         var vel = Velocity;
         vel.X = knockX;
         vel.Y = knockY;
         Velocity = vel;
 
-        _currentState = "hitstun";
+        _hitstunTimer = 18;
+        _state        = "hitstun";
 
-        if (Health <= 0)
+        if (Health <= 0f)
         {
-            _currentState = "dead";
-            _body.Color = new Color(0.4f, 0.1f, 0.1f);
+            _state = "dead";
             SetPhysicsProcess(false);
             EmitSignal(SignalName.PlayerDied, PlayerId);
         }
     }
 
-    private AnimatedSprite2D? _sprite;
-
-    private void UpdateVisuals()
+    // ── Actualizar sprite: solo FlipH, nunca Scale ────────────
+    private void UpdateSprite()
     {
-        _sprite ??= GetNodeOrNull<AnimatedSprite2D>("Sprite");
-        var hpBar = GetNodeOrNull<ProgressBar>("HPBar");
-        if (hpBar != null) hpBar.Value = Health;
-        if (_sprite == null) return;
-
+        // Girar mirando en la dirección correcta SIN deformar
         _sprite.FlipH = !_facingRight;
 
-        string anim = _currentState switch
+        // Modulate (color tinte) para feedback visual
+        _sprite.Modulate = _state switch
         {
-            "run"       => "run",
-            "walk"      => "walk",
-            "jump"      => "jump",
-            "fall"      => "fall",
-            "attack"    => "attack",
-            "hitstun"   => "hitstun",
-            "dead"      => "dead",
-            _           => "idle",
+            "hitstun" => new Color(1f, 0.35f, 0.1f, 1f),   // naranja al recibir golpe
+            "attack"  => new Color(1f, 1f,    0.4f, 1f),   // amarillo al atacar
+            "dead"    => new Color(0.5f, 0.5f, 0.5f, 0.7f),// gris al morir
+            _         => Color.FromHsv(0f, 0f, 1f, 1f),    // blanco normal
         };
-        if (_sprite.Animation != anim) _sprite.Play(anim);
     }
 
+    // ── API pública ───────────────────────────────────────────
     public void SetTarget(GamePlayer target) => _target = target;
-
-    [Signal] public delegate void PlayerDiedEventHandler(int playerId);
 }

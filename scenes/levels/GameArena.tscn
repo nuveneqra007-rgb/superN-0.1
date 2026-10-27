@@ -1,197 +1,29 @@
-[gd_scene load_steps=14 format=3 uid="uid://game_arena_v2"]
+[gd_scene load_steps=14 format=3 uid="uid://game_arena_v3"]
 
-[ext_resource type="Script"   path="res://src/World/GameArena.cs"              id="1_arena"]
-[ext_resource type="Script"   path="res://src/Player/GamePlayer.cs"            id="2_player"]
-[ext_resource type="Texture2D" path="res://assets/backgrounds/warehouse.jpg"   id="3_bg"]
-[ext_resource type="Texture2D" path="res://assets/sprites/player/spritesheet.jpg" id="4_p1sheet"]
-[ext_resource type="Texture2D" path="res://assets/sprites/bot/spritesheet.jpg"    id="5_botsheet"]
-
-[sub_resource type="AtlasTexture" id="AtlasTex_p1_idle"]
-atlas = ExtResource("4_p1sheet")
-region = Rect2(0, 0, 256, 256)
-
-[sub_resource type="AtlasTexture" id="AtlasTex_p1_walk1"]
-atlas = ExtResource("4_p1sheet")
-region = Rect2(256, 0, 256, 256)
-
-[sub_resource type="AtlasTexture" id="AtlasTex_p1_walk2"]
-atlas = ExtResource("4_p1sheet")
-region = Rect2(512, 0, 256, 256)
-
-[sub_resource type="AtlasTexture" id="AtlasTex_p1_run"]
-atlas = ExtResource("4_p1sheet")
-region = Rect2(768, 0, 256, 256)
-
-[sub_resource type="AtlasTexture" id="AtlasTex_p1_jump"]
-atlas = ExtResource("4_p1sheet")
-region = Rect2(0, 256, 256, 256)
-
-[sub_resource type="AtlasTexture" id="AtlasTex_p1_fall"]
-atlas = ExtResource("4_p1sheet")
-region = Rect2(256, 256, 256, 256)
-
-[sub_resource type="AtlasTexture" id="AtlasTex_p1_crouch"]
-atlas = ExtResource("4_p1sheet")
-region = Rect2(512, 256, 256, 256)
-
-[sub_resource type="AtlasTexture" id="AtlasTex_p1_roll"]
-atlas = ExtResource("4_p1sheet")
-region = Rect2(768, 256, 256, 256)
-
-[sub_resource type="AtlasTexture" id="AtlasTex_p1_melee1"]
-atlas = ExtResource("4_p1sheet")
-region = Rect2(0, 512, 256, 256)
-
-[sub_resource type="AtlasTexture" id="AtlasTex_p1_melee2"]
-atlas = ExtResource("4_p1sheet")
-region = Rect2(256, 512, 256, 256)
-
-[sub_resource type="AtlasTexture" id="AtlasTex_p1_fire"]
-atlas = ExtResource("4_p1sheet")
-region = Rect2(512, 512, 256, 256)
-
-[sub_resource type="AtlasTexture" id="AtlasTex_p1_hitstun"]
-atlas = ExtResource("4_p1sheet")
-region = Rect2(768, 512, 256, 256)
-
-[sub_resource type="AtlasTexture" id="AtlasTex_p1_knockdown"]
-atlas = ExtResource("4_p1sheet")
-region = Rect2(0, 768, 256, 256)
-
-[sub_resource type="AtlasTexture" id="AtlasTex_p1_getup"]
-atlas = ExtResource("4_p1sheet")
-region = Rect2(256, 768, 256, 256)
-
-[sub_resource type="AtlasTexture" id="AtlasTex_p1_dead"]
-atlas = ExtResource("4_p1sheet")
-region = Rect2(512, 768, 256, 256)
-
-[sub_resource type="SpriteFrames" id="SF_P1"]
-animations = [{
-"frames": [{"duration":1.0,"texture":SubResource("AtlasTex_p1_idle")},{"duration":1.0,"texture":SubResource("AtlasTex_p1_walk1")}],
-"loop": true, "name": &"idle", "speed": 3.0
-},{
-"frames": [{"duration":1.0,"texture":SubResource("AtlasTex_p1_walk1")},{"duration":1.0,"texture":SubResource("AtlasTex_p1_walk2")}],
-"loop": true, "name": &"walk", "speed": 8.0
-},{
-"frames": [{"duration":1.0,"texture":SubResource("AtlasTex_p1_walk2")},{"duration":1.0,"texture":SubResource("AtlasTex_p1_run")}],
-"loop": true, "name": &"run", "speed": 12.0
-},{
-"frames": [{"duration":1.0,"texture":SubResource("AtlasTex_p1_jump")}],
-"loop": false, "name": &"jump", "speed": 8.0
-},{
-"frames": [{"duration":1.0,"texture":SubResource("AtlasTex_p1_fall")}],
-"loop": true, "name": &"fall", "speed": 8.0
-},{
-"frames": [{"duration":1.0,"texture":SubResource("AtlasTex_p1_crouch")}],
-"loop": true, "name": &"crouch", "speed": 5.0
-},{
-"frames": [{"duration":1.0,"texture":SubResource("AtlasTex_p1_roll")}],
-"loop": false, "name": &"roll", "speed": 12.0
-},{
-"frames": [{"duration":1.0,"texture":SubResource("AtlasTex_p1_melee1")},{"duration":1.0,"texture":SubResource("AtlasTex_p1_melee2")}],
-"loop": false, "name": &"attack", "speed": 10.0
-},{
-"frames": [{"duration":1.0,"texture":SubResource("AtlasTex_p1_fire")}],
-"loop": false, "name": &"fire", "speed": 10.0
-},{
-"frames": [{"duration":1.0,"texture":SubResource("AtlasTex_p1_hitstun")}],
-"loop": false, "name": &"hitstun", "speed": 8.0
-},{
-"frames": [{"duration":1.0,"texture":SubResource("AtlasTex_p1_knockdown")}],
-"loop": false, "name": &"knockdown", "speed": 6.0
-},{
-"frames": [{"duration":1.0,"texture":SubResource("AtlasTex_p1_getup")}],
-"loop": false, "name": &"getup", "speed": 8.0
-},{
-"frames": [{"duration":1.0,"texture":SubResource("AtlasTex_p1_dead")}],
-"loop": false, "name": &"dead", "speed": 4.0
-}]
-
-[sub_resource type="AtlasTexture" id="AtlasTex_bot_idle"]
-atlas = ExtResource("5_botsheet")
-region = Rect2(0, 0, 256, 256)
-
-[sub_resource type="AtlasTexture" id="AtlasTex_bot_walk1"]
-atlas = ExtResource("5_botsheet")
-region = Rect2(256, 0, 256, 256)
-
-[sub_resource type="AtlasTexture" id="AtlasTex_bot_run"]
-atlas = ExtResource("5_botsheet")
-region = Rect2(768, 0, 256, 256)
-
-[sub_resource type="AtlasTexture" id="AtlasTex_bot_jump"]
-atlas = ExtResource("5_botsheet")
-region = Rect2(0, 256, 256, 256)
-
-[sub_resource type="AtlasTexture" id="AtlasTex_bot_fall"]
-atlas = ExtResource("5_botsheet")
-region = Rect2(256, 256, 256, 256)
-
-[sub_resource type="AtlasTexture" id="AtlasTex_bot_roll"]
-atlas = ExtResource("5_botsheet")
-region = Rect2(768, 256, 256, 256)
-
-[sub_resource type="AtlasTexture" id="AtlasTex_bot_melee1"]
-atlas = ExtResource("5_botsheet")
-region = Rect2(0, 512, 256, 256)
-
-[sub_resource type="AtlasTexture" id="AtlasTex_bot_hitstun"]
-atlas = ExtResource("5_botsheet")
-region = Rect2(768, 512, 256, 256)
-
-[sub_resource type="AtlasTexture" id="AtlasTex_bot_dead"]
-atlas = ExtResource("5_botsheet")
-region = Rect2(512, 768, 256, 256)
-
-[sub_resource type="SpriteFrames" id="SF_Bot"]
-animations = [{
-"frames": [{"duration":1.0,"texture":SubResource("AtlasTex_bot_idle")},{"duration":1.0,"texture":SubResource("AtlasTex_bot_walk1")}],
-"loop": true, "name": &"idle", "speed": 3.0
-},{
-"frames": [{"duration":1.0,"texture":SubResource("AtlasTex_bot_walk1")}],
-"loop": true, "name": &"walk", "speed": 8.0
-},{
-"frames": [{"duration":1.0,"texture":SubResource("AtlasTex_bot_run")}],
-"loop": true, "name": &"run", "speed": 12.0
-},{
-"frames": [{"duration":1.0,"texture":SubResource("AtlasTex_bot_jump")}],
-"loop": false, "name": &"jump", "speed": 8.0
-},{
-"frames": [{"duration":1.0,"texture":SubResource("AtlasTex_bot_fall")}],
-"loop": true, "name": &"fall", "speed": 8.0
-},{
-"frames": [{"duration":1.0,"texture":SubResource("AtlasTex_bot_roll")}],
-"loop": false, "name": &"roll", "speed": 12.0
-},{
-"frames": [{"duration":1.0,"texture":SubResource("AtlasTex_bot_melee1")}],
-"loop": false, "name": &"attack", "speed": 10.0
-},{
-"frames": [{"duration":1.0,"texture":SubResource("AtlasTex_bot_hitstun")}],
-"loop": false, "name": &"hitstun", "speed": 8.0
-},{
-"frames": [{"duration":1.0,"texture":SubResource("AtlasTex_bot_dead")}],
-"loop": false, "name": &"dead", "speed": 4.0
-}]
+[ext_resource type="Script"    path="res://src/World/GameArena.cs"                    id="1_arena"]
+[ext_resource type="Script"    path="res://src/Player/GamePlayer.cs"                  id="2_player"]
+[ext_resource type="Texture2D" path="res://assets/backgrounds/warehouse.jpg"          id="3_bg"]
+[ext_resource type="Texture2D" path="res://assets/sprites/player/Assassin_2.png"      id="4_p1"]
+[ext_resource type="Texture2D" path="res://assets/sprites/bot/Agent_2.png"            id="5_bot"]
 
 [sub_resource type="RectangleShape2D" id="floor_shape"]
-size = Vector2(980, 30)
+size = Vector2(980, 28)
 
 [sub_resource type="RectangleShape2D" id="wall_shape"]
 size = Vector2(20, 620)
 
-[sub_resource type="CapsuleShape2D" id="player_col"]
-radius = 14.0
-height = 20.0
-
-[sub_resource type="RectangleShape2D" id="melee_shape"]
-size = Vector2(40, 36)
-
-[sub_resource type="RectangleShape2D" id="plat_shape"]
+[sub_resource type="RectangleShape2D" id="plat200_shape"]
 size = Vector2(200, 14)
 
-[sub_resource type="RectangleShape2D" id="plat_sm_shape"]
+[sub_resource type="RectangleShape2D" id="plat140_shape"]
 size = Vector2(140, 14)
+
+[sub_resource type="CapsuleShape2D" id="player_col"]
+radius = 16.0
+height = 26.0
+
+[sub_resource type="RectangleShape2D" id="melee_shape"]
+size = Vector2(52, 40)
 
 [node name="GameArena" type="Node2D"]
 script = ExtResource("1_arena")
@@ -218,9 +50,9 @@ collision_layer = 1
 shape = SubResource("floor_shape")
 
 [node name="Vis" type="ColorRect" parent="World/Floor"]
-position = Vector2(-490, -12)
-size = Vector2(980, 24)
-color = Color(0.18, 0.16, 0.14, 0.9)
+position = Vector2(-490, -14)
+size = Vector2(980, 28)
+color = Color(0.18, 0.15, 0.12, 0.92)
 
 [node name="WallL" type="StaticBody2D" parent="World"]
 position = Vector2(10, 270)
@@ -241,85 +73,85 @@ position = Vector2(480, 370)
 collision_layer = 1
 
 [node name="Col" type="CollisionShape2D" parent="World/Plat1"]
-shape = SubResource("plat_shape")
+shape = SubResource("plat200_shape")
 
 [node name="Vis" type="ColorRect" parent="World/Plat1"]
 position = Vector2(-100, -7)
 size = Vector2(200, 14)
-color = Color(0.35, 0.28, 0.20, 0.95)
+color = Color(0.32, 0.26, 0.18, 0.95)
 
 [node name="Plat2" type="StaticBody2D" parent="World"]
 position = Vector2(195, 290)
 collision_layer = 1
 
 [node name="Col" type="CollisionShape2D" parent="World/Plat2"]
-shape = SubResource("plat_sm_shape")
+shape = SubResource("plat140_shape")
 
 [node name="Vis" type="ColorRect" parent="World/Plat2"]
 position = Vector2(-70, -7)
 size = Vector2(140, 14)
-color = Color(0.35, 0.28, 0.20, 0.95)
+color = Color(0.32, 0.26, 0.18, 0.95)
 
 [node name="Plat3" type="StaticBody2D" parent="World"]
 position = Vector2(765, 290)
 collision_layer = 1
 
 [node name="Col" type="CollisionShape2D" parent="World/Plat3"]
-shape = SubResource("plat_sm_shape")
+shape = SubResource("plat140_shape")
 
 [node name="Vis" type="ColorRect" parent="World/Plat3"]
 position = Vector2(-70, -7)
 size = Vector2(140, 14)
-color = Color(0.35, 0.28, 0.20, 0.95)
+color = Color(0.32, 0.26, 0.18, 0.95)
 
 [node name="Plat4" type="StaticBody2D" parent="World"]
 position = Vector2(480, 210)
 collision_layer = 1
 
 [node name="Col" type="CollisionShape2D" parent="World/Plat4"]
-shape = SubResource("plat_sm_shape")
+shape = SubResource("plat140_shape")
 
 [node name="Vis" type="ColorRect" parent="World/Plat4"]
 position = Vector2(-70, -7)
 size = Vector2(140, 14)
-color = Color(0.35, 0.28, 0.20, 0.95)
+color = Color(0.32, 0.26, 0.18, 0.95)
 
 [node name="Players" type="Node2D" parent="."]
 
 [node name="P1" type="CharacterBody2D" parent="Players" groups=["players"]]
-position = Vector2(180, 460)
+position = Vector2(200, 460)
 collision_layer = 4
 collision_mask = 1
 script = ExtResource("2_player")
 PlayerId = 1
 IsBot = false
-PlayerColor = Color(0.2, 0.6, 1.0, 1)
 
-[node name="Sprite" type="AnimatedSprite2D" parent="Players/P1"]
-scale = Vector2(0.28, 0.28)
-position = Vector2(0, -20)
-sprite_frames = SubResource("SF_P1")
-animation = &"idle"
-autoplay = "idle"
+[node name="Sprite" type="Sprite2D" parent="Players/P1"]
+position = Vector2(0, -38)
+scale = Vector2(2.0, 2.0)
+texture = ExtResource("4_p1")
+centered = true
+flip_h = false
+
+[node name="Col" type="CollisionShape2D" parent="Players/P1"]
+position = Vector2(0, -13)
+shape = SubResource("player_col")
 
 [node name="HPBar" type="ProgressBar" parent="Players/P1"]
-position = Vector2(-28, -90)
-size = Vector2(56, 8)
+position = Vector2(-34, -102)
+size = Vector2(68, 9)
 min_value = 0.0
 max_value = 100.0
 value = 100.0
 show_percentage = false
 
 [node name="NameLabel" type="Label" parent="Players/P1"]
-position = Vector2(-20, -104)
-size = Vector2(48, 16)
-text = "P1"
+position = Vector2(-24, -118)
+size = Vector2(56, 18)
+text = "JUGADOR"
 horizontal_alignment = 1
-theme_override_font_sizes/font_size = 13
-theme_override_colors/font_color = Color(0.4, 0.9, 1, 1)
-
-[node name="Col" type="CollisionShape2D" parent="Players/P1"]
-shape = SubResource("player_col")
+theme_override_font_sizes/font_size = 12
+theme_override_colors/font_color = Color(0.4, 0.85, 1, 1)
 
 [node name="MeleeBox" type="Area2D" parent="Players/P1"]
 collision_layer = 16
@@ -327,43 +159,43 @@ collision_mask = 4
 monitoring = true
 
 [node name="MeleeCol" type="CollisionShape2D" parent="Players/P1/MeleeBox"]
-position = Vector2(32, -18)
+position = Vector2(44, -20)
 shape = SubResource("melee_shape")
 
 [node name="Bot" type="CharacterBody2D" parent="Players" groups=["players"]]
-position = Vector2(780, 460)
+position = Vector2(760, 460)
 collision_layer = 4
 collision_mask = 1
 script = ExtResource("2_player")
 PlayerId = 2
 IsBot = true
-PlayerColor = Color(0.9, 0.2, 0.2, 1)
 
-[node name="Sprite" type="AnimatedSprite2D" parent="Players/Bot"]
-scale = Vector2(0.28, 0.28)
-position = Vector2(0, -20)
-sprite_frames = SubResource("SF_Bot")
-animation = &"idle"
-autoplay = "idle"
+[node name="Sprite" type="Sprite2D" parent="Players/Bot"]
+position = Vector2(0, -38)
+scale = Vector2(2.0, 2.0)
+texture = ExtResource("5_bot")
+centered = true
+flip_h = true
+
+[node name="Col" type="CollisionShape2D" parent="Players/Bot"]
+position = Vector2(0, -13)
+shape = SubResource("player_col")
 
 [node name="HPBar" type="ProgressBar" parent="Players/Bot"]
-position = Vector2(-28, -90)
-size = Vector2(56, 8)
+position = Vector2(-34, -102)
+size = Vector2(68, 9)
 min_value = 0.0
 max_value = 100.0
 value = 100.0
 show_percentage = false
 
 [node name="NameLabel" type="Label" parent="Players/Bot"]
-position = Vector2(-20, -104)
-size = Vector2(48, 16)
-text = "BOT"
+position = Vector2(-24, -118)
+size = Vector2(56, 18)
+text = "AGENTE"
 horizontal_alignment = 1
-theme_override_font_sizes/font_size = 13
+theme_override_font_sizes/font_size = 12
 theme_override_colors/font_color = Color(1, 0.4, 0.4, 1)
-
-[node name="Col" type="CollisionShape2D" parent="Players/Bot"]
-shape = SubResource("player_col")
 
 [node name="MeleeBox" type="Area2D" parent="Players/Bot"]
 collision_layer = 16
@@ -371,19 +203,19 @@ collision_mask = 4
 monitoring = true
 
 [node name="MeleeCol" type="CollisionShape2D" parent="Players/Bot/MeleeBox"]
-position = Vector2(32, -18)
+position = Vector2(44, -20)
 shape = SubResource("melee_shape")
 
 [node name="HUD" type="CanvasLayer" parent="."]
 
 [node name="TopBar" type="ColorRect" parent="HUD"]
 position = Vector2(0, 0)
-size = Vector2(960, 48)
-color = Color(0, 0, 0, 0.65)
+size = Vector2(960, 52)
+color = Color(0, 0, 0, 0.7)
 
 [node name="RoundLabel" type="Label" parent="HUD"]
-position = Vector2(360, 6)
-size = Vector2(240, 34)
+position = Vector2(355, 4)
+size = Vector2(250, 30)
 text = "Round 1 / 5"
 horizontal_alignment = 1
 theme_override_font_sizes/font_size = 22
@@ -391,24 +223,24 @@ theme_override_colors/font_color = Color(1, 1, 1, 1)
 
 [node name="ScoreLabel" type="Label" parent="HUD"]
 position = Vector2(330, 30)
-size = Vector2(300, 24)
+size = Vector2(300, 22)
 text = "P1: 0   BOT: 0"
 horizontal_alignment = 1
 theme_override_font_sizes/font_size = 16
-theme_override_colors/font_color = Color(0.8, 0.9, 1, 1)
+theme_override_colors/font_color = Color(0.75, 0.9, 1, 1)
 
 [node name="MsgLabel" type="Label" parent="HUD"]
-position = Vector2(200, 180)
-size = Vector2(560, 70)
+position = Vector2(180, 175)
+size = Vector2(600, 70)
 text = ""
 horizontal_alignment = 1
 vertical_alignment = 1
-theme_override_font_sizes/font_size = 48
-theme_override_colors/font_color = Color(1, 0.85, 0.1, 1)
+theme_override_font_sizes/font_size = 52
+theme_override_colors/font_color = Color(1, 0.9, 0.15, 1)
 
 [node name="ControlsLabel" type="Label" parent="HUD"]
 position = Vector2(10, 524)
-size = Vector2(680, 16)
-text = "WASD / Flechas: mover  |  W / ↑: saltar  |  N: golpear  |  R: reiniciar  |  ESC: menú"
+size = Vector2(700, 16)
+text = "A/D ó Flechas: mover  |  W ó ↑: saltar  |  N: golpear  |  R: reiniciar  |  ESC: menú"
 theme_override_font_sizes/font_size = 11
-theme_override_colors/font_color = Color(0.55, 0.55, 0.55, 1)
+theme_override_colors/font_color = Color(0.5, 0.5, 0.5, 1)

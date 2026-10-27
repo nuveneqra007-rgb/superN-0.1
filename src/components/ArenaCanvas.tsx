@@ -12,9 +12,10 @@ import { PhysicsRect, PhysicsStep } from '../game/PhysicsStep';
 import { PlayerFSM } from '../game/PlayerFSM';
 import { createPlayerState, PlayerFSMState, PlayerState } from '../game/PlayerState';
 import { sounds } from '../game/SoundEffects';
-import { getWeapon, SpawnableWeaponsList, WeaponCategory, WeaponType } from '../game/WeaponData';
+import { getWeapon, SpawnableWeaponsList, WeaponCategory, WeaponDatabase, WeaponType } from '../game/WeaponData';
 
 interface ArenaCanvasProps {
+  playerFaction?: BotFaction;
   botFaction: BotFaction;
   maxRounds: number;
   onExitToMenu: () => void;
@@ -78,6 +79,7 @@ interface FloatingText {
 }
 
 export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
+  playerFaction = BotFaction.Assassin,
   botFaction,
   maxRounds,
   onExitToMenu,
@@ -89,18 +91,21 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
   const ARENA_WIDTH = 960;
   const ARENA_HEIGHT = 540;
 
+  const playerArch = getBotArchetype(playerFaction);
+  const botArch = getBotArchetype(botFaction);
+
   // React state for HUD overlays
   const [hudState, setHudState] = useState({
     p1Health: 100,
     p1MaxHealth: 100,
     p1Stamina: 100,
-    p1Weapon: WeaponType.Fists,
-    p1Ammo: 0,
-    p1MaxAmmo: -1,
-    botHealth: 100,
-    botMaxHealth: 100,
-    botWeapon: WeaponType.Fists,
-    botAmmo: 0,
+    p1Weapon: playerArch.preferredWeapon || WeaponType.Fists,
+    p1Ammo: playerArch.preferredWeapon ? getWeapon(playerArch.preferredWeapon).magSize : 0,
+    p1MaxAmmo: playerArch.preferredWeapon ? getWeapon(playerArch.preferredWeapon).magSize : -1,
+    botHealth: botArch.maxHealth,
+    botMaxHealth: botArch.maxHealth,
+    botWeapon: botArch.preferredWeapon || WeaponType.Fists,
+    botAmmo: botArch.preferredWeapon ? getWeapon(botArch.preferredWeapon).magSize : 0,
     round: 1,
     maxRounds,
     p1Score: 0,
@@ -135,13 +140,25 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     bgImage: HTMLImageElement | null;
     p1Sprite: HTMLImageElement | null;
     botSprite: HTMLImageElement | null;
+    weaponImages: Record<string, HTMLImageElement>;
   } | null>(null);
 
   // Initialize game state
   useEffect(() => {
     const arch = getBotArchetype(botFaction);
+    const pArch = getBotArchetype(playerFaction);
 
-    const p1 = createPlayerState(1, 'JUGADOR', false, 200, 460);
+    const p1 = createPlayerState(1, pArch.name.toUpperCase(), false, 200, 460);
+    p1.speedModifier = pArch.speedModifier;
+    p1.damageDealtModifier = pArch.damageDealtModifier;
+    p1.damageTakenModifier = pArch.damageTakenModifier;
+    p1.meleeForceModifier = pArch.meleeForceModifier;
+
+    if (pArch.preferredWeapon) {
+      p1.equippedWeapon = pArch.preferredWeapon;
+      p1.ammo = getWeapon(pArch.preferredWeapon).magSize;
+    }
+
     const bot = createPlayerState(2, arch.name.toUpperCase(), true, 760, 460);
 
     // Apply archetype modifiers to bot
@@ -180,10 +197,20 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     bgImg.src = '/assets/backgrounds/warehouse.jpg';
 
     const p1Img = new Image();
-    p1Img.src = '/assets/sprites/player/Assassin_2.png';
+    p1Img.src = pArch.spriteUrl || '/assets/sprites/player/Assassin_2.png';
 
     const botImg = new Image();
     botImg.src = arch.spriteUrl || '/assets/sprites/bot/Agent_2.png';
+
+    // Preload weapon sprites
+    const weaponImages: Record<string, HTMLImageElement> = {};
+    Object.values(WeaponDatabase).forEach((w) => {
+      if (w.iconUrl) {
+        const wImg = new Image();
+        wImg.src = w.iconUrl;
+        weaponImages[w.type] = wImg;
+      }
+    });
 
     stateRef.current = {
       p1,
@@ -217,6 +244,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       bgImage: bgImg,
       p1Sprite: p1Img,
       botSprite: botImg,
+      weaponImages,
     };
 
     sounds.playRoundGong(true);
@@ -259,8 +287,19 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     if (!stateRef.current) return;
     const s = stateRef.current;
     const arch = getBotArchetype(botFaction);
+    const pArch = getBotArchetype(playerFaction);
 
-    s.p1 = createPlayerState(1, 'JUGADOR', false, 200, 460);
+    s.p1 = createPlayerState(1, pArch.name.toUpperCase(), false, 200, 460);
+    s.p1.speedModifier = pArch.speedModifier;
+    s.p1.damageDealtModifier = pArch.damageDealtModifier;
+    s.p1.damageTakenModifier = pArch.damageTakenModifier;
+    s.p1.meleeForceModifier = pArch.meleeForceModifier;
+
+    if (pArch.preferredWeapon) {
+      s.p1.equippedWeapon = pArch.preferredWeapon;
+      s.p1.ammo = getWeapon(pArch.preferredWeapon).magSize;
+    }
+
     s.bot = createPlayerState(2, arch.name.toUpperCase(), true, 760, 460);
     s.bot.maxHealth = arch.maxHealth;
     s.bot.health = arch.maxHealth;
@@ -272,6 +311,10 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     if (arch.preferredWeapon && Math.random() < arch.equipWeaponChance) {
       s.bot.equippedWeapon = arch.preferredWeapon;
       s.bot.ammo = getWeapon(arch.preferredWeapon).magSize;
+    }
+
+    if (s.p1Sprite && pArch.spriteUrl) {
+      s.p1Sprite.src = pArch.spriteUrl;
     }
 
     if (s.botSprite && arch.spriteUrl) {
@@ -288,7 +331,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     s.weaponSpawnTimer = 300;
 
     sounds.playRoundGong(true);
-  }, [botFaction]);
+  }, [botFaction, playerFaction]);
 
   // Spawn a random weapon at a valid platform location
   const spawnRandomWeapon = () => {
@@ -1256,29 +1299,36 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       // 4. World weapons on ground
       for (const w of s.worldWeapons) {
         const wData = getWeapon(w.weaponType);
+        const wImg = s.weaponImages[w.weaponType];
+        const bobY = Math.sin(w.bobTicks * 0.1) * 4;
 
         // Pulsing glow
-        ctx.fillStyle = 'rgba(56, 189, 248, 0.2)';
+        ctx.fillStyle = 'rgba(56, 189, 248, 0.25)';
         ctx.beginPath();
-        ctx.arc(w.x, w.y, 18 + Math.sin(w.bobTicks * 0.1) * 3, 0, Math.PI * 2);
+        ctx.arc(w.x, w.y + bobY, 18, 0, Math.PI * 2);
         ctx.fill();
 
-        // Weapon crate/base
-        ctx.fillStyle = '#1e293b';
-        ctx.strokeStyle = wData.color;
-        ctx.lineWidth = 1.5;
-        ctx.fillRect(w.x - 14, w.y - 7, 28, 14);
-        ctx.strokeRect(w.x - 14, w.y - 7, 28, 14);
+        if (wImg && wImg.complete && wImg.naturalWidth > 0) {
+          // Render authentic BotExtended weapon sprite
+          ctx.drawImage(wImg, w.x - 16, w.y - 12 + bobY, 32, 16);
+        } else {
+          // Weapon crate/base fallback
+          ctx.fillStyle = '#1e293b';
+          ctx.strokeStyle = wData.color;
+          ctx.lineWidth = 1.5;
+          ctx.fillRect(w.x - 14, w.y - 7 + bobY, 28, 14);
+          ctx.strokeRect(w.x - 14, w.y - 7 + bobY, 28, 14);
+        }
 
         // Weapon badge text
         ctx.fillStyle = '#f8fafc';
         ctx.font = 'bold 9px "JetBrains Mono", monospace';
         ctx.textAlign = 'center';
-        ctx.fillText(wData.name.slice(0, 7), w.x, w.y + 3);
+        ctx.fillText(wData.name.slice(0, 9), w.x, w.y + 14 + bobY);
 
         // Small indicator above
         ctx.fillStyle = wData.color;
-        ctx.fillText('▼', w.x, w.y - 12);
+        ctx.fillText('▼', w.x, w.y - 14 + bobY);
       }
 
       // 5. Render Players
@@ -1342,14 +1392,19 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         // Weapon held in hands
         if (p.equippedWeapon !== WeaponType.Fists) {
           const wData = getWeapon(p.equippedWeapon);
-          ctx.fillStyle = wData.color;
-          ctx.fillRect(8, -20, 16, 5);
+          const wImg = s.weaponImages[p.equippedWeapon];
+          if (wImg && wImg.complete && wImg.naturalWidth > 0) {
+            ctx.drawImage(wImg, 6, -24, 24, 12);
+          } else {
+            ctx.fillStyle = wData.color;
+            ctx.fillRect(8, -20, 16, 5);
+          }
           if (wData.hasLaserSight) {
             // Laser sight line
             ctx.strokeStyle = 'rgba(239, 68, 68, 0.7)';
             ctx.lineWidth = 1;
             ctx.beginPath();
-            ctx.moveTo(24, -18);
+            ctx.moveTo(30, -18);
             ctx.lineTo(400, -18);
             ctx.stroke();
           }
@@ -1490,7 +1545,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
     animId = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(animId);
-  }, [maxRounds, botFaction, restartRound, onMatchComplete]);
+  }, [maxRounds, botFaction, playerFaction, restartRound, onMatchComplete]);
 
   return (
     <div className="relative w-full h-full flex flex-col items-center justify-center bg-neutral-950 p-2 overflow-hidden select-none">
@@ -1499,7 +1554,9 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-pulse"></span>
-            <span className="font-bold text-cyan-400 text-sm tracking-wider">P1 (JUGADOR)</span>
+            <span className="font-bold text-cyan-400 text-sm tracking-wider">
+              P1 ({playerArch.name.toUpperCase()})
+            </span>
           </div>
           <span className="text-xl font-bold font-mono-code text-cyan-300">
             {hudState.p1Score}
@@ -1521,7 +1578,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           </span>
           <div className="flex items-center gap-2">
             <span className="font-bold text-rose-400 text-sm tracking-wider">
-              {botFaction.toUpperCase()}
+              BOT ({botArch.name.toUpperCase()})
             </span>
             <span className="w-2.5 h-2.5 rounded-full bg-rose-500"></span>
           </div>
@@ -1569,7 +1626,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         {/* P1 Stats */}
         <div className="flex flex-col gap-1.5">
           <div className="flex justify-between items-center text-cyan-400 font-bold">
-            <span>P1 SALUD</span>
+            <span>P1 ({playerArch.name.toUpperCase()})</span>
             <span>{Math.ceil(hudState.p1Health)} / {hudState.p1MaxHealth}</span>
           </div>
           <div className="w-full h-3 bg-neutral-800 rounded overflow-hidden">
@@ -1599,8 +1656,17 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
         {/* Current Equipped Weapon */}
         <div className="flex flex-col items-center justify-center p-2 bg-neutral-950/80 rounded border border-neutral-800 text-center">
-          <span className="text-[10px] text-neutral-400 uppercase font-semibold">Arma Equipada</span>
-          <span className="text-base font-bold text-yellow-400">{hudState.p1Weapon}</span>
+          <span className="text-[10px] text-neutral-400 uppercase font-semibold">Arma P1</span>
+          <div className="flex items-center gap-2 my-0.5">
+            {getWeapon(hudState.p1Weapon)?.iconUrl ? (
+              <img
+                src={getWeapon(hudState.p1Weapon).iconUrl}
+                alt=""
+                className="h-5 w-auto object-contain [image-rendering:pixelated]"
+              />
+            ) : null}
+            <span className="text-sm font-bold text-yellow-400">{hudState.p1Weapon}</span>
+          </div>
           <span className="text-xs font-mono-code text-neutral-300">
             {hudState.p1MaxAmmo === -1
               ? 'Melee (Infinito)'
@@ -1611,7 +1677,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         {/* Opponent Bot Stats */}
         <div className="flex flex-col gap-1.5">
           <div className="flex justify-between items-center text-rose-400 font-bold">
-            <span>{botFaction.toUpperCase()} SALUD</span>
+            <span>BOT ({botArch.name.toUpperCase()})</span>
             <span>{Math.ceil(hudState.botHealth)} / {hudState.botMaxHealth}</span>
           </div>
           <div className="w-full h-3 bg-neutral-800 rounded overflow-hidden">
@@ -1629,7 +1695,16 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
           <div className="flex justify-between items-center text-neutral-400">
             <span>ARMA DEL BOT</span>
-            <span className="text-rose-300 font-bold">{hudState.botWeapon}</span>
+            <div className="flex items-center gap-1.5 font-bold text-rose-300">
+              {getWeapon(hudState.botWeapon)?.iconUrl ? (
+                <img
+                  src={getWeapon(hudState.botWeapon).iconUrl}
+                  alt=""
+                  className="h-4 w-auto object-contain [image-rendering:pixelated]"
+                />
+              ) : null}
+              <span>{hudState.botWeapon}</span>
+            </div>
           </div>
         </div>
       </div>

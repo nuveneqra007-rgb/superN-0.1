@@ -86,6 +86,15 @@ export const CombatSystem = {
       }
     }
 
+    // Habilidades especiales de arquetipos (BotExtended)
+    const upperAttackerName = attacker.name.toUpperCase();
+    if (upperAttackerName.includes('MOTERO') || upperAttackerName.includes('BIKER')) {
+      attacker.health = Math.min(attacker.maxHealth, attacker.health + 4);
+    }
+    if (upperAttackerName.includes('BERSERKER')) {
+      attacker.health = Math.min(attacker.maxHealth, attacker.health + 5);
+    }
+
     this.applyDamage(defender, dmg, hitstun, kbX, kbY, knockdown);
 
     return {
@@ -122,11 +131,24 @@ export const CombatSystem = {
     }
 
     const wpn = WeaponDatabase[weaponType] || WeaponDatabase[WeaponType.Pistol];
-    const dmg = this.applyModifiers(
+    let dmg = this.applyModifiers(
       wpn.damage,
       attacker.damageDealtModifier,
       defender.damageTakenModifier
     );
+
+    // Habilidades de proyectil por arquetipo (BotExtended)
+    const upperAttackerName = attacker.name.toUpperCase();
+    if (upperAttackerName.includes('FRANCOTIRADOR') || upperAttackerName.includes('SNIPER')) {
+      if (Math.random() < 0.25) {
+        dmg = Math.round(dmg * 1.5);
+      }
+    }
+    if (upperAttackerName.includes('PISTOLERO') || upperAttackerName.includes('COWBOY')) {
+      if (Math.random() < 0.15) {
+        this.disarmPlayer(defender);
+      }
+    }
 
     const ignited = (wpn.onFireDuration || 0) > 0;
     if (ignited) {

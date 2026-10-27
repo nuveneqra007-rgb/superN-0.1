@@ -5,11 +5,13 @@ import { ArenaCanvas } from './components/ArenaCanvas';
 
 export const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<'menu' | 'arena'>('menu');
+  const [playerFaction, setPlayerFaction] = useState<BotFaction>(BotFaction.Assassin);
   const [botFaction, setBotFaction] = useState<BotFaction>(BotFaction.Thug);
   const [rounds, setRounds] = useState<number>(5);
 
-  const handleStartGame = (faction: BotFaction, numRounds: number) => {
-    setBotFaction(faction);
+  const handleStartGame = (player: BotFaction, bot: BotFaction, numRounds: number) => {
+    setPlayerFaction(player);
+    setBotFaction(bot);
     setRounds(numRounds);
     setCurrentView('arena');
   };
@@ -24,6 +26,7 @@ export const App: React.FC = () => {
         <MainMenu onStartGame={handleStartGame} />
       ) : (
         <ArenaCanvas
+          playerFaction={playerFaction}
           botFaction={botFaction}
           maxRounds={rounds}
           onExitToMenu={handleExitToMenu}

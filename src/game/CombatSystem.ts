@@ -28,10 +28,10 @@ export const CombatSystem = {
     const step = Math.min(Math.max(attacker.comboStep, 0), 2);
 
     // Hitbox del golpe: rectangular frente al atacante
-    const hitW = wpn.category === 'Melee' ? 48 : 30;
-    const hitH = 44;
+    const hitW = wpn.category === 'Melee' ? 58 : 38;
+    const hitH = 54;
     const dirX = attacker.facingRight ? 1 : -1;
-    const hitCx = attacker.x + dirX * (hitW / 2 + 8);
+    const hitCx = attacker.x + dirX * (hitW / 2 + 10);
     const hitCy = attacker.y;
 
     if (
@@ -212,6 +212,8 @@ export const CombatSystem = {
     const dmg = (GameConstants.FlameDmgPerTick / 8) * p.damageTakenModifier;
     p.health = Math.max(0, p.health - dmg);
     if (p.health <= 0) {
+      p.health = 0;
+      p.isAlive = false;
       PlayerFSM.tryTransition(p, PlayerFSMState.Dead);
     }
     return dmg;
@@ -230,6 +232,8 @@ export const CombatSystem = {
     p.velocityY = kbY;
 
     if (p.health <= 0) {
+      p.health = 0;
+      p.isAlive = false;
       PlayerFSM.tryTransition(p, PlayerFSMState.Dead);
       return;
     }

@@ -30,9 +30,9 @@ export const PLAYER_CONFIG = {
   ROLL_INVULNERABLE_DURATION: 0.24, // Ventana inicial de invulnerabilidad (~240 ms)
 
   // Dimensiones del collider (px)
-  HITBOX_WIDTH: 28,
-  HITBOX_HEIGHT_STAND: 48,
-  HITBOX_HEIGHT_ROLL: 26,
+  HITBOX_WIDTH: 34,
+  HITBOX_HEIGHT_STAND: 64,
+  HITBOX_HEIGHT_ROLL: 34,
 } as const;
 
 /**

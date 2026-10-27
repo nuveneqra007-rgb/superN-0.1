@@ -27,6 +27,8 @@ export interface BotFSMData {
   strafeDirX: number;
   strafeTicks: number;
   jumpCooldown: number;
+  pickupTicks: number;
+  pickupCooldown: number;
 }
 
 export function createBotFSMData(aiType: BotAIType): BotFSMData {
@@ -38,6 +40,8 @@ export function createBotFSMData(aiType: BotAIType): BotFSMData {
     strafeDirX: 1,
     strafeTicks: 0,
     jumpCooldown: 0,
+    pickupTicks: 0,
+    pickupCooldown: 0,
   };
 }
 
@@ -59,6 +63,7 @@ export const BotAI = {
   ): BotAIState {
     ai.stateTicks++;
     if (ai.dodgeCooldown > 0) ai.dodgeCooldown--;
+    if (ai.pickupCooldown > 0) ai.pickupCooldown--;
 
     if (!target || !target.isAlive) {
       return BotAIState.Idle;
@@ -68,7 +73,13 @@ export const BotAI = {
       Math.pow(target.x - bot.x, 2) + Math.pow(target.y - bot.y, 2)
     );
 
-    // 1. Dodge: Bots con IA reactiva
+    // 1. Melee prioritario si está en rango cuerpo a cuerpo (combate inmediato)
+    if (dist <= GameConstants.AI_MeleeRange) {
+      ai.pickupTicks = 0;
+      return BotAIState.Attack;
+    }
+
+    // 2. Dodge: Bots con IA reactiva
     const canDodge =
       ai.aiType === BotAIType.Hard ||
       ai.aiType === BotAIType.Soldier ||
@@ -81,7 +92,7 @@ export const BotAI = {
       return BotAIState.Dodge;
     }
 
-    // 2. Flee: baja salud sin arma de fuego
+    // 3. Flee: baja salud sin arma de fuego
     if (
       bot.health <= GameConstants.AI_FleeHPThreshold &&
       bot.equippedWeapon === WeaponType.Fists
@@ -89,29 +100,7 @@ export const BotAI = {
       return BotAIState.Flee;
     }
 
-    // 3. Recoger arma cercana
-    if (
-      bot.equippedWeapon === WeaponType.Fists &&
-      nearestWeaponDist <= GameConstants.AI_WpnSearchInSight
-    ) {
-      return BotAIState.Pickup;
-    }
-
-    // 4. Melee si está a rango cuerpo a cuerpo
-    if (dist <= GameConstants.AI_MeleeRange) {
-      return BotAIState.Attack;
-    }
-
-    // 5. Cobertura: poca vida con bala entrante
-    if (
-      (ai.aiType === BotAIType.Hard || ai.aiType === BotAIType.Soldier) &&
-      bot.health < 50 &&
-      projectileIncoming
-    ) {
-      return BotAIState.Cover;
-    }
-
-    // 6. Strafe y disparo con armas de fuego
+    // 4. Strafe y disparo con armas de fuego
     const isFirearm =
       bot.equippedWeapon !== WeaponType.Fists &&
       WeaponDatabase[bot.equippedWeapon]?.category === 'Firearm';
@@ -120,7 +109,39 @@ export const BotAI = {
       return BotAIState.Strafe;
     }
 
-    // 7. Chase
+    // 5. Recoger arma cercana (solo si no está en cooldown por fallo/arma inaccesible)
+    // Si el jugador está muy cerca (< 130px), el bot no le da la espalda para buscar armas
+    const canAttemptPickup =
+      bot.equippedWeapon === WeaponType.Fists &&
+      nearestWeaponDist <= GameConstants.AI_WpnSearchInSight &&
+      ai.pickupCooldown <= 0 &&
+      dist > 120;
+
+    if (canAttemptPickup) {
+      ai.pickupTicks++;
+      // Si lleva más de 70 ticks (~1.1 s) intentando recoger un arma y no la consigue
+      // (por ejemplo, porque está en una cornisa superior), cancela la búsqueda
+      // y ataca agresivamente al jugador sin quedar congelado.
+      if (ai.pickupTicks > 70) {
+        ai.pickupCooldown = 180; // 3 segundos persiguiendo al jugador antes de reconsiderar armas
+        ai.pickupTicks = 0;
+        return BotAIState.Chase;
+      }
+      return BotAIState.Pickup;
+    } else {
+      ai.pickupTicks = 0;
+    }
+
+    // 6. Cobertura: poca vida con bala entrante
+    if (
+      (ai.aiType === BotAIType.Hard || ai.aiType === BotAIType.Soldier) &&
+      bot.health < 50 &&
+      projectileIncoming
+    ) {
+      return BotAIState.Cover;
+    }
+
+    // 7. Chase: Persecución activa del objetivo
     if (dist <= GameConstants.AI_DetectionRange) {
       return BotAIState.Chase;
     }
@@ -155,16 +176,22 @@ export const BotAI = {
         if (target) {
           moveX = target.x > bot.x ? 1 : -1;
         }
-        if (bot.onGround && ai.jumpCooldown <= 0 && targetYDiff < -30) {
+        // Saltar si el objetivo está arriba en una plataforma
+        if (bot.onGround && ai.jumpCooldown <= 0 && targetYDiff < -25) {
           jump = true;
-          ai.jumpCooldown = 45;
+          ai.jumpCooldown = 35;
         }
         break;
 
       case BotAIState.Attack:
         melee = true;
-        if (targetDist > GameConstants.AI_MeleeRange * 0.5) {
+        if (targetDist > GameConstants.AI_MeleeRange * 0.4) {
           moveX = target && target.x > bot.x ? 1 : -1;
+        }
+        // Si el objetivo está ligeramente por encima al atacar, salta para impactar
+        if (bot.onGround && targetYDiff < -20 && ai.jumpCooldown <= 0) {
+          jump = true;
+          ai.jumpCooldown = 30;
         }
         break;
 
@@ -208,11 +235,13 @@ export const BotAI = {
       case BotAIState.Pickup:
         if (nearestWeaponPos) {
           moveX = nearestWeaponPos.x > bot.x ? 1 : -1;
-          if (bot.onGround && nearestWeaponPos.y < bot.y - 20 && ai.jumpCooldown <= 0) {
+          const yDiff = nearestWeaponPos.y - bot.y;
+          // Saltar para subir a la plataforma donde está el arma
+          if (bot.onGround && yDiff < -20 && ai.jumpCooldown <= 0) {
             jump = true;
-            ai.jumpCooldown = 30;
+            ai.jumpCooldown = 35;
           }
-          if (Math.abs(nearestWeaponPos.x - bot.x) < 20) {
+          if (Math.abs(nearestWeaponPos.x - bot.x) < 24) {
             crouch = true;
           }
         }

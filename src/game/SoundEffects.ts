@@ -262,6 +262,114 @@ class SoundEngine {
       this.playGunshot(soundType);
     }
   }
+
+  // World mechanics SFX
+  public playCrateBreak() {
+    if (this.isMuted) return;
+    this.initContext();
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    // Wood snap (filtered noise + low pop)
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(120, t);
+    osc.frequency.exponentialRampToValueAtTime(30, t + 0.15);
+    gain.gain.setValueAtTime(0.35, t);
+    gain.gain.exponentialRampToValueAtTime(0.01, t + 0.15);
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start(t);
+    osc.stop(t + 0.16);
+  }
+
+  public playMedkit() {
+    if (this.isMuted) return;
+    this.initContext();
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(440, t);
+    osc.frequency.setValueAtTime(660, t + 0.08);
+    osc.frequency.setValueAtTime(880, t + 0.16);
+    gain.gain.setValueAtTime(0.25, t);
+    gain.gain.exponentialRampToValueAtTime(0.01, t + 0.3);
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start(t);
+    osc.stop(t + 0.32);
+  }
+
+  public playHydraulicSlam() {
+    if (this.isMuted) return;
+    this.initContext();
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(80, t);
+    osc.frequency.exponentialRampToValueAtTime(25, t + 0.25);
+    gain.gain.setValueAtTime(0.6, t);
+    gain.gain.exponentialRampToValueAtTime(0.01, t + 0.28);
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start(t);
+    osc.stop(t + 0.3);
+  }
+
+  // World ambient loops
+  private ambientGain: GainNode | null = null;
+  private ambientOsc: OscillatorNode | null = null;
+
+  public startWorldAmbient(type: 'warehouse' | 'desert' | 'industrial' = 'warehouse') {
+    if (this.isMuted) return;
+    this.stopWorldAmbient();
+    this.initContext();
+    if (!this.ctx) return;
+
+    try {
+      const t = this.ctx.currentTime;
+      this.ambientGain = this.ctx.createGain();
+      this.ambientGain.gain.setValueAtTime(0.03, t);
+
+      this.ambientOsc = this.ctx.createOscillator();
+      if (type === 'desert') {
+        this.ambientOsc.type = 'sine';
+        this.ambientOsc.frequency.setValueAtTime(95, t); // Howling desert wind drone
+      } else if (type === 'industrial') {
+        this.ambientOsc.type = 'triangle';
+        this.ambientOsc.frequency.setValueAtTime(55, t); // Industrial machine hum
+      } else {
+        this.ambientOsc.type = 'sine';
+        this.ambientOsc.frequency.setValueAtTime(70, t); // Warehouse atmospheric hum
+      }
+
+      this.ambientOsc.connect(this.ambientGain);
+      this.ambientGain.connect(this.ctx.destination);
+      this.ambientOsc.start(t);
+    } catch {
+      // Audio autoplay restriction fallback
+    }
+  }
+
+  public stopWorldAmbient() {
+    try {
+      if (this.ambientOsc) {
+        this.ambientOsc.stop();
+        this.ambientOsc.disconnect();
+        this.ambientOsc = null;
+      }
+      if (this.ambientGain) {
+        this.ambientGain.disconnect();
+        this.ambientGain = null;
+      }
+    } catch {
+      // ignore
+    }
+  }
 }
 
 export const sounds = new SoundEngine();

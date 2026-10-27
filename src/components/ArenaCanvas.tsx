@@ -1,11 +1,11 @@
 // =============================================================
 // ArenaCanvas.tsx — Motor de renderizado y loop de juego 60Hz
-// Réplica fiel de GameArena.tscn, BattleScene.cs y GamePlayer.cs
+// Soporte multiescenario con 3 mundos y mecánicas interactivas
 // =============================================================
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { BotFaction, getBotArchetype } from '../game/BotData';
-import { BotAI, createBotFSMData } from '../game/BotFSM';
+import { BotAI, BotAIState, createBotFSMData } from '../game/BotFSM';
 import { CombatSystem, HitResult } from '../game/CombatSystem';
 import { GameConstants } from '../game/GameConstants';
 import { PhysicsRect, PhysicsStep } from '../game/PhysicsStep';
@@ -14,14 +14,117 @@ import { createPlayerState, PlayerFSMState, PlayerState } from '../game/PlayerSt
 import { getWeapon, SpawnableWeaponsList, WeaponCategory, WeaponDatabase, WeaponType } from '../game/WeaponData';
 import { PlayerController, PlayerInput, PlayerState as ControllerState, PLAYER_CONFIG } from '../game/PlayerController';
 import { sounds } from '../game/SoundEffects';
+import { getWorldConfig, WorldConfig, HazardCfg, PlatformRect } from '../game/WorldData';
+import { GameMode } from './ModeSelectScreen';
 
 interface ArenaCanvasProps {
+  gameMode?: GameMode;
   playerFaction?: BotFaction;
   botFaction: BotFaction;
   maxRounds: number;
+  worldId?: string;
   onExitToMenu: () => void;
   onMatchComplete?: (playerWon: boolean) => void;
 }
+
+/**
+ * Configuración de Spritesheets por Facción / Personaje.
+ * Cada personaje cuenta con su spritesheet de caminata (número de columnas, filas y fotogramas totales).
+ * - Personaje Assassin (Asesino): Usa el spritesheet dinámico de caminata (/assets/aistudio/Assassin-walk-trimmed_710f16f3.png).
+ * - Para añadir las texturas de los demás personajes (Punk, Gánster, Policía, Mutante, Matón, Soldado, etc.),
+ *   simplemente asigna su respectivo 'walkSheetUrl' e 'idleUrl' manteniendo este mismo esqueleto de animación.
+ */
+export interface SpritesheetDef {
+  walkSheetUrl?: string;
+  idleUrl: string;
+  cols?: number;
+  rows?: number;
+  totalFrames?: number;
+  hasWalkSheet: boolean;
+}
+
+export const CHARACTER_SPRITESHEETS: Record<string, SpritesheetDef> = {
+  // ── 1. ASESINO (ASSASSIN) ──
+  // Utiliza el spritesheet dinámico de 1024x1024, 4 columnas x 4 filas, 14 frames activos
+  [BotFaction.Assassin]: {
+    walkSheetUrl: '/assets/aistudio/Assassin-walk-trimmed_710f16f3.png',
+    idleUrl: '/assets/sprites/player/Assassin_2.png',
+    cols: 4,
+    rows: 4,
+    totalFrames: 14,
+    hasWalkSheet: true,
+  },
+  // ── 2. MATÓN (THUG) ──
+  [BotFaction.Thug]: {
+    idleUrl: '/assets/sprites/bot/thug.png',
+    hasWalkSheet: false,
+  },
+  // ── 3. PUNK ──
+  [BotFaction.Punk]: {
+    idleUrl: '/assets/sprites/bot/punk.png',
+    hasWalkSheet: false,
+  },
+  // ── 4. MOTERO (BIKER) ──
+  [BotFaction.Biker]: {
+    idleUrl: '/assets/sprites/bot/biker.png',
+    hasWalkSheet: false,
+  },
+  // ── 5. GÁNSTER (GANGSTER) ──
+  [BotFaction.Gangster]: {
+    idleUrl: '/assets/sprites/bot/gangster.png',
+    hasWalkSheet: false,
+  },
+  // ── 6. POLICÍA (POLICE) ──
+  [BotFaction.Police]: {
+    idleUrl: '/assets/sprites/bot/police.png',
+    hasWalkSheet: false,
+  },
+  // ── 7. METROCOP ──
+  [BotFaction.MetroCop]: {
+    idleUrl: '/assets/sprites/bot/metrocop.png',
+    hasWalkSheet: false,
+  },
+  // ── 8. MUTANTE (MUTANT) ──
+  [BotFaction.Mutant]: {
+    idleUrl: '/assets/sprites/bot/mutant.png',
+    hasWalkSheet: false,
+  },
+  // ── 9. ZOMBI (ZOMBIE) ──
+  [BotFaction.Zombie]: {
+    idleUrl: '/assets/sprites/bot/zombie.png',
+    hasWalkSheet: false,
+  },
+  // ── 10. SOLDADO (SOLDIER) ──
+  [BotFaction.Soldier]: {
+    idleUrl: '/assets/sprites/bot/soldier.png',
+    hasWalkSheet: false,
+  },
+  // ── 11. AGENTE (AGENT) ──
+  [BotFaction.Agent]: {
+    idleUrl: '/assets/sprites/bot/agent.png',
+    hasWalkSheet: false,
+  },
+  // ── 12. PISTOLERO (COWBOY) ──
+  [BotFaction.Cowboy]: {
+    idleUrl: '/assets/sprites/bot/cowboy.png',
+    hasWalkSheet: false,
+  },
+  // ── 13. FRANCOTIRADOR (SNIPER) ──
+  [BotFaction.Sniper]: {
+    idleUrl: '/assets/sprites/bot/sniper.png',
+    hasWalkSheet: false,
+  },
+  // ── 14. JEFE BERSERKER ──
+  [BotFaction.Boss_Berserker]: {
+    idleUrl: '/assets/sprites/bot/berserker.png',
+    hasWalkSheet: false,
+  },
+  // ── 15. JEFE TANQUE ──
+  [BotFaction.Boss_Tank]: {
+    idleUrl: '/assets/sprites/bot/tank.png',
+    hasWalkSheet: false,
+  },
+};
 
 interface ProjectileEntity {
   id: number;
@@ -52,6 +155,58 @@ interface WorldWeaponEntity {
   bobTicks: number;
 }
 
+interface MedkitEntity {
+  id: number;
+  x: number;
+  y: number;
+  baseY: number;
+  bobTicks: number;
+}
+
+interface DestructibleCrateEntity {
+  id: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  health: number;
+  maxHealth: number;
+}
+
+interface ExplosiveBarrelEntity {
+  id: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  health: number;
+  maxHealth: number;
+}
+
+interface ConveyorEntity {
+  id: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  speed: number;
+  direction: 'left' | 'right';
+}
+
+interface HydraulicPressEntity {
+  id: string;
+  x: number;
+  baseY: number;
+  currentY: number;
+  w: number;
+  h: number;
+  tick: number;
+  cycle: number;
+  maxDrop: number;
+  crushDamage: number;
+  hasSlammedThisCycle: boolean;
+}
+
 interface FireZone {
   x: number;
   y: number;
@@ -80,22 +235,25 @@ interface FloatingText {
 }
 
 export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
+  gameMode = 'vsBot',
   playerFaction = BotFaction.Assassin,
   botFaction,
   maxRounds,
+  worldId = 'classic',
   onExitToMenu,
   onMatchComplete,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  // Dimensiones originales Godot
+  // Dimensiones de la arena
   const ARENA_WIDTH = 960;
   const ARENA_HEIGHT = 540;
 
   const playerArch = getBotArchetype(playerFaction);
   const botArch = getBotArchetype(botFaction);
+  const currentWorld = getWorldConfig(worldId);
 
-  // React state for HUD overlays: ambos combatientes inician desarmados (Puños)
+  // React state for HUD
   const [hudState, setHudState] = useState({
     p1Health: 100,
     p1MaxHealth: 100,
@@ -115,20 +273,29 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     isRoundOver: false,
     isMatchOver: false,
     matchWinner: '',
+    worldName: currentWorld.name,
   });
 
-  // Game state stored in refs to run smoothly at 60Hz without re-triggering React renders
+  // Estado mutado en el loop de 60Hz
   const stateRef = useRef<{
     p1: PlayerState;
     p1Controller: PlayerController;
     bot: PlayerState;
+    p2Controller: PlayerController;
     botAI: ReturnType<typeof createBotFSMData>;
     projectiles: ProjectileEntity[];
     worldWeapons: WorldWeaponEntity[];
+    medkits: MedkitEntity[];
+    crates: DestructibleCrateEntity[];
+    barrels: ExplosiveBarrelEntity[];
+    conveyors: ConveyorEntity[];
+    presses: HydraulicPressEntity[];
     fireZones: FireZone[];
     particles: Particle[];
     floatingTexts: FloatingText[];
-    platforms: PhysicsRect[];
+    platforms: PlatformRect[];
+    worldConfig: WorldConfig;
+    worldTick: number;
     screenShake: number;
     weaponSpawnTimer: number;
     round: number;
@@ -143,63 +310,136 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     bgImage: HTMLImageElement | null;
     p1Sprite: HTMLImageElement | null;
     botSprite: HTMLImageElement | null;
+    p1WalkSheet: HTMLImageElement | null;
+    p1IdleSprite: HTMLImageElement | null;
+    p1SheetConfig: SpritesheetDef;
+    botWalkSheet: HTMLImageElement | null;
+    botIdleSprite: HTMLImageElement | null;
+    botSheetConfig: SpritesheetDef;
     weaponImages: Record<string, HTMLImageElement>;
   } | null>(null);
 
-  // Initialize game state
+  // Helper para generar entidades interactivas del mundo
+  const createWorldHazards = useCallback((world: WorldConfig) => {
+    const crates: DestructibleCrateEntity[] = [];
+    const barrels: ExplosiveBarrelEntity[] = [];
+    const conveyors: ConveyorEntity[] = [];
+    const presses: HydraulicPressEntity[] = [];
+
+    world.hazards.forEach((h) => {
+      if (h.type === 'destructible_crate') {
+        crates.push({
+          id: h.id,
+          x: h.x,
+          y: h.y,
+          w: h.w,
+          h: h.h,
+          health: h.health || 25,
+          maxHealth: h.maxHealth || 25,
+        });
+      } else if (h.type === 'explosive_barrel') {
+        barrels.push({
+          id: h.id,
+          x: h.x,
+          y: h.y,
+          w: h.w,
+          h: h.h,
+          health: h.health || 30,
+          maxHealth: h.maxHealth || 30,
+        });
+      } else if (h.type === 'conveyor_belt') {
+        conveyors.push({
+          id: h.id,
+          x: h.x,
+          y: h.y,
+          w: h.w,
+          h: h.h,
+          speed: h.speed || 2.4,
+          direction: h.direction || 'right',
+        });
+      } else if (h.type === 'hydraulic_press') {
+        presses.push({
+          id: h.id,
+          x: h.x,
+          baseY: h.y,
+          currentY: h.y,
+          w: h.w,
+          h: h.h,
+          tick: 0,
+          cycle: h.cyclePeriodTicks || 180,
+          maxDrop: h.maxDropY || 100,
+          crushDamage: h.crushDamage || 40,
+          hasSlammedThisCycle: false,
+        });
+      }
+    });
+
+    return { crates, barrels, conveyors, presses };
+  }, []);
+
+  // Inicializar estado del juego
   useEffect(() => {
+    const worldCfg = getWorldConfig(worldId);
     const arch = getBotArchetype(botFaction);
     const pArch = getBotArchetype(playerFaction);
 
-    const p1 = createPlayerState(1, pArch.name.toUpperCase(), false, 200, 460);
+    const spawnP1 = worldCfg.spawns[0] || { x: 200, y: 460 };
+    const spawnBot = worldCfg.spawns[1] || { x: 760, y: 460 };
+
+    const p1 = createPlayerState(1, pArch.name.toUpperCase(), false, spawnP1.x, spawnP1.y);
+    p1.maxHealth = pArch.maxHealth;
+    p1.health = pArch.maxHealth;
     p1.speedModifier = pArch.speedModifier;
     p1.damageDealtModifier = pArch.damageDealtModifier;
     p1.damageTakenModifier = pArch.damageTakenModifier;
     p1.meleeForceModifier = pArch.meleeForceModifier;
-    // Ambos combatientes inician desarmados (cuerpo a cuerpo)
     p1.equippedWeapon = WeaponType.Fists;
     p1.ammo = 0;
 
-    const bot = createPlayerState(2, arch.name.toUpperCase(), true, 760, 460);
-
-    // Apply archetype modifiers to bot
+    const bot = createPlayerState(2, arch.name.toUpperCase(), true, spawnBot.x, spawnBot.y);
     bot.maxHealth = arch.maxHealth;
     bot.health = arch.maxHealth;
     bot.speedModifier = arch.speedModifier;
     bot.damageDealtModifier = arch.damageDealtModifier;
     bot.damageTakenModifier = arch.damageTakenModifier;
     bot.meleeForceModifier = arch.meleeForceModifier;
-    // Bot inicia desarmado para pelear cuerpo a cuerpo o recoger armas
     bot.equippedWeapon = WeaponType.Fists;
     bot.ammo = 0;
 
-    // Platforms according to GameArena.tscn
-    const platforms: PhysicsRect[] = [
-      // Floor
-      { x: -10, y: 501, w: 980, h: 40, isOneWay: false },
-      // Left Wall
-      { x: 0, y: 0, w: 20, h: 540, isOneWay: false },
-      // Right Wall
-      { x: 940, y: 0, w: 20, h: 540, isOneWay: false },
-      // Plat1 - Center (200x14) at y=370
-      { x: 380, y: 370, w: 200, h: 14, isOneWay: true },
-      // Plat2 - Left (140x14) at y=290
-      { x: 125, y: 290, w: 140, h: 14, isOneWay: true },
-      // Plat3 - Right (140x14) at y=290
-      { x: 695, y: 290, w: 140, h: 14, isOneWay: true },
-      // Plat4 - High Center (140x14) at y=210
-      { x: 410, y: 210, w: 140, h: 14, isOneWay: true },
-    ];
+    // Cargar imagen de fondo si es el mundo clásico
+    let bgImg: HTMLImageElement | null = null;
+    if (worldCfg.id === 'classic') {
+      bgImg = new Image();
+      bgImg.src = '/assets/backgrounds/warehouse.jpg';
+    }
 
-    // Load images
-    const bgImg = new Image();
-    bgImg.src = '/assets/backgrounds/warehouse.jpg';
+    // Carga de Spritesheet y texturas para P1 y Bot según su facción seleccionada
+    const p1Cfg = CHARACTER_SPRITESHEETS[playerFaction] || {
+      idleUrl: pArch.spriteUrl || '/assets/sprites/player/Assassin_2.png',
+      hasWalkSheet: false,
+    };
+    const botCfg = CHARACTER_SPRITESHEETS[botFaction] || {
+      idleUrl: arch.spriteUrl || '/assets/sprites/bot/agent.png',
+      hasWalkSheet: false,
+    };
 
-    const p1Img = new Image();
-    p1Img.src = pArch.spriteUrl || '/assets/sprites/player/Assassin_2.png';
+    let p1WalkSheet: HTMLImageElement | null = null;
+    if (p1Cfg.hasWalkSheet && p1Cfg.walkSheetUrl) {
+      p1WalkSheet = new Image();
+      p1WalkSheet.src = p1Cfg.walkSheetUrl;
+    }
 
-    const botImg = new Image();
-    botImg.src = arch.spriteUrl || '/assets/sprites/bot/Agent_2.png';
+    const p1IdleSprite = new Image();
+    p1IdleSprite.src = p1Cfg.idleUrl || pArch.spriteUrl || '/assets/sprites/player/Assassin_2.png';
+
+    let botWalkSheet: HTMLImageElement | null = null;
+    if (botCfg.hasWalkSheet && botCfg.walkSheetUrl) {
+      botWalkSheet = new Image();
+      botWalkSheet.src = botCfg.walkSheetUrl;
+    }
+
+    const botIdleSprite = new Image();
+    botIdleSprite.src = botCfg.idleUrl || arch.spriteUrl || '/assets/sprites/bot/agent.png';
 
     // Preload weapon sprites
     const weaponImages: Record<string, HTMLImageElement> = {};
@@ -211,34 +451,37 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       }
     });
 
+    // Armas iniciales en las plataformas del mundo
+    const worldWeapons: WorldWeaponEntity[] = worldCfg.weaponSpawns.map((pos, idx) => ({
+      id: idx + 1,
+      weaponType: SpawnableWeaponsList[Math.floor(Math.random() * SpawnableWeaponsList.length)],
+      x: pos.x,
+      y: pos.y,
+      baseY: pos.y,
+      bobTicks: idx * 20,
+    }));
+
+    const hazards = createWorldHazards(worldCfg);
+
     stateRef.current = {
       p1,
-      p1Controller: new PlayerController(200, 460, true),
+      p1Controller: new PlayerController(spawnP1.x, spawnP1.y, true),
       bot,
+      p2Controller: new PlayerController(spawnBot.x, spawnBot.y, false),
       botAI: createBotFSMData(arch.aiType),
       projectiles: [],
-      worldWeapons: [
-        {
-          id: 1,
-          weaponType: SpawnableWeaponsList[Math.floor(Math.random() * SpawnableWeaponsList.length)],
-          x: 480,
-          y: 350,
-          baseY: 350,
-          bobTicks: 0,
-        },
-        {
-          id: 2,
-          weaponType: SpawnableWeaponsList[Math.floor(Math.random() * SpawnableWeaponsList.length)],
-          x: 480,
-          y: 190,
-          baseY: 190,
-          bobTicks: 25,
-        },
-      ],
+      worldWeapons,
+      medkits: [],
+      crates: hazards.crates,
+      barrels: hazards.barrels,
+      conveyors: hazards.conveyors,
+      presses: hazards.presses,
       fireZones: [],
       particles: [],
       floatingTexts: [],
-      platforms,
+      platforms: worldCfg.platforms,
+      worldConfig: worldCfg,
+      worldTick: 0,
       screenShake: 0,
       weaponSpawnTimer: 300,
       round: 1,
@@ -247,81 +490,104 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       roundActive: true,
       announcement: '¡PELEA!',
       announcementTicks: 90,
-      nextEntityId: 10,
+      nextEntityId: 20,
       keys: {},
       keysJustPressed: {},
       bgImage: bgImg,
-      p1Sprite: p1Img,
-      botSprite: botImg,
+      p1Sprite: p1IdleSprite,
+      botSprite: botIdleSprite,
+      p1WalkSheet,
+      p1IdleSprite,
+      p1SheetConfig: p1Cfg,
+      botWalkSheet,
+      botIdleSprite,
+      botSheetConfig: botCfg,
       weaponImages,
     };
 
+    // Iniciar ambientación procedural del mundo
+    sounds.startWorldAmbient(worldCfg.ambientSound);
     sounds.playRoundGong(true);
 
     return () => {
+      sounds.stopWorldAmbient();
       stateRef.current = null;
     };
-  }, [botFaction, maxRounds]);
+  }, [botFaction, playerFaction, maxRounds, worldId, createWorldHazards]);
 
-  // Helper to restart current round
-  const restartRound = useCallback(() => {
+  // Reiniciar ronda o revancha manteniendo el mundo elegido
+  const restartRound = useCallback((isFullRematch: boolean = false) => {
     if (!stateRef.current) return;
     const s = stateRef.current;
+    const worldCfg = s.worldConfig;
     const arch = getBotArchetype(botFaction);
     const pArch = getBotArchetype(playerFaction);
 
-    s.p1 = createPlayerState(1, pArch.name.toUpperCase(), false, 200, 460);
+    const spawnP1 = worldCfg.spawns[0] || { x: 200, y: 460 };
+    const spawnBot = worldCfg.spawns[1] || { x: 760, y: 460 };
+
+    if (isFullRematch) {
+      s.p1Score = 0;
+      s.botScore = 0;
+      s.round = 1;
+      setHudState((prev) => ({
+        ...prev,
+        p1Score: 0,
+        botScore: 0,
+        round: 1,
+        isMatchOver: false,
+        matchWinner: '',
+      }));
+    }
+
+    s.p1 = createPlayerState(1, pArch.name.toUpperCase(), false, spawnP1.x, spawnP1.y);
+    s.p1.maxHealth = pArch.maxHealth;
+    s.p1.health = pArch.maxHealth;
     s.p1.speedModifier = pArch.speedModifier;
     s.p1.damageDealtModifier = pArch.damageDealtModifier;
     s.p1.damageTakenModifier = pArch.damageTakenModifier;
     s.p1.meleeForceModifier = pArch.meleeForceModifier;
-    // Siempre inicia desarmado cada ronda
     s.p1.equippedWeapon = WeaponType.Fists;
     s.p1.ammo = 0;
     if (s.p1Controller) {
-      s.p1Controller.setPosition(200, 460);
+      s.p1Controller.setPosition(spawnP1.x, spawnP1.y);
       s.p1Controller.facingRight = true;
     }
 
-    s.bot = createPlayerState(2, arch.name.toUpperCase(), true, 760, 460);
+    s.bot = createPlayerState(2, arch.name.toUpperCase(), true, spawnBot.x, spawnBot.y);
     s.bot.maxHealth = arch.maxHealth;
     s.bot.health = arch.maxHealth;
     s.bot.speedModifier = arch.speedModifier;
     s.bot.damageDealtModifier = arch.damageDealtModifier;
     s.bot.damageTakenModifier = arch.damageTakenModifier;
     s.bot.meleeForceModifier = arch.meleeForceModifier;
-    // El bot también inicia desarmado cada ronda
     s.bot.equippedWeapon = WeaponType.Fists;
     s.bot.ammo = 0;
-
-    if (s.p1Sprite && pArch.spriteUrl) {
-      s.p1Sprite.src = pArch.spriteUrl;
+    if (s.p2Controller) {
+      s.p2Controller.setPosition(spawnBot.x, spawnBot.y);
+      s.p2Controller.facingRight = false;
     }
 
-    if (s.botSprite && arch.spriteUrl) {
-      s.botSprite.src = arch.spriteUrl;
+    // Regenerar armas en plataformas
+    s.worldWeapons = worldCfg.weaponSpawns.map((pos, idx) => ({
+      id: s.nextEntityId++,
+      weaponType: SpawnableWeaponsList[Math.floor(Math.random() * SpawnableWeaponsList.length)],
+      x: pos.x,
+      y: pos.y,
+      baseY: pos.y,
+      bobTicks: idx * 20,
+    }));
+
+    // Regenerar peligros si es revancha o se quedaron vacíos
+    if (isFullRematch || s.crates.length === 0 || s.barrels.length === 0) {
+      const hazards = createWorldHazards(worldCfg);
+      s.crates = hazards.crates;
+      s.barrels = hazards.barrels;
+      s.conveyors = hazards.conveyors;
+      s.presses = hazards.presses;
     }
 
-    // Generar armas en plataformas para recoger
-    s.worldWeapons = [
-      {
-        id: s.nextEntityId++,
-        weaponType: SpawnableWeaponsList[Math.floor(Math.random() * SpawnableWeaponsList.length)],
-        x: 480,
-        y: 350,
-        baseY: 350,
-        bobTicks: 0,
-      },
-      {
-        id: s.nextEntityId++,
-        weaponType: SpawnableWeaponsList[Math.floor(Math.random() * SpawnableWeaponsList.length)],
-        x: 480,
-        y: 190,
-        baseY: 190,
-        bobTicks: 25,
-      },
-    ];
-
+    s.medkits = [];
     s.projectiles = [];
     s.particles = [];
     s.fireZones = [];
@@ -332,9 +598,9 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     s.weaponSpawnTimer = 300;
 
     sounds.playRoundGong(true);
-  }, [botFaction, playerFaction]);
+  }, [botFaction, playerFaction, createWorldHazards]);
 
-  // Input listeners
+  // Teclado
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!stateRef.current) return;
@@ -348,7 +614,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       stateRef.current.keys[key] = true;
 
       if (key === 'r') {
-        restartRound();
+        restartRound(stateRef.current.p1Score >= Math.floor(maxRounds / 2) + 1 || stateRef.current.botScore >= Math.floor(maxRounds / 2) + 1);
       }
       if (key === 'escape') {
         onExitToMenu();
@@ -358,10 +624,8 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     const handleKeyUp = (e: KeyboardEvent) => {
       if (!stateRef.current) return;
       const key = e.key.toLowerCase();
-      if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' ', 'space'].includes(key)) {
-        e.preventDefault();
-      }
       stateRef.current.keys[key] = false;
+      delete stateRef.current.keysJustPressed[key];
     };
 
     window.addEventListener('keydown', handleKeyDown);
@@ -370,143 +634,133 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [onExitToMenu, restartRound]);
+  }, [onExitToMenu, restartRound, maxRounds]);
 
-  // Spawn a random weapon at a valid platform location
-  const spawnRandomWeapon = () => {
-    if (!stateRef.current) return;
-    const s = stateRef.current;
-    if (s.worldWeapons.length >= 4) return;
-
-    const spawnPoints = [
-      { x: 480, y: 350 },
-      { x: 195, y: 270 },
-      { x: 765, y: 270 },
-      { x: 480, y: 190 },
-      { x: 300, y: 480 },
-      { x: 650, y: 480 },
-    ];
-    const pt = spawnPoints[Math.floor(Math.random() * spawnPoints.length)];
-    const wpnType =
-      SpawnableWeaponsList[Math.floor(Math.random() * SpawnableWeaponsList.length)];
-
-    s.worldWeapons.push({
-      id: s.nextEntityId++,
-      weaponType: wpnType,
-      x: pt.x,
-      y: pt.y,
-      baseY: pt.y,
-      bobTicks: Math.random() * 50,
-    });
-
-    // Spawn sparkles
-    for (let i = 0; i < 8; i++) {
-      s.particles.push({
-        x: pt.x,
-        y: pt.y,
-        vx: (Math.random() - 0.5) * 80,
-        vy: (Math.random() - 0.5) * 80,
-        life: 25,
-        maxLife: 25,
-        color: '#facc15',
-        size: 3,
-      });
-    }
-  };
-
-  // Add hit spark particles
-  const addSparks = (x: number, y: number, color = '#f97316', count = 10) => {
+  // Helpers de combate y efectos
+  const addSparks = (x: number, y: number, color: string, count: number = 8) => {
     if (!stateRef.current) return;
     for (let i = 0; i < count; i++) {
       const angle = Math.random() * Math.PI * 2;
-      const speed = 40 + Math.random() * 160;
+      const speed = 40 + Math.random() * 90;
       stateRef.current.particles.push({
         x,
         y,
         vx: Math.cos(angle) * speed,
         vy: Math.sin(angle) * speed,
-        life: 15 + Math.random() * 15,
-        maxLife: 30,
+        life: 10 + Math.random() * 12,
+        maxLife: 22,
         color,
-        size: 2 + Math.random() * 3,
+        size: 1.5 + Math.random() * 2,
       });
     }
   };
 
-  // Add explosion effect
-  const createExplosion = (x: number, y: number, radius: number, damage: number, isMolotov = false) => {
+  const createExplosion = (
+    x: number,
+    y: number,
+    radius: number,
+    damage: number,
+    spawnFire: boolean
+  ) => {
     if (!stateRef.current) return;
     const s = stateRef.current;
-    s.screenShake = 14;
+    s.screenShake = 16;
     sounds.playExplosion();
 
-    // Damage players in radius
-    const hitP1 = CombatSystem.resolveExplosion(s.p1, x, y, radius, damage);
-    if (hitP1.didHit) {
-      s.floatingTexts.push({
-        id: s.nextEntityId++,
-        text: `-${Math.round(hitP1.damageDealt)}`,
-        x: s.p1.x,
-        y: s.p1.y - 20,
-        color: '#ef4444',
-        life: 40,
-      });
-    }
+    addSparks(x, y, '#f97316', 30);
+    addSparks(x, y, '#ef4444', 20);
+    addSparks(x, y, '#fde047', 15);
 
-    const hitBot = CombatSystem.resolveExplosion(s.bot, x, y, radius, damage);
-    if (hitBot.didHit) {
-      s.floatingTexts.push({
-        id: s.nextEntityId++,
-        text: `-${Math.round(hitBot.damageDealt)}`,
-        x: s.bot.x,
-        y: s.bot.y - 20,
-        color: '#facc15',
-        life: 40,
-      });
-    }
-
-    if (isMolotov) {
+    if (spawnFire) {
       s.fireZones.push({
         x,
         y,
-        radius: GameConstants.MolotovFireZone,
-        remainingTicks: 240, // 4 seconds of fire
+        radius: radius * 0.7,
+        remainingTicks: 300,
       });
     }
 
-    // Explosion particles
-    for (let i = 0; i < 35; i++) {
-      const angle = Math.random() * Math.PI * 2;
-      const speed = 60 + Math.random() * 260;
-      s.particles.push({
-        x,
-        y,
-        vx: Math.cos(angle) * speed,
-        vy: Math.sin(angle) * speed - 40,
-        life: 25 + Math.random() * 25,
-        maxLife: 50,
-        color: i % 2 === 0 ? '#ea580c' : i % 3 === 0 ? '#facc15' : '#71717a',
-        size: 4 + Math.random() * 6,
-      });
-    }
+    // Daño a combatientes
+    [s.p1, s.bot].forEach((target) => {
+      if (!target.isAlive) return;
+      const dist = Math.hypot(target.x - x, target.y - y);
+      if (dist < radius) {
+        const falloff = 1 - dist / radius;
+        const dealt = damage * falloff * target.damageTakenModifier;
+        target.health = Math.max(0, target.health - dealt);
+        target.fireTicks = 180;
+        target.isOnFire = true;
+
+        if (target.health <= 0) {
+          target.health = 0;
+          target.isAlive = false;
+          PlayerFSM.tryTransition(target, PlayerFSMState.Dead);
+          sounds.playHit();
+        } else {
+          PlayerFSM.tryTransition(target, PlayerFSMState.KnockedDown);
+        }
+
+        s.floatingTexts.push({
+          id: s.nextEntityId++,
+          text: `-${Math.round(dealt)}`,
+          x: target.x,
+          y: target.y - 35,
+          color: '#f97316',
+          life: 40,
+        });
+      }
+    });
+
+    // Daño en cadena a cajas y barriles
+    s.crates.forEach((c) => {
+      const dist = Math.hypot(c.x + c.w / 2 - x, c.y + c.h / 2 - y);
+      if (dist < radius) {
+        c.health -= damage * (1 - dist / radius);
+      }
+    });
+
+    s.barrels.forEach((b) => {
+      const dist = Math.hypot(b.x + b.w / 2 - x, b.y + b.h / 2 - y);
+      if (dist < radius) {
+        b.health -= damage * (1 - dist / radius);
+      }
+    });
   };
 
-  // Main 60Hz physics and game loop
+  // Aparición periódica de armas
+  const spawnRandomWeapon = () => {
+    if (!stateRef.current) return;
+    const s = stateRef.current;
+    const worldCfg = s.worldConfig;
+    const spawnPoints = worldCfg.weaponSpawns;
+    const pt = spawnPoints[Math.floor(Math.random() * spawnPoints.length)];
+    const randomWpn = SpawnableWeaponsList[Math.floor(Math.random() * SpawnableWeaponsList.length)];
+
+    s.worldWeapons.push({
+      id: s.nextEntityId++,
+      weaponType: randomWpn,
+      x: pt.x,
+      y: pt.y,
+      baseY: pt.y,
+      bobTicks: 0,
+    });
+    addSparks(pt.x, pt.y, '#38bdf8', 12);
+  };
+
+  // LOOP PRINCIPAL DE JUEGO (60Hz)
   useEffect(() => {
     let animId: number;
-    let lastTime = performance.now();
-    let accumulatedTime = 0;
-    const timestep = 1000 / 60; // 16.666ms
 
     const updateGame = () => {
       const s = stateRef.current;
       if (!s) return;
 
+      s.worldTick++;
       const p1 = s.p1;
       const bot = s.bot;
       const keys = s.keys;
 
-      // Decrement announcement timer
+      // Anuncios
       if (s.announcementTicks > 0) {
         s.announcementTicks--;
         if (s.announcementTicks <= 0 && s.roundActive) {
@@ -514,7 +768,19 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         }
       }
 
-      // Check round end
+      // Comprobar muerte automática si la salud llega a 0 o menos por cualquier daño
+      if (p1.isAlive && p1.health <= 0) {
+        p1.health = 0;
+        p1.isAlive = false;
+        PlayerFSM.tryTransition(p1, PlayerFSMState.Dead);
+      }
+      if (bot.isAlive && bot.health <= 0) {
+        bot.health = 0;
+        bot.isAlive = false;
+        PlayerFSM.tryTransition(bot, PlayerFSMState.Dead);
+      }
+
+      // Fin de ronda y match
       if (s.roundActive && (!p1.isAlive || !bot.isAlive)) {
         s.roundActive = false;
         const p1Won = p1.isAlive;
@@ -524,7 +790,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           sounds.playRoundGong(true);
         } else {
           s.botScore++;
-          s.announcement = '¡BOT GANA!';
+          s.announcement = gameMode === 'local1v1' ? '¡JUGADOR 2 GANA!' : '¡BOT GANA!';
           sounds.playRoundGong(false);
         }
         s.announcementTicks = 150;
@@ -534,37 +800,58 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           const matchWon = s.p1Score > s.botScore;
           setTimeout(() => {
             if (stateRef.current) {
-              stateRef.current.announcement = matchWon ? '¡VICTORIA TOTAL!' : '¡DERROTA!';
+              stateRef.current.announcement = matchWon
+                ? '¡VICTORIA TOTAL!'
+                : gameMode === 'local1v1'
+                ? '¡VICTORIA DEL JUGADOR 2!'
+                : '¡DERROTA!';
               stateRef.current.announcementTicks = 9999;
             }
+            setHudState((prev) => ({
+              ...prev,
+              isMatchOver: true,
+              matchWinner: matchWon
+                ? '¡VICTORIA DEL JUGADOR 1!'
+                : gameMode === 'local1v1'
+                ? '¡VICTORIA DEL JUGADOR 2!'
+                : '¡EL BOT HA VENCIDO!',
+            }));
             if (onMatchComplete) onMatchComplete(matchWon);
           }, 2000);
         } else {
-          // Next round after delay
           setTimeout(() => {
             if (stateRef.current) {
               s.round++;
-              restartRound();
+              restartRound(false);
             }
           }, 2500);
         }
       }
 
       // ─────────────────────────────────────────────────────────
-      // 1. INPUT HUMANO (P1) — CONTROLADOR ARCADE TIPO SUPERFIGHTERS
+      // 1. INPUT HUMANO (P1)
       // ─────────────────────────────────────────────────────────
       if (p1.isAlive && s.roundActive) {
-        const leftKey = !!(keys['a'] || keys['arrowleft']);
-        const rightKey = !!(keys['d'] || keys['arrowright']);
+        const is1v1 = gameMode === 'local1v1';
+        const leftKey = is1v1 ? !!keys['arrowleft'] : !!(keys['a'] || keys['arrowleft']);
+        const rightKey = is1v1 ? !!keys['arrowright'] : !!(keys['d'] || keys['arrowright']);
         let moveDir: -1 | 0 | 1 = 0;
         if (leftKey && !rightKey) moveDir = -1;
         else if (rightKey && !leftKey) moveDir = 1;
 
-        const runHeld = !!(keys['shift'] || keys['e']);
-        const jumpJustPressed = !!(s.keysJustPressed['w'] || s.keysJustPressed['arrowup'] || s.keysJustPressed[' ']);
-        const jumpHeld = !!(keys['w'] || keys['arrowup'] || keys[' ']);
-        const rollPressed = !!(s.keysJustPressed['s'] || s.keysJustPressed['arrowdown'] || s.keysJustPressed['c']);
-        const crouchHeld = !!(keys['s'] || keys['arrowdown']);
+        const runHeld = is1v1
+          ? !!keys['.']
+          : !!(keys['shift'] || keys['e'] || keys['.'] || keys['q']);
+        const jumpJustPressed = is1v1
+          ? !!s.keysJustPressed['arrowup']
+          : !!(s.keysJustPressed['w'] || s.keysJustPressed['arrowup'] || s.keysJustPressed[' ']);
+        const jumpHeld = is1v1
+          ? !!keys['arrowup']
+          : !!(keys['w'] || keys['arrowup'] || keys[' ']);
+        const rollPressed = is1v1
+          ? !!s.keysJustPressed['arrowdown']
+          : !!(s.keysJustPressed['s'] || s.keysJustPressed['arrowdown'] || s.keysJustPressed['c']);
+        const crouchHeld = is1v1 ? !!keys['arrowdown'] : !!(keys['s'] || keys['arrowdown']);
         const dropThrough = crouchHeld && jumpJustPressed;
 
         const p1Input: PlayerInput = {
@@ -576,7 +863,6 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           dropThrough,
         };
 
-        // Si el jugador no está noqueado o aturdido, el PlayerController ejecuta la física arcade seca
         if (
           p1.fsm !== PlayerFSMState.KnockedDown &&
           p1.fsm !== PlayerFSMState.GetUp &&
@@ -587,7 +873,6 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
           s.p1Controller.update(1 / 60, p1Input, s.platforms);
 
-          // Sincronización instantánea de posición y velocidad (sin deslizamiento residual)
           p1.x = s.p1Controller.x;
           p1.y = s.p1Controller.y;
           p1.velocityX = s.p1Controller.vx;
@@ -601,19 +886,17 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
               p1.rollTicks = GameConstants.RollDurationTicks;
             }
             p1.fsm = PlayerFSMState.Roll;
-
-            // Partículas de polvo y derrape al rodar por el suelo
             if (Math.random() < 0.65) {
               const dustDir = p1.facingRight ? -1 : 1;
               s.particles.push({
                 x: p1.x + dustDir * 10,
-                y: p1.y + 16 + (Math.random() - 0.5) * 4,
+                y: p1.y + 16,
                 vx: dustDir * (25 + Math.random() * 45),
                 vy: -8 - Math.random() * 15,
-                life: 14 + Math.random() * 6,
+                life: 14,
                 maxLife: 20,
                 color: '#cbd5e1',
-                size: 2.5 + Math.random() * 2.5,
+                size: 3,
               });
             }
           } else if (s.p1Controller.state === ControllerState.Jump) {
@@ -626,18 +909,17 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
               p1.fsm = PlayerFSMState.Run;
             }
           } else {
-            // Idle o Agachado
             if (p1.fsm !== PlayerFSMState.MeleeAttack && p1.fsm !== PlayerFSMState.RangedFire) {
               p1.fsm = crouchHeld ? PlayerFSMState.Crouch : PlayerFSMState.Idle;
             }
           }
         }
 
-        const meleePressed = keys['n'] || keys['j'];
-        const firePressed = keys['m'] || keys['k'];
-        const throwPressed = keys['g'];
+        const meleePressed = is1v1 ? !!keys['n'] : !!(keys['n'] || keys['j']);
+        const firePressed = is1v1 ? !!keys['m'] : !!(keys['m'] || keys['k']);
+        const throwPressed = is1v1 ? !!(keys[','] || keys['comma']) : !!(keys['g'] || keys['comma'] || keys[','] || keys['l']);
 
-        // Melee Attack
+        // Melee Attack P1
         if (
           meleePressed &&
           p1.attackCooldown <= 0 &&
@@ -651,31 +933,48 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           PlayerFSM.tryTransition(p1, PlayerFSMState.MeleeAttack);
           sounds.playPunch();
 
-          // Resolve Melee against Bot
+          // Golpear rival
           const hit = CombatSystem.resolveMelee(p1, bot);
           if (hit.didHit) {
             sounds.playHit();
-            addSparks(bot.x, bot.y, '#f59e0b', 12);
+            addSparks(bot.x, bot.y, '#38bdf8', 12);
             s.screenShake = 6;
             s.floatingTexts.push({
               id: s.nextEntityId++,
               text: `-${Math.round(hit.damageDealt)}`,
               x: bot.x,
               y: bot.y - 25,
-              color: '#facc15',
+              color: '#38bdf8',
               life: 35,
             });
           }
+
+          // Golpear cajas destructibles cercanas
+          s.crates.forEach((crate) => {
+            if (Math.hypot(p1.x - (crate.x + crate.w / 2), p1.y - (crate.y + crate.h / 2)) < 45) {
+              crate.health -= 15;
+              sounds.playHit();
+              addSparks(crate.x + 16, crate.y + 16, '#d97706', 8);
+            }
+          });
+
+          // Golpear barriles explosivos cercanos
+          s.barrels.forEach((barrel) => {
+            if (Math.hypot(p1.x - (barrel.x + barrel.w / 2), p1.y - (barrel.y + barrel.h / 2)) < 45) {
+              barrel.health -= 15;
+              sounds.playHit();
+              addSparks(barrel.x + 12, barrel.y + 16, '#ef4444', 8);
+            }
+          });
         }
 
-        // Fire Gun
+        // Firearm / Ranged Fire P1
         if (
           firePressed &&
           p1.attackCooldown <= 0 &&
           p1.equippedWeapon !== WeaponType.Fists &&
           p1.ammo > 0 &&
-          p1.fsm !== PlayerFSMState.Roll &&
-          p1.fsm !== PlayerFSMState.KnockedDown
+          p1.fsm !== PlayerFSMState.Roll
         ) {
           const wpn = getWeapon(p1.equippedWeapon);
           if (wpn.category === 'Firearm') {
@@ -683,315 +982,440 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             p1.ammo--;
             PlayerFSM.tryTransition(p1, PlayerFSMState.RangedFire);
             sounds.playGunshot(wpn.type.toLowerCase());
-            s.screenShake = wpn.type === WeaponType.Bazooka || wpn.type === WeaponType.Shotgun ? 8 : 3;
 
             const dir = p1.facingRight ? 1 : -1;
-            const muzzleX = p1.x + dir * 22;
-            const muzzleY = p1.y - 8;
+            const muzzleX = p1.x + dir * 28;
+            const muzzleY = p1.y - 6;
 
             addSparks(muzzleX, muzzleY, '#fde047', 6);
+            s.screenShake = Math.min(10, (wpn.damage || 20) / 4);
 
-            // Handle pellets (e.g., Shotgun 4 pellets)
             const count = wpn.pelletCount || 1;
             for (let i = 0; i < count; i++) {
-              const spreadAngle =
-                ((Math.random() - 0.5) * wpn.accuracyDeg * Math.PI) / 180;
-              const baseAngle = dir === 1 ? 0 : Math.PI;
-              const angle = baseAngle + spreadAngle;
-
+              const spreadAngle = ((Math.random() - 0.5) * ((wpn.accuracyDeg || 3) * Math.PI / 180)) / 2;
+              const speed = wpn.projectileSpeed || 900;
               s.projectiles.push({
                 id: s.nextEntityId++,
                 x: muzzleX,
                 y: muzzleY,
-                vx: Math.cos(angle) * wpn.projectileSpeed,
-                vy: Math.sin(angle) * wpn.projectileSpeed,
-                damage: wpn.damage * p1.damageDealtModifier,
+                vx: dir * speed * Math.cos(spreadAngle),
+                vy: speed * Math.sin(spreadAngle),
+                damage: (wpn.damage / count) * p1.damageDealtModifier,
                 onFireDuration: wpn.onFireDuration || 0,
                 explosionRadius: wpn.explosionRadius || 0,
                 shooterId: p1.id,
-                weaponType: wpn.type,
-                pelletCount: 1,
+                weaponType: p1.equippedWeapon,
+                pelletCount: count,
                 lifeTicks: 0,
-                maxLifeTicks: wpn.type === WeaponType.Flamethrower ? 24 : 120,
-                color: wpn.color,
+                maxLifeTicks: 60,
+                color: '#facc15',
               });
             }
-
-            if (p1.ammo <= 0) {
-              p1.equippedWeapon = WeaponType.Fists;
-            }
           }
         }
 
-        // Throw Grenade / Molotov
-        if (
-          throwPressed &&
-          p1.attackCooldown <= 0 &&
-          (p1.equippedWeapon === WeaponType.Grenade ||
-            p1.equippedWeapon === WeaponType.Molotov) &&
-          p1.ammo > 0
-        ) {
-          const wpn = getWeapon(p1.equippedWeapon);
-          p1.attackCooldown = 25;
-          p1.ammo--;
+        // Granadas / Molotov
+        if (throwPressed && p1.attackCooldown <= 0) {
+          p1.attackCooldown = 60;
+          sounds.playGunshot('grenade');
           const dir = p1.facingRight ? 1 : -1;
-
           s.projectiles.push({
             id: s.nextEntityId++,
-            x: p1.x + dir * 16,
+            x: p1.x + dir * 18,
             y: p1.y - 12,
-            vx: dir * 300,
-            vy: -350,
-            damage: wpn.damage,
-            onFireDuration: wpn.onFireDuration || 0,
-            explosionRadius:
-              wpn.type === WeaponType.Grenade
-                ? GameConstants.GrenadeExplosionRadius
-                : GameConstants.MolotovFireZone,
+            vx: dir * 420,
+            vy: -320,
+            damage: 60 * p1.damageDealtModifier,
+            onFireDuration: 240,
+            explosionRadius: 85,
             shooterId: p1.id,
-            weaponType: wpn.type,
+            weaponType: WeaponType.Grenade,
             pelletCount: 1,
             lifeTicks: 0,
-            maxLifeTicks: 200,
+            maxLifeTicks: 120,
             isGrenade: true,
-            isMolotov: wpn.type === WeaponType.Molotov,
-            fuseTicks:
-              wpn.type === WeaponType.Grenade
-                ? GameConstants.GrenadeTimerTicks
-                : 0,
-            color: wpn.color,
+            color: '#10b981',
           });
-
-          if (p1.ammo <= 0) {
-            p1.equippedWeapon = WeaponType.Fists;
-          }
-        }
-
-        // Stamina regen
-        if (
-          p1.onGround &&
-          (p1.fsm === PlayerFSMState.Idle || p1.fsm === PlayerFSMState.Crouch)
-        ) {
-          p1.stamina = Math.min(
-            GameConstants.MaxStamina,
-            p1.stamina + GameConstants.StaminaRegenPerTick
-          );
         }
       }
 
       // ─────────────────────────────────────────────────────────
-      // 2. IA DEL BOT
+      // 2. INPUT JUGADOR 2 (1v1 LOCAL) O IA DE COMBATE (vsBOT)
       // ─────────────────────────────────────────────────────────
       if (bot.isAlive && s.roundActive) {
-        // Find nearest weapon
-        let nearestWpnDist = 9999;
-        let nearestWpnPos: { x: number; y: number } | null = null;
-        for (const w of s.worldWeapons) {
-          const d = Math.sqrt(
-            Math.pow(w.x - bot.x, 2) + Math.pow(w.y - bot.y, 2)
-          );
-          if (d < nearestWpnDist) {
-            nearestWpnDist = d;
-            nearestWpnPos = { x: w.x, y: w.y };
-          }
-        }
+        if (gameMode === 'local1v1') {
+          // J2 en 1v1 Local: A/D (mover), W (salto), S (rodar), Q (correr), J (melee), K (disparo), L (granada)
+          const leftKey = !!keys['a'];
+          const rightKey = !!keys['d'];
+          let moveDir: -1 | 0 | 1 = 0;
+          if (leftKey && !rightKey) moveDir = -1;
+          else if (rightKey && !leftKey) moveDir = 1;
 
-        // Check incoming projectiles
-        let projIncoming = false;
-        for (const pr of s.projectiles) {
-          if (pr.shooterId !== bot.id) {
-            const d = Math.sqrt(
-              Math.pow(pr.x - bot.x, 2) + Math.pow(pr.y - bot.y, 2)
-            );
-            if (d < 160) {
+          const runHeld = !!keys['q'];
+          const jumpJustPressed = !!s.keysJustPressed['w'];
+          const jumpHeld = !!keys['w'];
+          const rollPressed = !!s.keysJustPressed['s'];
+          const crouchHeld = !!keys['s'];
+          const dropThrough = crouchHeld && jumpJustPressed;
+
+          const p2Input: PlayerInput = {
+            moveDir,
+            run: runHeld,
+            jump: jumpJustPressed && !dropThrough,
+            jumpHeld,
+            roll: rollPressed && !dropThrough,
+            dropThrough,
+          };
+
+          if (
+            bot.fsm !== PlayerFSMState.KnockedDown &&
+            bot.fsm !== PlayerFSMState.GetUp &&
+            bot.fsm !== PlayerFSMState.Hitstun
+          ) {
+            const prevRoll = s.p2Controller.state === ControllerState.Roll;
+            const prevJump = s.p2Controller.state === ControllerState.Jump;
+
+            s.p2Controller.update(1 / 60, p2Input, s.platforms);
+
+            bot.x = s.p2Controller.x;
+            bot.y = s.p2Controller.y;
+            bot.velocityX = s.p2Controller.vx;
+            bot.velocityY = s.p2Controller.vy;
+            bot.facingRight = s.p2Controller.facingRight;
+            bot.onGround = s.p2Controller.isOnFloor;
+
+            if (s.p2Controller.state === ControllerState.Roll) {
+              if (!prevRoll) {
+                sounds.playRoll();
+                bot.rollTicks = GameConstants.RollDurationTicks;
+              }
+              bot.fsm = PlayerFSMState.Roll;
+              if (Math.random() < 0.65) {
+                const dustDir = bot.facingRight ? -1 : 1;
+                s.particles.push({
+                  x: bot.x + dustDir * 10,
+                  y: bot.y + 16,
+                  vx: dustDir * (25 + Math.random() * 45),
+                  vy: -8 - Math.random() * 15,
+                  life: 14,
+                  maxLife: 20,
+                  color: '#cbd5e1',
+                  size: 3,
+                });
+              }
+            } else if (s.p2Controller.state === ControllerState.Jump) {
+              if (!prevJump) sounds.playJump();
+              bot.fsm = PlayerFSMState.Jump;
+            } else if (s.p2Controller.state === ControllerState.Fall) {
+              bot.fsm = PlayerFSMState.Fall;
+            } else if (s.p2Controller.state === ControllerState.Run || s.p2Controller.state === ControllerState.Walk) {
+              if (bot.fsm !== PlayerFSMState.MeleeAttack && bot.fsm !== PlayerFSMState.RangedFire) {
+                bot.fsm = PlayerFSMState.Run;
+              }
+            } else {
+              if (bot.fsm !== PlayerFSMState.MeleeAttack && bot.fsm !== PlayerFSMState.RangedFire) {
+                bot.fsm = crouchHeld ? PlayerFSMState.Crouch : PlayerFSMState.Idle;
+              }
+            }
+          }
+
+          const meleePressed = !!keys['j'];
+          const firePressed = !!keys['k'];
+          const throwPressed = !!keys['l'];
+
+          // Melee J2
+          if (
+            meleePressed &&
+            bot.attackCooldown <= 0 &&
+            (bot.fsm === PlayerFSMState.Idle ||
+              bot.fsm === PlayerFSMState.Run ||
+              bot.fsm === PlayerFSMState.Crouch)
+          ) {
+            bot.comboStep = (bot.comboStep + 1) % 3;
+            bot.comboWindowTicks = GameConstants.FistsComboWindowTicks;
+            bot.attackCooldown = GameConstants.FistsCooldownTicks;
+            PlayerFSM.tryTransition(bot, PlayerFSMState.MeleeAttack);
+            sounds.playPunch();
+
+            if (s.p1Controller.isInvulnerable) {
+              s.floatingTexts.push({
+                id: s.nextEntityId++,
+                text: '¡ESQUIVADO!',
+                x: p1.x,
+                y: p1.y - 25,
+                color: '#38bdf8',
+                life: 25,
+              });
+            } else {
+              const hit = CombatSystem.resolveMelee(bot, p1);
+              if (hit.didHit) {
+                sounds.playHit();
+                addSparks(p1.x, p1.y, '#ef4444', 12);
+                s.screenShake = 6;
+                s.floatingTexts.push({
+                  id: s.nextEntityId++,
+                  text: `-${Math.round(hit.damageDealt)}`,
+                  x: p1.x,
+                  y: p1.y - 25,
+                  color: '#ef4444',
+                  life: 35,
+                });
+              }
+            }
+
+            s.crates.forEach((crate) => {
+              if (Math.hypot(bot.x - (crate.x + crate.w / 2), bot.y - (crate.y + crate.h / 2)) < 45) {
+                crate.health -= 15;
+                sounds.playHit();
+                addSparks(crate.x + 16, crate.y + 16, '#d97706', 8);
+              }
+            });
+          }
+
+          // Fire J2
+          if (
+            firePressed &&
+            bot.attackCooldown <= 0 &&
+            bot.equippedWeapon !== WeaponType.Fists &&
+            bot.ammo > 0 &&
+            bot.fsm !== PlayerFSMState.Roll
+          ) {
+            const wpn = getWeapon(bot.equippedWeapon);
+            if (wpn.category === 'Firearm') {
+              bot.attackCooldown = wpn.cooldownTicks;
+              bot.ammo--;
+              PlayerFSM.tryTransition(bot, PlayerFSMState.RangedFire);
+              sounds.playGunshot(wpn.type.toLowerCase());
+              s.screenShake = Math.max(s.screenShake, wpn.type === WeaponType.Shotgun ? 8 : 4);
+
+              const dir = bot.facingRight ? 1 : -1;
+              const muzzleX = bot.x + dir * 28;
+              const muzzleY = bot.y - 6;
+              addSparks(muzzleX, muzzleY, '#fde047', 6);
+
+              const count = wpn.pelletCount || 1;
+              for (let i = 0; i < count; i++) {
+                const spreadAngle = ((Math.random() - 0.5) * ((wpn.accuracyDeg || 3) * Math.PI / 180)) / 2;
+                const speed = wpn.projectileSpeed || 900;
+                s.projectiles.push({
+                  id: s.nextEntityId++,
+                  x: muzzleX,
+                  y: muzzleY,
+                  vx: dir * speed * Math.cos(spreadAngle),
+                  vy: speed * Math.sin(spreadAngle),
+                  damage: (wpn.damage / count) * bot.damageDealtModifier,
+                  onFireDuration: wpn.onFireDuration || 0,
+                  explosionRadius: wpn.explosionRadius || 0,
+                  shooterId: bot.id,
+                  weaponType: bot.equippedWeapon,
+                  pelletCount: count,
+                  lifeTicks: 0,
+                  maxLifeTicks: 60,
+                  color: '#f87171',
+                });
+              }
+            }
+          }
+
+          // Granadas J2
+          if (throwPressed && bot.attackCooldown <= 0) {
+            bot.attackCooldown = 45;
+            sounds.playGunshot('grenade');
+            const dir = bot.facingRight ? 1 : -1;
+            s.projectiles.push({
+              id: s.nextEntityId++,
+              x: bot.x + dir * 18,
+              y: bot.y - 12,
+              vx: dir * 420,
+              vy: -320,
+              damage: 60 * bot.damageDealtModifier,
+              onFireDuration: 240,
+              explosionRadius: 85,
+              shooterId: bot.id,
+              weaponType: WeaponType.Grenade,
+              pelletCount: 1,
+              lifeTicks: 0,
+              maxLifeTicks: 120,
+              isGrenade: true,
+              color: '#f97316',
+            });
+          }
+        } else {
+          // IA DE COMBATE (BOT RIVAL ORIGINAL vsBOT)
+          let nearestWpnDist = 9999;
+          let nearestWpnPos: { x: number; y: number } | null = null;
+          for (const w of s.worldWeapons) {
+            const dy = w.y - bot.y;
+            const dx = Math.abs(w.x - bot.x);
+            // Si el arma está a más de 170px por encima directamente en la vertical,
+            // no es alcanzable de un solo salto directo sin plataforma previa
+            if (dy < -170 && dx < 60) {
+              continue;
+            }
+            const d = Math.hypot(w.x - bot.x, w.y - bot.y);
+            if (d < nearestWpnDist) {
+              nearestWpnDist = d;
+              nearestWpnPos = { x: w.x, y: w.y };
+            }
+          }
+
+          let projIncoming = false;
+          for (const pr of s.projectiles) {
+            if (pr.shooterId !== bot.id && Math.hypot(pr.x - bot.x, pr.y - bot.y) < 160) {
               projIncoming = true;
               break;
             }
           }
-        }
 
-        const aiState = BotAI.evaluate(
-          bot,
-          s.botAI,
-          p1,
-          projIncoming,
-          nearestWpnDist
-        );
-        const botInput = BotAI.computeInput(
-          bot,
-          s.botAI,
-          p1,
-          aiState,
-          nearestWpnPos
-        );
+          const aiState = BotAI.evaluate(bot, s.botAI, p1, projIncoming, nearestWpnDist);
+          const botInput = BotAI.computeInput(bot, s.botAI, p1, aiState, nearestWpnPos);
 
-        // Apply movement
-        const botSpeed = GameConstants.RunSpeed * bot.speedModifier;
-        if (
-          Math.abs(botInput.moveX) > 0.05 &&
-          bot.fsm !== PlayerFSMState.Roll &&
-          bot.fsm !== PlayerFSMState.KnockedDown &&
-          bot.fsm !== PlayerFSMState.GetUp &&
-          bot.fsm !== PlayerFSMState.Hitstun
-        ) {
-          bot.velocityX = botInput.moveX * botSpeed;
-          bot.facingRight = botInput.moveX > 0;
-          if (bot.onGround) {
-            PlayerFSM.tryTransition(bot, PlayerFSMState.Run);
+          // Salto de ayuda si el bot choca contra un escalón del terreno mientras corre
+          if (
+            bot.onGround &&
+            s.botAI.jumpCooldown <= 0 &&
+            Math.abs(botInput.moveX) > 0.4 &&
+            Math.abs(bot.velocityX) < 25 &&
+            (aiState === BotAIState.Chase || aiState === BotAIState.Pickup)
+          ) {
+            botInput.jump = true;
+            s.botAI.jumpCooldown = 40;
           }
-        } else if (bot.fsm !== PlayerFSMState.Roll) {
-          bot.velocityX *= GameConstants.GroundFriction;
-          if (bot.onGround && Math.abs(bot.velocityX) < 5) {
-            bot.velocityX = 0;
-            if (bot.fsm === PlayerFSMState.Run) {
-              PlayerFSM.tryTransition(bot, PlayerFSMState.Idle);
+
+          const botSpeed = GameConstants.RunSpeed * bot.speedModifier;
+          if (
+            Math.abs(botInput.moveX) > 0.05 &&
+            bot.fsm !== PlayerFSMState.Roll &&
+            bot.fsm !== PlayerFSMState.KnockedDown &&
+            bot.fsm !== PlayerFSMState.GetUp &&
+            bot.fsm !== PlayerFSMState.Hitstun
+          ) {
+            bot.velocityX = botInput.moveX * botSpeed;
+            bot.facingRight = botInput.moveX > 0;
+            if (bot.onGround) PlayerFSM.tryTransition(bot, PlayerFSMState.Run);
+          } else if (bot.fsm !== PlayerFSMState.Roll) {
+            bot.velocityX *= GameConstants.GroundFriction;
+            if (bot.onGround && Math.abs(bot.velocityX) < 5) {
+              bot.velocityX = 0;
+              if (bot.fsm === PlayerFSMState.Run) PlayerFSM.tryTransition(bot, PlayerFSMState.Idle);
             }
           }
-        }
 
-        // Bot Jump
-        if (
-          botInput.jump &&
-          (bot.onGround || bot.coyoteTicks > 0) &&
-          bot.stamina >= GameConstants.StaminaCostJump &&
-          bot.fsm !== PlayerFSMState.Roll &&
-          bot.fsm !== PlayerFSMState.KnockedDown
-        ) {
-          bot.velocityY = GameConstants.JumpVelocity;
-          bot.stamina -= GameConstants.StaminaCostJump;
-          bot.coyoteTicks = 0;
-          PlayerFSM.tryTransition(bot, PlayerFSMState.Jump);
-          sounds.playJump();
-        }
-
-        // Bot Crouch / Dodge Roll
-        if (botInput.crouch && bot.onGround) {
+          // Bot Jump
           if (
-            bot.fsm === PlayerFSMState.Run &&
-            bot.stamina >= GameConstants.StaminaCostRoll &&
-            bot.attackCooldown <= 0
+            botInput.jump &&
+            (bot.onGround || bot.coyoteTicks > 0) &&
+            bot.stamina >= GameConstants.StaminaCostJump &&
+            bot.fsm !== PlayerFSMState.Roll &&
+            bot.fsm !== PlayerFSMState.KnockedDown
           ) {
-            bot.stamina -= GameConstants.StaminaCostRoll;
-            bot.attackCooldown = GameConstants.RollCooldownTicks;
-            PlayerFSM.tryTransition(bot, PlayerFSMState.Roll);
-            sounds.playRoll();
-          } else if (bot.fsm !== PlayerFSMState.Roll) {
-            PlayerFSM.tryTransition(bot, PlayerFSMState.Crouch);
+            bot.velocityY = GameConstants.JumpVelocity;
+            bot.stamina -= GameConstants.StaminaCostJump;
+            bot.coyoteTicks = 0;
+            PlayerFSM.tryTransition(bot, PlayerFSMState.Jump);
+            sounds.playJump();
           }
-        } else if (bot.fsm === PlayerFSMState.Crouch && !botInput.crouch) {
-          PlayerFSM.tryTransition(bot, PlayerFSMState.Idle);
-        }
 
-        // Bot Melee
-        if (
-          botInput.melee &&
-          bot.attackCooldown <= 0 &&
-          (bot.fsm === PlayerFSMState.Idle ||
-            bot.fsm === PlayerFSMState.Run ||
-            bot.fsm === PlayerFSMState.Crouch)
-        ) {
-          bot.comboStep = (bot.comboStep + 1) % 3;
-          bot.comboWindowTicks = GameConstants.FistsComboWindowTicks;
-          bot.attackCooldown = GameConstants.FistsCooldownTicks;
-          PlayerFSM.tryTransition(bot, PlayerFSMState.MeleeAttack);
-          sounds.playPunch();
+          // Bot Melee
+          if (
+            botInput.melee &&
+            bot.attackCooldown <= 0 &&
+            (bot.fsm === PlayerFSMState.Idle ||
+              bot.fsm === PlayerFSMState.Run ||
+              bot.fsm === PlayerFSMState.Crouch)
+          ) {
+            bot.comboStep = (bot.comboStep + 1) % 3;
+            bot.comboWindowTicks = GameConstants.FistsComboWindowTicks;
+            bot.attackCooldown = GameConstants.FistsCooldownTicks;
+            PlayerFSM.tryTransition(bot, PlayerFSMState.MeleeAttack);
+            sounds.playPunch();
 
-          // Bot Melee — respeta la ventana de esquiva si P1 está rodando (isInvulnerable)
-          if (s.p1Controller.isInvulnerable) {
-            s.floatingTexts.push({
-              id: s.nextEntityId++,
-              text: '¡ESQUIVADO!',
-              x: p1.x,
-              y: p1.y - 25,
-              color: '#38bdf8',
-              life: 25,
-            });
-          } else {
-            const hit = CombatSystem.resolveMelee(bot, p1);
-            if (hit.didHit) {
-              sounds.playHit();
-              addSparks(p1.x, p1.y, '#ef4444', 12);
-              s.screenShake = 6;
+            if (s.p1Controller.isInvulnerable) {
               s.floatingTexts.push({
                 id: s.nextEntityId++,
-                text: `-${Math.round(hit.damageDealt)}`,
+                text: '¡ESQUIVADO!',
                 x: p1.x,
                 y: p1.y - 25,
-                color: '#ef4444',
-                life: 35,
+                color: '#38bdf8',
+                life: 25,
               });
+            } else {
+              const hit = CombatSystem.resolveMelee(bot, p1);
+              if (hit.didHit) {
+                sounds.playHit();
+                addSparks(p1.x, p1.y, '#ef4444', 12);
+                s.screenShake = 6;
+                s.floatingTexts.push({
+                  id: s.nextEntityId++,
+                  text: `-${Math.round(hit.damageDealt)}`,
+                  x: p1.x,
+                  y: p1.y - 25,
+                  color: '#ef4444',
+                  life: 35,
+                });
+              }
+            }
+
+            // Bot rompe cajas si están en su camino
+            s.crates.forEach((crate) => {
+              if (Math.hypot(bot.x - (crate.x + crate.w / 2), bot.y - (crate.y + crate.h / 2)) < 45) {
+                crate.health -= 15;
+                sounds.playHit();
+                addSparks(crate.x + 16, crate.y + 16, '#d97706', 8);
+              }
+            });
+          }
+
+          // Bot Disparo
+          if (
+            botInput.fire &&
+            bot.attackCooldown <= 0 &&
+            bot.equippedWeapon !== WeaponType.Fists &&
+            bot.ammo > 0 &&
+            bot.fsm !== PlayerFSMState.Roll
+          ) {
+            const wpn = getWeapon(bot.equippedWeapon);
+            if (wpn.category === 'Firearm') {
+              bot.attackCooldown = wpn.cooldownTicks;
+              bot.ammo--;
+              PlayerFSM.tryTransition(bot, PlayerFSMState.RangedFire);
+              sounds.playGunshot(wpn.type.toLowerCase());
+
+              const dir = bot.facingRight ? 1 : -1;
+              const muzzleX = bot.x + dir * 28;
+              const muzzleY = bot.y - 6;
+
+              addSparks(muzzleX, muzzleY, '#fde047', 6);
+
+              const count = wpn.pelletCount || 1;
+              for (let i = 0; i < count; i++) {
+                const spreadAngle = ((Math.random() - 0.5) * ((wpn.accuracyDeg || 3) * Math.PI / 180)) / 2;
+                const speed = wpn.projectileSpeed || 900;
+                s.projectiles.push({
+                  id: s.nextEntityId++,
+                  x: muzzleX,
+                  y: muzzleY,
+                  vx: dir * speed * Math.cos(spreadAngle),
+                  vy: speed * Math.sin(spreadAngle),
+                  damage: (wpn.damage / count) * bot.damageDealtModifier,
+                  onFireDuration: wpn.onFireDuration || 0,
+                  explosionRadius: wpn.explosionRadius || 0,
+                  shooterId: bot.id,
+                  weaponType: bot.equippedWeapon,
+                  pelletCount: count,
+                  lifeTicks: 0,
+                  maxLifeTicks: 60,
+                  color: '#f87171',
+                });
+              }
             }
           }
-        }
-
-        // Bot Gun Fire
-        if (
-          botInput.fire &&
-          bot.attackCooldown <= 0 &&
-          bot.equippedWeapon !== WeaponType.Fists &&
-          bot.ammo > 0 &&
-          bot.fsm !== PlayerFSMState.Roll
-        ) {
-          const wpn = getWeapon(bot.equippedWeapon);
-          if (wpn.category === 'Firearm') {
-            bot.attackCooldown = wpn.cooldownTicks;
-            bot.ammo--;
-            PlayerFSM.tryTransition(bot, PlayerFSMState.RangedFire);
-            sounds.playGunshot(wpn.type.toLowerCase());
-
-            const dir = bot.facingRight ? 1 : -1;
-            const muzzleX = bot.x + dir * 22;
-            const muzzleY = bot.y - 8;
-
-            addSparks(muzzleX, muzzleY, '#fde047', 6);
-
-            const count = wpn.pelletCount || 1;
-            for (let i = 0; i < count; i++) {
-              const spreadAngle =
-                ((Math.random() - 0.5) * wpn.accuracyDeg * Math.PI) / 180;
-              const baseAngle = dir === 1 ? 0 : Math.PI;
-              const angle = baseAngle + spreadAngle;
-
-              s.projectiles.push({
-                id: s.nextEntityId++,
-                x: muzzleX,
-                y: muzzleY,
-                vx: Math.cos(angle) * wpn.projectileSpeed,
-                vy: Math.sin(angle) * wpn.projectileSpeed,
-                damage: wpn.damage * bot.damageDealtModifier,
-                onFireDuration: wpn.onFireDuration || 0,
-                explosionRadius: wpn.explosionRadius || 0,
-                shooterId: bot.id,
-                weaponType: wpn.type,
-                pelletCount: 1,
-                lifeTicks: 0,
-                maxLifeTicks: wpn.type === WeaponType.Flamethrower ? 24 : 120,
-                color: wpn.color,
-              });
-            }
-
-            if (bot.ammo <= 0) {
-              bot.equippedWeapon = WeaponType.Fists;
-            }
-          }
-        }
-
-        // Bot stamina regen
-        if (
-          bot.onGround &&
-          (bot.fsm === PlayerFSMState.Idle || bot.fsm === PlayerFSMState.Crouch)
-        ) {
-          bot.stamina = Math.min(
-            GameConstants.MaxStamina,
-            bot.stamina + GameConstants.StaminaRegenPerTick
-          );
         }
       }
 
       // ─────────────────────────────────────────────────────────
-      // 3. FÍSICA Y TICKS DE JUGADORES
+      // 3. FÍSICAS DE JUGADORES Y ESTADOS
       // ─────────────────────────────────────────────────────────
-      // Si p1 no está vivo o está noqueado/en levantada, resolver física externa
       if (
         !p1.isAlive ||
         p1.fsm === PlayerFSMState.KnockedDown ||
@@ -1002,27 +1426,364 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         s.p1Controller.setPosition(p1.x, p1.y);
         s.p1Controller.facingRight = p1.facingRight;
       }
-      PhysicsStep.tick(bot, s.platforms);
+
+      if (gameMode === 'local1v1') {
+        if (
+          !bot.isAlive ||
+          bot.fsm === PlayerFSMState.KnockedDown ||
+          bot.fsm === PlayerFSMState.GetUp ||
+          bot.fsm === PlayerFSMState.Hitstun
+        ) {
+          PhysicsStep.tick(bot, s.platforms);
+          s.p2Controller.setPosition(bot.x, bot.y);
+          s.p2Controller.facingRight = bot.facingRight;
+        }
+      } else {
+        PhysicsStep.tick(bot, s.platforms);
+      }
       PlayerFSM.tick(p1);
       PlayerFSM.tick(bot);
 
-      // Fire damage ticks
       CombatSystem.tickFireDamage(p1);
       CombatSystem.tickFireDamage(bot);
 
-      // Weapon pickups
+      // ─────────────────────────────────────────────────────────
+      // GESTIÓN DE ESTADOS Y ANIMACIÓN SINCRONIZADA CON SPRITESHEET
+      // ─────────────────────────────────────────────────────────
+      // 1. P1: Detección de teclas de movimiento horizontal (Flechas o A/D según modo)
+      const is1v1Mode = gameMode === 'local1v1';
+      const p1LeftPressed = is1v1Mode ? !!keys['arrowleft'] : !!(keys['a'] || keys['arrowleft']);
+      const p1RightPressed = is1v1Mode ? !!keys['arrowright'] : !!(keys['d'] || keys['arrowright']);
+      const p1HorizontalKeyPressed = (p1LeftPressed || p1RightPressed) && !(p1LeftPressed && p1RightPressed);
+
+      const p1Speed = Math.abs(p1.velocityX);
+      const p1IsWalkingState =
+        p1.isAlive &&
+        p1.onGround &&
+        p1HorizontalKeyPressed &&
+        p1Speed > 8 &&
+        p1.fsm !== PlayerFSMState.Roll &&
+        p1.fsm !== PlayerFSMState.KnockedDown &&
+        p1.fsm !== PlayerFSMState.GetUp &&
+        p1.fsm !== PlayerFSMState.Hitstun &&
+        p1.fsm !== PlayerFSMState.Dead;
+
+      p1.isMovingHorizontally = p1IsWalkingState;
+
+      if (p1IsWalkingState) {
+        // Sincronización exacta de velocidad y fotogramas (elimina deslizamiento y flotación):
+        // animationSpeed escala directamente con la velocidad actual respecto a la velocidad base (160 px/s)
+        const baseSpeed = 160;
+        p1.animSpeed = Math.max(0.4, p1Speed / baseSpeed);
+
+        // Distancia en píxeles que recorre el personaje durante 1 ciclo completo de 14 frames (54 px)
+        const strideDistancePx = 54;
+        const totalWalkFrames = s.p1SheetConfig?.totalFrames || 14;
+        const distanceThisFrame = p1Speed * (1 / 60);
+        const framesToAdvance = (distanceThisFrame / strideDistancePx) * totalWalkFrames;
+
+        p1.animFrameTimer += framesToAdvance;
+        if (p1.animFrameTimer >= 1) {
+          const step = Math.floor(p1.animFrameTimer);
+          p1.animFrame = (p1.animFrame + step) % totalWalkFrames;
+          p1.animFrameTimer -= step;
+        }
+      } else {
+        // Al soltar las teclas o detenerse, volver inmediatamente al fotograma estático (idle / frame 0)
+        p1.animFrame = 0;
+        p1.animFrameTimer = 0;
+        p1.animSpeed = 1.0;
+      }
+
+      // 2. BOT / J2: Detección de movimiento horizontal y animación sincronizada
+      const botLeftPressed = is1v1Mode ? !!keys['a'] : false;
+      const botRightPressed = is1v1Mode ? !!keys['d'] : false;
+      const botHorizontalKeyPressed = is1v1Mode
+        ? ((botLeftPressed || botRightPressed) && !(botLeftPressed && botRightPressed))
+        : (Math.abs(bot.velocityX) > 12);
+
+      const botSpeed = Math.abs(bot.velocityX);
+      const botIsWalkingState =
+        bot.isAlive &&
+        bot.onGround &&
+        botHorizontalKeyPressed &&
+        botSpeed > 8 &&
+        bot.fsm !== PlayerFSMState.Roll &&
+        bot.fsm !== PlayerFSMState.KnockedDown &&
+        bot.fsm !== PlayerFSMState.GetUp &&
+        bot.fsm !== PlayerFSMState.Hitstun &&
+        bot.fsm !== PlayerFSMState.Dead;
+
+      bot.isMovingHorizontally = botIsWalkingState;
+
+      if (botIsWalkingState) {
+        const baseSpeed = 160;
+        bot.animSpeed = Math.max(0.4, botSpeed / baseSpeed);
+        const strideDistancePx = 54;
+        const totalWalkFrames = s.botSheetConfig?.totalFrames || 14;
+        const distanceThisFrame = botSpeed * (1 / 60);
+        const framesToAdvance = (distanceThisFrame / strideDistancePx) * totalWalkFrames;
+
+        bot.animFrameTimer += framesToAdvance;
+        if (bot.animFrameTimer >= 1) {
+          const step = Math.floor(bot.animFrameTimer);
+          bot.animFrame = (bot.animFrame + step) % totalWalkFrames;
+          bot.animFrameTimer -= step;
+        }
+      } else {
+        bot.animFrame = 0;
+        bot.animFrameTimer = 0;
+        bot.animSpeed = 1.0;
+      }
+
+      // ─────────────────────────────────────────────────────────
+      // 4. MECÁNICAS DE MUNDO INTERACTIVAS
+      // ─────────────────────────────────────────────────────────
+
+      // 4.1. CINTA TRANSPORTADORA (ZONA INDUSTRIAL)
+      s.conveyors.forEach((conv) => {
+        const dirMult = conv.direction === 'left' ? -1 : 1;
+        const pushAmount = conv.speed * dirMult;
+
+        // Empujar P1 si está sobre la cinta
+        if (
+          p1.isAlive &&
+          p1.x >= conv.x - 10 &&
+          p1.x <= conv.x + conv.w + 10 &&
+          p1.y >= conv.y - 12 &&
+          p1.y <= conv.y + conv.h + 8
+        ) {
+          s.p1Controller.x += pushAmount;
+          p1.x += pushAmount;
+        }
+
+        // Empujar Bot si está sobre la cinta
+        if (
+          bot.isAlive &&
+          bot.x >= conv.x - 10 &&
+          bot.x <= conv.x + conv.w + 10 &&
+          bot.y >= conv.y - 12 &&
+          bot.y <= conv.y + conv.h + 8
+        ) {
+          bot.x += pushAmount;
+        }
+
+        // Empujar armas y medkits que caigan sobre la cinta
+        s.worldWeapons.forEach((w) => {
+          if (w.x >= conv.x && w.x <= conv.x + conv.w && Math.abs(w.baseY - (conv.y - 10)) < 20) {
+            w.x += pushAmount;
+          }
+        });
+
+        s.medkits.forEach((m) => {
+          if (m.x >= conv.x && m.x <= conv.x + conv.w && Math.abs(m.baseY - (conv.y - 10)) < 20) {
+            m.x += pushAmount;
+          }
+        });
+      });
+
+      // 4.2. PRENSA HIDRÁULICA (ZONA INDUSTRIAL)
+      s.presses.forEach((press) => {
+        press.tick = (press.tick + 1) % press.cycle;
+
+        // Fase de ciclo:
+        // 0 - 110: Arriba (Retraída)
+        // 110 - 125: Descenso veloz (Slam)
+        // 125 - 155: Aplastando en el suelo
+        // 155 - 180: Retorno gradual hacia arriba
+        if (press.tick < 110) {
+          press.currentY = press.baseY;
+          press.hasSlammedThisCycle = false;
+        } else if (press.tick >= 110 && press.tick <= 125) {
+          const progress = (press.tick - 110) / 15;
+          press.currentY = press.baseY + progress * press.maxDrop;
+          if (press.tick >= 122 && !press.hasSlammedThisCycle) {
+            press.hasSlammedThisCycle = true;
+            sounds.playHydraulicSlam();
+            s.screenShake = 10;
+            addSparks(press.x + press.w / 2, press.currentY + press.h, '#f97316', 16);
+
+            // Verificar aplastamiento de P1
+            if (
+              p1.isAlive &&
+              Math.abs(p1.x - (press.x + press.w / 2)) < press.w / 2 + 10 &&
+              p1.y >= press.currentY &&
+              p1.y <= press.currentY + press.h + 30
+            ) {
+              p1.health = Math.max(0, p1.health - press.crushDamage);
+              if (p1.health <= 0) {
+                p1.health = 0;
+                p1.isAlive = false;
+                PlayerFSM.tryTransition(p1, PlayerFSMState.Dead);
+              } else {
+                PlayerFSM.tryTransition(p1, PlayerFSMState.KnockedDown);
+              }
+              s.floatingTexts.push({
+                id: s.nextEntityId++,
+                text: '¡APLASTADO!',
+                x: p1.x,
+                y: p1.y - 30,
+                color: '#ef4444',
+                life: 45,
+              });
+            }
+
+            // Verificar aplastamiento del Bot
+            if (
+              bot.isAlive &&
+              Math.abs(bot.x - (press.x + press.w / 2)) < press.w / 2 + 10 &&
+              bot.y >= press.currentY &&
+              bot.y <= press.currentY + press.h + 30
+            ) {
+              bot.health = Math.max(0, bot.health - press.crushDamage);
+              if (bot.health <= 0) {
+                bot.health = 0;
+                bot.isAlive = false;
+                PlayerFSM.tryTransition(bot, PlayerFSMState.Dead);
+              } else {
+                PlayerFSM.tryTransition(bot, PlayerFSMState.KnockedDown);
+              }
+              s.floatingTexts.push({
+                id: s.nextEntityId++,
+                text: '¡APLASTADO!',
+                x: bot.x,
+                y: bot.y - 30,
+                color: '#ef4444',
+                life: 45,
+              });
+            }
+          }
+        } else if (press.tick > 125 && press.tick <= 155) {
+          press.currentY = press.baseY + press.maxDrop;
+        } else {
+          const retProg = (press.tick - 155) / 25;
+          press.currentY = press.baseY + (1 - retProg) * press.maxDrop;
+        }
+      });
+
+      // 4.3. COMPROBAR DESTRUCCIÓN DE CAJAS
+      for (let i = s.crates.length - 1; i >= 0; i--) {
+        const crate = s.crates[i];
+        if (crate.health <= 0) {
+          sounds.playCrateBreak();
+          addSparks(crate.x + crate.w / 2, crate.y + crate.h / 2, '#d97706', 20);
+          addSparks(crate.x + crate.w / 2, crate.y + crate.h / 2, '#78350f', 15);
+
+          // Soltar arma o botiquín
+          const dropRoll = Math.random();
+          if (dropRoll < 0.5) {
+            // Suelta arma
+            const wpn = SpawnableWeaponsList[Math.floor(Math.random() * SpawnableWeaponsList.length)];
+            s.worldWeapons.push({
+              id: s.nextEntityId++,
+              weaponType: wpn,
+              x: crate.x + crate.w / 2,
+              y: crate.y,
+              baseY: crate.y,
+              bobTicks: 0,
+            });
+            s.floatingTexts.push({
+              id: s.nextEntityId++,
+              text: '¡ARMA ENCONTRADA!',
+              x: crate.x + crate.w / 2,
+              y: crate.y - 20,
+              color: '#38bdf8',
+              life: 40,
+            });
+          } else {
+            // Suelta botiquín
+            s.medkits.push({
+              id: s.nextEntityId++,
+              x: crate.x + crate.w / 2,
+              y: crate.y,
+              baseY: crate.y,
+              bobTicks: 0,
+            });
+            s.floatingTexts.push({
+              id: s.nextEntityId++,
+              text: '¡BOTIQUÍN!',
+              x: crate.x + crate.w / 2,
+              y: crate.y - 20,
+              color: '#22c55e',
+              life: 40,
+            });
+          }
+
+          s.crates.splice(i, 1);
+        }
+      }
+
+      // 4.4. COMPROBAR EXPLOSIÓN DE BARRILES
+      for (let i = s.barrels.length - 1; i >= 0; i--) {
+        const barrel = s.barrels[i];
+        if (barrel.health <= 0) {
+          createExplosion(barrel.x + barrel.w / 2, barrel.y + barrel.h / 2, 95, 55, true);
+          s.floatingTexts.push({
+            id: s.nextEntityId++,
+            text: '¡BARRIL EXPLOSIVO!',
+            x: barrel.x + barrel.w / 2,
+            y: barrel.y - 25,
+            color: '#f97316',
+            life: 45,
+          });
+          s.barrels.splice(i, 1);
+        }
+      }
+
+      // 4.5. RECOLECCIÓN DE BOTIQUINES (+35 HP)
+      for (let i = s.medkits.length - 1; i >= 0; i--) {
+        const med = s.medkits[i];
+        med.bobTicks++;
+        med.y = med.baseY + Math.sin(med.bobTicks * 0.1) * 4;
+
+        // P1 recoge
+        if (p1.isAlive && Math.hypot(med.x - p1.x, med.y - p1.y) < 32) {
+          p1.health = Math.min(p1.maxHealth, p1.health + 35);
+          sounds.playMedkit();
+          addSparks(med.x, med.y, '#22c55e', 14);
+          s.floatingTexts.push({
+            id: s.nextEntityId++,
+            text: '+35 HP',
+            x: p1.x,
+            y: p1.y - 30,
+            color: '#22c55e',
+            life: 45,
+          });
+          s.medkits.splice(i, 1);
+          continue;
+        }
+
+        // Bot recoge
+        if (bot.isAlive && Math.hypot(med.x - bot.x, med.y - bot.y) < 32) {
+          bot.health = Math.min(bot.maxHealth, bot.health + 35);
+          sounds.playMedkit();
+          addSparks(med.x, med.y, '#22c55e', 14);
+          s.floatingTexts.push({
+            id: s.nextEntityId++,
+            text: '+35 HP',
+            x: bot.x,
+            y: bot.y - 30,
+            color: '#22c55e',
+            life: 45,
+          });
+          s.medkits.splice(i, 1);
+          continue;
+        }
+      }
+
+      // Recolección de armas
       for (let i = s.worldWeapons.length - 1; i >= 0; i--) {
         const w = s.worldWeapons[i];
         w.bobTicks++;
         w.y = w.baseY + Math.sin(w.bobTicks * 0.08) * 5;
 
-        // Player 1 pickup
-        const d1 = Math.sqrt(Math.pow(w.x - p1.x, 2) + Math.pow(w.y - p1.y, 2));
+        // P1 pickup
+        const d1 = Math.hypot(w.x - p1.x, w.y - p1.y);
         const canP1Pickup =
           p1.fsm === PlayerFSMState.Crouch ||
           p1.equippedWeapon === WeaponType.Fists ||
-          keys['s'] ||
-          keys['arrowdown'];
+          keys['arrowdown'] ||
+          (gameMode === 'vsBot' && keys['s']);
 
         if (d1 < 32 && canP1Pickup) {
           const wData = getWeapon(w.weaponType);
@@ -1041,11 +1802,12 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           continue;
         }
 
-        // Bot pickup
-        const d2 = Math.sqrt(Math.pow(w.x - bot.x, 2) + Math.pow(w.y - bot.y, 2));
+        // Bot / J2 pickup
+        const d2 = Math.hypot(w.x - bot.x, w.y - bot.y);
         const canBotPickup =
           bot.fsm === PlayerFSMState.Crouch ||
-          bot.equippedWeapon === WeaponType.Fists;
+          bot.equippedWeapon === WeaponType.Fists ||
+          (gameMode === 'local1v1' && keys['s']);
 
         if (d2 < 32 && canBotPickup) {
           const wData = getWeapon(w.weaponType);
@@ -1065,28 +1827,25 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         }
       }
 
-      // Periodical weapon spawn
+      // Generar armas periódicamente
       s.weaponSpawnTimer++;
       if (s.weaponSpawnTimer >= 900) {
-        // Every 15 seconds
         spawnRandomWeapon();
         s.weaponSpawnTimer = 0;
       }
 
       // ─────────────────────────────────────────────────────────
-      // 4. ACTUALIZAR PROYECTILES
+      // 5. PROYECTILES Y COLISIONES
       // ─────────────────────────────────────────────────────────
       for (let i = s.projectiles.length - 1; i >= 0; i--) {
         const pr = s.projectiles[i];
         pr.lifeTicks++;
 
-        // Throwable physics (gravity & bounce)
         if (pr.isGrenade) {
           pr.vy += GameConstants.Gravity * (1 / 60);
           pr.x += pr.vx * (1 / 60);
           pr.y += pr.vy * (1 / 60);
 
-          // Floor bounce
           if (pr.y >= 500) {
             pr.y = 500;
             pr.vy = -pr.vy * 0.55;
@@ -1097,206 +1856,207 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
               continue;
             }
           }
-          // Walls
           if (pr.x <= 20 || pr.x >= 940) {
-            pr.vx = -pr.vx * 0.7;
+            pr.vx = -pr.vx * 0.6;
           }
 
-          if (pr.fuseTicks && pr.lifeTicks >= pr.fuseTicks) {
-            createExplosion(pr.x, pr.y, pr.explosionRadius, pr.damage, false);
+          if (pr.lifeTicks >= (pr.isMolotov ? 70 : 90)) {
+            createExplosion(pr.x, pr.y, pr.explosionRadius, pr.damage, !!pr.isMolotov);
             s.projectiles.splice(i, 1);
             continue;
           }
         } else {
-          // Standard bullet / rocket / flame
+          // Balas de armas de fuego
           pr.x += pr.vx * (1 / 60);
           pr.y += pr.vy * (1 / 60);
 
-          // Smoke for bazooka
-          if (pr.weaponType === WeaponType.Bazooka && pr.lifeTicks % 2 === 0) {
-            s.particles.push({
-              x: pr.x,
-              y: pr.y,
-              vx: (Math.random() - 0.5) * 20,
-              vy: (Math.random() - 0.5) * 20,
-              life: 20,
-              maxLife: 20,
-              color: '#a1a1aa',
-              size: 4,
-            });
-          }
-
-          // Wall collision
-          if (pr.x < 15 || pr.x > 945 || pr.y > 510 || pr.y < 0) {
-            if (pr.explosionRadius > 0) {
-              createExplosion(pr.x, pr.y, pr.explosionRadius, pr.damage, false);
-            } else {
-              addSparks(pr.x, pr.y, '#facc15', 5);
+          // Impacto en cajas de madera
+          let crateHit = false;
+          for (const crate of s.crates) {
+            if (
+              pr.x >= crate.x &&
+              pr.x <= crate.x + crate.w &&
+              pr.y >= crate.y &&
+              pr.y <= crate.y + crate.h
+            ) {
+              crate.health -= pr.damage;
+              sounds.playHit();
+              addSparks(pr.x, pr.y, '#d97706', 6);
+              crateHit = true;
+              break;
             }
+          }
+          if (crateHit) {
             s.projectiles.splice(i, 1);
             continue;
           }
 
-          // Check hit against player 1
-          if (pr.shooterId !== p1.id && p1.isAlive) {
-            if (s.p1Controller.isInvulnerable) {
-              s.floatingTexts.push({
-                id: s.nextEntityId++,
-                text: '¡ESQUIVA!',
-                x: p1.x,
-                y: p1.y - 20,
-                color: '#38bdf8',
-                life: 20,
-              });
+          // Impacto en barriles explosivos
+          let barrelHit = false;
+          for (const barrel of s.barrels) {
+            if (
+              pr.x >= barrel.x &&
+              pr.x <= barrel.x + barrel.w &&
+              pr.y >= barrel.y &&
+              pr.y <= barrel.y + barrel.h
+            ) {
+              barrel.health -= pr.damage;
+              sounds.playHit();
+              addSparks(pr.x, pr.y, '#ef4444', 8);
+              barrelHit = true;
+              break;
+            }
+          }
+          if (barrelHit) {
+            s.projectiles.splice(i, 1);
+            continue;
+          }
+
+          // Impacto en Combatientes
+          const target = pr.shooterId === p1.id ? bot : p1;
+          const isTargetRolling =
+            target.id === p1.id
+              ? s.p1Controller.isInvulnerable
+              : target.fsm === PlayerFSMState.Roll;
+
+          if (
+            target.isAlive &&
+            !isTargetRolling &&
+            Math.abs(pr.x - target.x) < 18 &&
+            pr.y >= target.y - 25 &&
+            pr.y <= target.y + 25
+          ) {
+            const finalDmg = pr.damage * target.damageTakenModifier;
+            target.health = Math.max(0, target.health - finalDmg);
+            target.fireTicks = Math.max(target.fireTicks, pr.onFireDuration);
+            target.isOnFire = target.fireTicks > 0;
+
+            sounds.playHit();
+            addSparks(pr.x, pr.y, '#ef4444', 10);
+            s.screenShake = 5;
+
+            // Knockback leve según la dirección de la bala
+            const dir = pr.vx > 0 ? 1 : -1;
+            target.velocityX = dir * 65;
+
+            // Si la salud llega a 0 o menos, muere inmediatamente
+            if (target.health <= 0) {
+              target.health = 0;
+              target.isAlive = false;
+              PlayerFSM.tryTransition(target, PlayerFSMState.Dead);
+              sounds.playHit();
             } else {
-              const hit = CombatSystem.resolveProjectile(
-                bot,
-                p1,
-                pr.weaponType,
-                pr.x,
-                pr.y
-              );
-              if (hit.didHit) {
-                if (pr.explosionRadius > 0) {
-                  createExplosion(pr.x, pr.y, pr.explosionRadius, pr.damage, false);
-                } else {
-                  sounds.playHit();
-                  addSparks(pr.x, pr.y, '#ef4444', 8);
-                  s.floatingTexts.push({
-                    id: s.nextEntityId++,
-                    text: `-${Math.round(hit.damageDealt)}`,
-                    x: p1.x,
-                    y: p1.y - 20,
-                    color: '#ef4444',
-                    life: 30,
-                  });
-                }
-                s.projectiles.splice(i, 1);
-                continue;
-              }
+              target.hitstunTicks = GameConstants.HitstunTicksLight;
+              PlayerFSM.tryTransition(target, PlayerFSMState.Hitstun);
             }
+
+            s.floatingTexts.push({
+              id: s.nextEntityId++,
+              text: `-${Math.round(finalDmg)}`,
+              x: target.x,
+              y: target.y - 25,
+              color: '#ef4444',
+              life: 30,
+            });
+
+            if (pr.explosionRadius > 0) {
+              createExplosion(pr.x, pr.y, pr.explosionRadius, pr.damage * 0.7, false);
+            }
+
+            s.projectiles.splice(i, 1);
+            continue;
           }
 
-          // Check hit against bot
-          if (pr.shooterId !== bot.id && bot.isAlive) {
-            const hit = CombatSystem.resolveProjectile(
-              p1,
-              bot,
-              pr.weaponType,
-              pr.x,
-              pr.y
-            );
-            if (hit.didHit) {
-              if (pr.explosionRadius > 0) {
-                createExplosion(pr.x, pr.y, pr.explosionRadius, pr.damage, false);
-              } else {
-                sounds.playHit();
-                addSparks(pr.x, pr.y, '#f59e0b', 8);
-                s.floatingTexts.push({
-                  id: s.nextEntityId++,
-                  text: `-${Math.round(hit.damageDealt)}`,
-                  x: bot.x,
-                  y: bot.y - 20,
-                  color: '#facc15',
-                  life: 30,
-                });
-              }
-              s.projectiles.splice(i, 1);
-              continue;
-            }
+          // Fuera de límites
+          if (pr.x < -20 || pr.x > 980 || pr.y < -20 || pr.y > 550 || pr.lifeTicks > pr.maxLifeTicks) {
+            s.projectiles.splice(i, 1);
           }
-        }
-
-        if (pr.lifeTicks >= pr.maxLifeTicks) {
-          s.projectiles.splice(i, 1);
         }
       }
 
-      // Fire zones
+      // ─────────────────────────────────────────────────────────
+      // 6. ZONAS DE FUEGO Y PARTÍCULAS
+      // ─────────────────────────────────────────────────────────
       for (let i = s.fireZones.length - 1; i >= 0; i--) {
         const fz = s.fireZones[i];
         fz.remainingTicks--;
 
-        // Flame sparks
-        if (Math.random() < 0.4) {
+        if (Math.random() < 0.3) {
           s.particles.push({
             x: fz.x + (Math.random() - 0.5) * fz.radius * 1.5,
-            y: fz.y + (Math.random() - 0.5) * 10,
-            vx: (Math.random() - 0.5) * 30,
-            vy: -40 - Math.random() * 60,
-            life: 25,
-            maxLife: 25,
-            color: '#ea580c',
-            size: 3,
+            y: fz.y + (Math.random() - 0.5) * 8,
+            vx: (Math.random() - 0.5) * 20,
+            vy: -40 - Math.random() * 40,
+            life: 15,
+            maxLife: 20,
+            color: '#f97316',
+            size: 3 + Math.random() * 3,
           });
         }
 
-        // Catch fire if stepped inside
-        if (p1.isAlive && Math.abs(p1.x - fz.x) < fz.radius && Math.abs(p1.y - fz.y) < 25) {
-          p1.isOnFire = true;
-          p1.fireTicks = 120;
-        }
-        if (bot.isAlive && Math.abs(bot.x - fz.x) < fz.radius && Math.abs(bot.y - fz.y) < 25) {
-          bot.isOnFire = true;
-          bot.fireTicks = 120;
-        }
+        [p1, bot].forEach((fighter) => {
+          if (fighter.isAlive && Math.hypot(fighter.x - fz.x, fighter.y - fz.y) < fz.radius) {
+            fighter.fireTicks = Math.max(fighter.fireTicks, 90);
+            fighter.isOnFire = true;
+          }
+        });
 
         if (fz.remainingTicks <= 0) {
           s.fireZones.splice(i, 1);
         }
       }
 
-      // Particles update
+      // Partículas
       for (let i = s.particles.length - 1; i >= 0; i--) {
         const pt = s.particles[i];
         pt.x += pt.vx * (1 / 60);
         pt.y += pt.vy * (1 / 60);
         pt.life--;
-        if (pt.life <= 0) {
-          s.particles.splice(i, 1);
-        }
+        if (pt.life <= 0) s.particles.splice(i, 1);
       }
 
-      // Floating texts update
+      // Textos flotantes
       for (let i = s.floatingTexts.length - 1; i >= 0; i--) {
         const ft = s.floatingTexts[i];
         ft.y -= 0.6;
         ft.life--;
-        if (ft.life <= 0) {
-          s.floatingTexts.splice(i, 1);
-        }
+        if (ft.life <= 0) s.floatingTexts.splice(i, 1);
       }
 
-      if (s.screenShake > 0) s.screenShake *= 0.88;
+      // Shake decay
+      if (s.screenShake > 0) {
+        s.screenShake *= 0.88;
+        if (s.screenShake < 0.1) s.screenShake = 0;
+      }
 
-      // Update React HUD state periodically
-      const p1WpnData = getWeapon(p1.equippedWeapon);
-      setHudState({
-        p1Health: p1.health,
-        p1MaxHealth: p1.maxHealth,
-        p1Stamina: p1.stamina,
-        p1Weapon: p1.equippedWeapon,
-        p1Ammo: p1.ammo,
-        p1MaxAmmo: p1WpnData.magSize,
-        botHealth: bot.health,
-        botMaxHealth: bot.maxHealth,
-        botWeapon: bot.equippedWeapon,
-        botAmmo: bot.ammo,
-        round: s.round,
-        maxRounds,
-        p1Score: s.p1Score,
-        botScore: s.botScore,
-        announcement: s.announcement,
-        isRoundOver: !s.roundActive,
-        isMatchOver: s.announcement.includes('TOTAL') || s.announcement.includes('DERROTA'),
-        matchWinner: s.announcement,
-      });
-
-      // Reiniciar buffer de teclas recién pulsadas para el próximo tick
+      // Limpiar teclas de pulsación única
       s.keysJustPressed = {};
+
+      // Sincronizar HUD cada 3 frames
+      if (s.worldTick % 3 === 0) {
+        setHudState((prev) => ({
+          ...prev,
+          p1Health: p1.health,
+          p1MaxHealth: p1.maxHealth,
+          p1Stamina: p1.stamina,
+          p1Weapon: p1.equippedWeapon,
+          p1Ammo: p1.ammo,
+          p1MaxAmmo: getWeapon(p1.equippedWeapon)?.magSize ?? -1,
+          botHealth: bot.health,
+          botMaxHealth: bot.maxHealth,
+          botWeapon: bot.equippedWeapon,
+          botAmmo: bot.ammo,
+          round: s.round,
+          p1Score: s.p1Score,
+          botScore: s.botScore,
+          announcement: s.announcement,
+        }));
+      }
     };
 
-    // Render pass
+    // ─────────────────────────────────────────────────────────
+    // RENDERIZADOR CANVAS 2D
+    // ─────────────────────────────────────────────────────────
     const renderGame = () => {
       const s = stateRef.current;
       const canvas = canvasRef.current;
@@ -1307,69 +2067,432 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       ctx.save();
       ctx.imageSmoothingEnabled = false;
 
-      // Screen shake
+      // Screen Shake
       if (s.screenShake > 0.5) {
         const shakeX = (Math.random() - 0.5) * s.screenShake * 2;
         const shakeY = (Math.random() - 0.5) * s.screenShake * 2;
         ctx.translate(shakeX, shakeY);
       }
 
-      // 1. Background
-      if (s.bgImage && s.bgImage.complete && s.bgImage.naturalWidth > 0) {
-        ctx.drawImage(s.bgImage, 0, 0, ARENA_WIDTH, ARENA_HEIGHT);
-      } else {
-        // Fallback warehouse background
-        const grad = ctx.createLinearGradient(0, 0, 0, ARENA_HEIGHT);
-        grad.addColorStop(0, '#111827');
-        grad.addColorStop(0.7, '#1f2937');
-        grad.addColorStop(1, '#0f172a');
-        ctx.fillStyle = grad;
+      const worldCfg = s.worldConfig;
+
+      // 1. CIELO Y PARALLAX POR MUNDO
+      if (worldCfg.id === 'desert') {
+        // Cielo degradado azul claro a cálido
+        const skyGrad = ctx.createLinearGradient(0, 0, 0, ARENA_HEIGHT);
+        skyGrad.addColorStop(0, '#38bdf8');
+        skyGrad.addColorStop(0.55, '#93c5fd');
+        skyGrad.addColorStop(1, '#fef08a');
+        ctx.fillStyle = skyGrad;
         ctx.fillRect(0, 0, ARENA_WIDTH, ARENA_HEIGHT);
 
-        // Industrial warehouse grid and beams
-        ctx.strokeStyle = '#334155';
-        ctx.lineWidth = 2;
-        for (let x = 60; x < ARENA_WIDTH; x += 120) {
+        // Sol brillante en el desierto
+        ctx.fillStyle = 'rgba(254, 240, 138, 0.4)';
+        ctx.beginPath();
+        ctx.arc(820, 110, 48, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#fffbeb';
+        ctx.beginPath();
+        ctx.arc(820, 110, 24, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Parallax 1: Montañas distantes
+        ctx.fillStyle = '#9a7b56';
+        ctx.beginPath();
+        ctx.moveTo(0, 360);
+        ctx.lineTo(80, 260);
+        ctx.lineTo(190, 350);
+        ctx.lineTo(310, 240);
+        ctx.lineTo(460, 370);
+        ctx.lineTo(600, 250);
+        ctx.lineTo(750, 360);
+        ctx.lineTo(870, 270);
+        ctx.lineTo(960, 350);
+        ctx.lineTo(960, ARENA_HEIGHT);
+        ctx.lineTo(0, ARENA_HEIGHT);
+        ctx.closePath();
+        ctx.fill();
+
+        // Parallax 2: Pirámides y crestas arenosas
+        ctx.fillStyle = '#c28847';
+        ctx.beginPath();
+        ctx.moveTo(140, 390);
+        ctx.lineTo(260, 280);
+        ctx.lineTo(380, 390);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.beginPath();
+        ctx.moveTo(640, 390);
+        ctx.lineTo(750, 300);
+        ctx.lineTo(860, 390);
+        ctx.closePath();
+        ctx.fill();
+
+        // Parallax 3: Dunas anaranjadas
+        ctx.fillStyle = '#e09848';
+        ctx.beginPath();
+        ctx.moveTo(0, 410);
+        ctx.bezierCurveTo(200, 360, 400, 430, 600, 380);
+        ctx.bezierCurveTo(750, 350, 880, 420, 960, 390);
+        ctx.lineTo(960, ARENA_HEIGHT);
+        ctx.lineTo(0, ARENA_HEIGHT);
+        ctx.closePath();
+        ctx.fill();
+      } else if (worldCfg.id === 'industrial') {
+        // Cielo gris azulado
+        const skyGrad = ctx.createLinearGradient(0, 0, 0, ARENA_HEIGHT);
+        skyGrad.addColorStop(0, '#0f172a');
+        skyGrad.addColorStop(0.65, '#1e293b');
+        skyGrad.addColorStop(1, '#334155');
+        ctx.fillStyle = skyGrad;
+        ctx.fillRect(0, 0, ARENA_WIDTH, ARENA_HEIGHT);
+
+        // Siluetas de fábricas y chimeneas
+        ctx.fillStyle = '#131b28';
+        ctx.fillRect(40, 160, 120, 300);
+        ctx.fillRect(200, 120, 160, 340);
+        ctx.fillRect(480, 180, 140, 280);
+        ctx.fillRect(720, 140, 180, 320);
+
+        // Chimeneas rojiblancas
+        const drawChimney = (cx: number, cy: number, w: number, h: number) => {
+          ctx.fillStyle = '#cbd5e1';
+          ctx.fillRect(cx, cy, w, h);
+          ctx.fillStyle = '#dc2626';
+          for (let y = cy + 10; y < cy + h; y += 30) {
+            ctx.fillRect(cx, y, w, 15);
+          }
+          // Humo sutil
+          ctx.fillStyle = 'rgba(148, 163, 184, 0.2)';
           ctx.beginPath();
-          ctx.moveTo(x, 0);
-          ctx.lineTo(x, ARENA_HEIGHT);
+          ctx.arc(cx + w / 2, cy - 10, 12, 0, Math.PI * 2);
+          ctx.fill();
+        };
+        drawChimney(840, 50, 26, 120);
+        drawChimney(905, 30, 22, 140);
+
+        // Estructuras y vigas metálicas en X
+        ctx.strokeStyle = '#1e293b';
+        ctx.lineWidth = 2;
+        for (let x = 80; x < ARENA_WIDTH; x += 160) {
+          ctx.strokeRect(x, 80, 120, 120);
+          ctx.beginPath();
+          ctx.moveTo(x, 80);
+          ctx.lineTo(x + 120, 200);
+          ctx.moveTo(x + 120, 80);
+          ctx.lineTo(x, 200);
           ctx.stroke();
         }
-      }
-
-      // 2. Platforms
-      for (const plat of s.platforms) {
-        if (plat.h >= 30) {
-          // Floor
-          ctx.fillStyle = '#27201c';
-          ctx.fillRect(plat.x, plat.y, plat.w, plat.h);
-
-          // Top highlight
-          ctx.fillStyle = '#45382b';
-          ctx.fillRect(plat.x, plat.y, plat.w, 4);
-        } else if (plat.w <= 25) {
-          // Walls
-          ctx.fillStyle = '#1e293b';
-          ctx.fillRect(plat.x, plat.y, plat.w, plat.h);
-          ctx.fillStyle = '#334155';
-          ctx.fillRect(plat.x + (plat.x < 100 ? plat.w - 3 : 0), plat.y, 3, plat.h);
+      } else {
+        // Mundo clásico (Warehouse)
+        if (s.bgImage && s.bgImage.complete && s.bgImage.naturalWidth > 0) {
+          ctx.drawImage(s.bgImage, 0, 0, ARENA_WIDTH, ARENA_HEIGHT);
         } else {
-          // Elevated platforms
-          ctx.fillStyle = '#524332';
-          ctx.fillRect(plat.x, plat.y, plat.w, plat.h);
-
-          // Metallic top edge and supports
-          ctx.fillStyle = '#786249';
-          ctx.fillRect(plat.x, plat.y, plat.w, 3);
-
-          // Small support brackets
-          ctx.fillStyle = '#3b3124';
-          ctx.fillRect(plat.x + 8, plat.y + plat.h, 12, 6);
-          ctx.fillRect(plat.x + plat.w - 20, plat.y + plat.h, 12, 6);
+          const grad = ctx.createLinearGradient(0, 0, 0, ARENA_HEIGHT);
+          grad.addColorStop(0, '#111827');
+          grad.addColorStop(0.7, '#1f2937');
+          grad.addColorStop(1, '#0f172a');
+          ctx.fillStyle = grad;
+          ctx.fillRect(0, 0, ARENA_WIDTH, ARENA_HEIGHT);
         }
       }
 
-      // 3. Fire zones
+      // 2. PROPS DECORATIVOS SIN COLISIÓN
+      worldCfg.props.forEach((prop) => {
+        ctx.save();
+        ctx.translate(prop.x, prop.y);
+        const scale = prop.scale || 1;
+        ctx.scale(scale, scale);
+
+        if (prop.type === 'cactus') {
+          // Cactus estilizado
+          ctx.fillStyle = '#15803d';
+          ctx.fillRect(-6, -38, 12, 38);
+          ctx.fillRect(-16, -26, 10, 6);
+          ctx.fillRect(-16, -34, 6, 12);
+          ctx.fillRect(6, -20, 10, 6);
+          ctx.fillRect(10, -28, 6, 12);
+        } else if (prop.type === 'dry_tree') {
+          // Árbol tipo sabana
+          ctx.fillStyle = '#78350f';
+          ctx.fillRect(-8, -48, 16, 48);
+          ctx.fillRect(-22, -48, 14, 8);
+          ctx.fillRect(8, -48, 14, 8);
+          ctx.fillStyle = '#65a30d';
+          ctx.beginPath();
+          ctx.ellipse(0, -56, 36, 14, 0, 0, Math.PI * 2);
+          ctx.fill();
+        } else if (prop.type === 'cow_skull') {
+          // Cráneo de vaca con cuernos
+          ctx.fillStyle = '#fef08a';
+          ctx.beginPath();
+          ctx.arc(0, -8, 8, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = '#ca8a04';
+          ctx.lineWidth = 2.5;
+          ctx.beginPath();
+          ctx.moveTo(-6, -10);
+          ctx.quadraticCurveTo(-18, -18, -16, -6);
+          ctx.moveTo(6, -10);
+          ctx.quadraticCurveTo(18, -18, 16, -6);
+          ctx.stroke();
+        } else if (prop.type === 'dry_bush') {
+          ctx.fillStyle = '#92400e';
+          ctx.beginPath();
+          ctx.arc(0, -6, 9, 0, Math.PI * 2);
+          ctx.fill();
+        } else if (prop.type === 'arrow_sign') {
+          ctx.fillStyle = '#78350f';
+          ctx.fillRect(-3, -24, 6, 24);
+          ctx.fillStyle = '#b45309';
+          ctx.fillRect(-14, -28, 28, 12);
+          ctx.fillStyle = '#fef3c7';
+          ctx.font = 'bold 9px monospace';
+          ctx.fillText('→', -4, -19);
+        } else if (prop.type === 'lockers') {
+          ctx.fillStyle = '#334155';
+          ctx.fillRect(-18, -42, 36, 42);
+          ctx.fillStyle = '#1e293b';
+          ctx.fillRect(-15, -38, 14, 34);
+          ctx.fillRect(1, -38, 14, 34);
+        } else if (prop.type === 'warning_board') {
+          ctx.fillStyle = '#eab308';
+          ctx.fillRect(-12, -24, 24, 18);
+          ctx.fillStyle = '#0f172a';
+          ctx.font = 'bold 9px monospace';
+          ctx.fillText('⚠️', -8, -11);
+        } else if (prop.type === 'box_stack') {
+          ctx.fillStyle = '#b45309';
+          ctx.fillRect(-12, -22, 24, 22);
+          ctx.fillRect(-6, -38, 16, 16);
+        }
+        ctx.restore();
+      });
+
+      // 3. PLATAFORMAS CON TEMÁTICA
+      for (const plat of s.platforms) {
+        if (plat.theme === 'desert_earth') {
+          // Tierra marrón con borde festoneado de arena superior
+          ctx.fillStyle = '#78461f';
+          ctx.fillRect(plat.x, plat.y, plat.w, plat.h);
+
+          ctx.fillStyle = '#e6b566';
+          ctx.fillRect(plat.x, plat.y, plat.w, 6);
+
+          // Puntos y textura arenosa
+          ctx.fillStyle = '#d49b4b';
+          for (let px = plat.x + 4; px < plat.x + plat.w; px += 14) {
+            ctx.beginPath();
+            ctx.arc(px, plat.y + 6, 3, 0, Math.PI);
+            ctx.fill();
+          }
+        } else if (plat.theme === 'hazard_stripe' || plat.label === 'CONVEYOR') {
+          // Base metálica
+          ctx.fillStyle = '#1e293b';
+          ctx.fillRect(plat.x, plat.y, plat.w, plat.h);
+
+          // Franjas diagonales de peligro (Amarillo/Negro o Naranja/Negro)
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(plat.x, plat.y, plat.w, plat.h);
+          ctx.clip();
+
+          const offset = (s.worldTick * 2) % 24;
+          for (let sx = plat.x - 24; sx < plat.x + plat.w + 24; sx += 24) {
+            ctx.fillStyle = '#f97316';
+            ctx.beginPath();
+            ctx.moveTo(sx + offset, plat.y);
+            ctx.lineTo(sx + 12 + offset, plat.y);
+            ctx.lineTo(sx + offset, plat.y + plat.h);
+            ctx.lineTo(sx - 12 + offset, plat.y + plat.h);
+            ctx.closePath();
+            ctx.fill();
+          }
+
+          // Chevrons si es cinta transportadora
+          if (plat.label === 'CONVEYOR') {
+            ctx.fillStyle = '#f8fafc';
+            ctx.font = 'bold 10px monospace';
+            const chevOffset = (s.worldTick * 3) % 40;
+            for (let cx = plat.x + chevOffset; cx < plat.x + plat.w; cx += 40) {
+              ctx.fillText('>>>', cx, plat.y + 13);
+            }
+          }
+          ctx.restore();
+
+          ctx.strokeStyle = '#475569';
+          ctx.lineWidth = 1.5;
+          ctx.strokeRect(plat.x, plat.y, plat.w, plat.h);
+        } else if (plat.theme === 'industrial_metal') {
+          // Paneles metálicos azul oscuro con remaches
+          ctx.fillStyle = '#1e293b';
+          ctx.fillRect(plat.x, plat.y, plat.w, plat.h);
+
+          ctx.fillStyle = '#334155';
+          ctx.fillRect(plat.x, plat.y, plat.w, 4);
+
+          // Remaches
+          ctx.fillStyle = '#94a3b8';
+          for (let rx = plat.x + 8; rx < plat.x + plat.w; rx += 20) {
+            ctx.beginPath();
+            ctx.arc(rx, plat.y + plat.h / 2, 1.5, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        } else {
+          // Tema almacén clásico
+          if (plat.h >= 30) {
+            ctx.fillStyle = '#27201c';
+            ctx.fillRect(plat.x, plat.y, plat.w, plat.h);
+            ctx.fillStyle = '#45382b';
+            ctx.fillRect(plat.x, plat.y, plat.w, 4);
+          } else if (plat.w <= 25) {
+            ctx.fillStyle = '#1e293b';
+            ctx.fillRect(plat.x, plat.y, plat.w, plat.h);
+          } else {
+            ctx.fillStyle = '#524332';
+            ctx.fillRect(plat.x, plat.y, plat.w, plat.h);
+            ctx.fillStyle = '#786249';
+            ctx.fillRect(plat.x, plat.y, plat.w, 3);
+          }
+        }
+      }
+
+      // 4. PRENSAS HIDRÁULICAS (ZONA INDUSTRIAL)
+      s.presses.forEach((press) => {
+        // Cilindro superior fijo
+        ctx.fillStyle = '#334155';
+        ctx.fillRect(press.x + press.w / 2 - 8, press.baseY - 40, 16, 40);
+
+        // Vástago de pistón cromado
+        ctx.fillStyle = '#cbd5e1';
+        ctx.fillRect(
+          press.x + press.w / 2 - 5,
+          press.baseY,
+          10,
+          Math.max(0, press.currentY - press.baseY)
+        );
+
+        // Cabezal de estampado
+        ctx.fillStyle = '#dc2626';
+        ctx.fillRect(press.x, press.currentY, press.w, press.h);
+
+        // Franja de advertencia en cabezal
+        ctx.fillStyle = '#facc15';
+        ctx.fillRect(press.x + 4, press.currentY + press.h - 8, press.w - 8, 6);
+
+        // Luz de aviso
+        ctx.fillStyle = press.tick >= 90 && press.tick <= 125 ? '#ef4444' : '#22c55e';
+        ctx.beginPath();
+        ctx.arc(press.x + press.w / 2, press.currentY + 12, 4, 0, Math.PI * 2);
+        ctx.fill();
+      });
+
+      // 5. CAJAS DESTRUCTIBLES (DESIERTO)
+      s.crates.forEach((crate) => {
+        ctx.fillStyle = '#b45309';
+        ctx.fillRect(crate.x, crate.y, crate.w, crate.h);
+
+        ctx.strokeStyle = '#78350f';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(crate.x, crate.y, crate.w, crate.h);
+
+        // Tablas cruzadas en X
+        ctx.beginPath();
+        ctx.moveTo(crate.x, crate.y);
+        ctx.lineTo(crate.x + crate.w, crate.y + crate.h);
+        ctx.moveTo(crate.x + crate.w, crate.y);
+        ctx.lineTo(crate.x, crate.y + crate.h);
+        ctx.stroke();
+
+        // Barra de vida si está dañada
+        if (crate.health < crate.maxHealth) {
+          ctx.fillStyle = '#1e293b';
+          ctx.fillRect(crate.x, crate.y - 6, crate.w, 4);
+          ctx.fillStyle = '#f59e0b';
+          ctx.fillRect(crate.x, crate.y - 6, (crate.health / crate.maxHealth) * crate.w, 4);
+        }
+      });
+
+      // 6. BARRILES EXPLOSIVOS (ZONA INDUSTRIAL)
+      s.barrels.forEach((barrel) => {
+        // Tambor de acero rojo
+        ctx.fillStyle = '#dc2626';
+        ctx.fillRect(barrel.x, barrel.y, barrel.w, barrel.h);
+
+        // Rebordes metálicos oscuros
+        ctx.fillStyle = '#991b1b';
+        ctx.fillRect(barrel.x, barrel.y, barrel.w, 4);
+        ctx.fillRect(barrel.x, barrel.y + barrel.h / 2 - 2, barrel.w, 4);
+        ctx.fillRect(barrel.x, barrel.y + barrel.h - 4, barrel.w, 4);
+
+        // Icono de peligro de fuego
+        ctx.fillStyle = '#fef08a';
+        ctx.font = 'bold 11px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('🔥', barrel.x + barrel.w / 2, barrel.y + barrel.h / 2 + 3);
+
+        if (barrel.health < barrel.maxHealth) {
+          ctx.fillStyle = '#1e293b';
+          ctx.fillRect(barrel.x, barrel.y - 6, barrel.w, 4);
+          ctx.fillStyle = '#ef4444';
+          ctx.fillRect(barrel.x, barrel.y - 6, (barrel.health / barrel.maxHealth) * barrel.w, 4);
+        }
+      });
+
+      // 7. BOTIQUINES (+35 HP)
+      s.medkits.forEach((med) => {
+        const bobY = Math.sin(med.bobTicks * 0.1) * 3;
+
+        // Aura verde
+        ctx.fillStyle = 'rgba(34, 197, 94, 0.25)';
+        ctx.beginPath();
+        ctx.arc(med.x, med.y + bobY, 18, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Maletín blanco
+        ctx.fillStyle = '#f8fafc';
+        ctx.fillRect(med.x - 12, med.y - 8 + bobY, 24, 16);
+        ctx.strokeStyle = '#e2e8f0';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(med.x - 12, med.y - 8 + bobY, 24, 16);
+
+        // Cruz médica verde
+        ctx.fillStyle = '#16a34a';
+        ctx.fillRect(med.x - 2, med.y - 6 + bobY, 4, 12);
+        ctx.fillRect(med.x - 6, med.y - 2 + bobY, 12, 4);
+      });
+
+      // 8. ARMAS EN EL MUNDO
+      for (const w of s.worldWeapons) {
+        const wData = getWeapon(w.weaponType);
+        const wImg = s.weaponImages[w.weaponType];
+        const bobY = Math.sin(w.bobTicks * 0.1) * 4;
+
+        ctx.fillStyle = 'rgba(56, 189, 248, 0.25)';
+        ctx.beginPath();
+        ctx.arc(w.x, w.y + bobY, 18, 0, Math.PI * 2);
+        ctx.fill();
+
+        if (wImg && wImg.complete && wImg.naturalWidth > 0) {
+          ctx.drawImage(wImg, w.x - 16, w.y - 12 + bobY, 32, 16);
+        } else {
+          ctx.fillStyle = '#1e293b';
+          ctx.strokeStyle = wData.color;
+          ctx.lineWidth = 1.5;
+          ctx.fillRect(w.x - 14, w.y - 7 + bobY, 28, 14);
+          ctx.strokeRect(w.x - 14, w.y - 7 + bobY, 28, 14);
+        }
+
+        ctx.fillStyle = '#f8fafc';
+        ctx.font = 'bold 9px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(wData.name.slice(0, 9), w.x, w.y + 14 + bobY);
+        ctx.fillStyle = wData.color;
+        ctx.fillText('▼', w.x, w.y - 14 + bobY);
+      }
+
+      // 9. ZONAS DE FUEGO
       for (const fz of s.fireZones) {
         const grad = ctx.createRadialGradient(fz.x, fz.y, 5, fz.x, fz.y, fz.radius);
         grad.addColorStop(0, 'rgba(251, 146, 60, 0.7)');
@@ -1381,55 +2504,29 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         ctx.fill();
       }
 
-      // 4. World weapons on ground
-      for (const w of s.worldWeapons) {
-        const wData = getWeapon(w.weaponType);
-        const wImg = s.weaponImages[w.weaponType];
-        const bobY = Math.sin(w.bobTicks * 0.1) * 4;
-
-        // Pulsing glow
-        ctx.fillStyle = 'rgba(56, 189, 248, 0.25)';
-        ctx.beginPath();
-        ctx.arc(w.x, w.y + bobY, 18, 0, Math.PI * 2);
-        ctx.fill();
-
-        if (wImg && wImg.complete && wImg.naturalWidth > 0) {
-          // Render authentic BotExtended weapon sprite
-          ctx.drawImage(wImg, w.x - 16, w.y - 12 + bobY, 32, 16);
-        } else {
-          // Weapon crate/base fallback
-          ctx.fillStyle = '#1e293b';
-          ctx.strokeStyle = wData.color;
-          ctx.lineWidth = 1.5;
-          ctx.fillRect(w.x - 14, w.y - 7 + bobY, 28, 14);
-          ctx.strokeRect(w.x - 14, w.y - 7 + bobY, 28, 14);
-        }
-
-        // Weapon badge text
-        ctx.fillStyle = '#f8fafc';
-        ctx.font = 'bold 9px "JetBrains Mono", monospace';
-        ctx.textAlign = 'center';
-        ctx.fillText(wData.name.slice(0, 9), w.x, w.y + 14 + bobY);
-
-        // Small indicator above
-        ctx.fillStyle = wData.color;
-        ctx.fillText('▼', w.x, w.y - 14 + bobY);
-      }
-
-      // 5. Render Players
+      // 10. JUGADORES
       const renderFighter = (
         p: PlayerState,
         sprite: HTMLImageElement | null,
         nameTagColor: string,
         isHuman: boolean
       ) => {
+        // Dimensiones aumentadas para hacer a los personajes más grandes y visibles en pantalla
+        const isBigFighter =
+          p.name.includes('TANQUE') ||
+          p.name.includes('MUTANTE') ||
+          p.name.includes('BERSERKER');
+        const charW = isBigFighter ? 60 : 52;
+        const charH = isBigFighter ? 82 : 74;
+        const drawX = -charW / 2;
+        const drawY = -charH / 2;
+
         if (!p.isAlive) {
-          // Dead body / ragdoll on floor
           ctx.save();
-          ctx.translate(p.x, p.y + 14);
+          ctx.translate(p.x, p.y + 18);
           ctx.rotate((p.facingRight ? 1 : -1) * 1.5);
           ctx.fillStyle = 'rgba(100, 116, 139, 0.6)';
-          ctx.fillRect(-14, -24, 28, 48);
+          ctx.fillRect(-charW / 3, -charH / 2, (charW * 2) / 3, charH);
           ctx.restore();
           return;
         }
@@ -1441,263 +2538,180 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           p.fsm === PlayerFSMState.Roll ||
           (isHuman && s.p1Controller.state === ControllerState.Roll);
 
-        // Invulnerability blinking and roll dodge aura
         if (p.invulnerabilityTicks > 0 && Math.floor(p.invulnerabilityTicks / 4) % 2 === 0) {
           ctx.globalAlpha = 0.5;
         } else if (isRolling && (isHuman ? s.p1Controller.isInvulnerable : p.invulnerabilityTicks > 0)) {
           ctx.shadowColor = '#38bdf8';
-          ctx.shadowBlur = 12;
+          ctx.shadowBlur = 16;
         }
 
-        // Draw character sprite
-        const spriteWidth = 56;
-        const spriteHeight = 76;
-        const spriteOffsetY = -38;
-
-        ctx.save();
-        if (!p.facingRight) {
-          ctx.scale(-1, 1);
-        }
-
-        // Animación de rotación somersault y encogimiento tipo bola acrobática al rodar
-        if (isRolling) {
-          const rollProg = isHuman
-            ? s.p1Controller.rollProgress
-            : Math.max(0, 1 - p.rollTicks / GameConstants.RollDurationTicks);
-          // Giro completo de 360 grados en la dirección en que mira
-          const angle = rollProg * Math.PI * 2;
-          ctx.rotate(angle);
-          ctx.scale(0.85, 0.85);
-        }
-
-        if (sprite && sprite.complete && sprite.naturalWidth > 0) {
-          // Draw actual Godot character sprite
-          const drawOffsetY = isRolling ? -spriteHeight / 2 + 10 : spriteOffsetY - (spriteHeight / 2 - 20);
-          ctx.drawImage(
-            sprite,
-            -spriteWidth / 2,
-            drawOffsetY,
-            spriteWidth,
-            spriteHeight
-          );
-        } else {
-          // Crisp pixel stylized fighter fallback
-          ctx.fillStyle = isHuman ? '#0284c7' : '#b91c1c';
-          if (isRolling) {
-            ctx.beginPath();
-            ctx.arc(0, 0, 16, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.fillStyle = isHuman ? '#38bdf8' : '#f87171';
-            ctx.fillRect(-12, -4, 24, 8);
-          } else {
-            // Body
-            ctx.fillRect(-12, -34, 24, 38);
-            // Head
-            ctx.fillStyle = isHuman ? '#38bdf8' : '#f87171';
-            ctx.fillRect(-10, -48, 20, 14);
-            // Visor / eyes
-            ctx.fillStyle = '#ffffff';
-            ctx.fillRect(2, -44, 6, 4);
-          }
-        }
-
-        // Weapon held in hands — oculta durante la rodada acrobática
-        if (p.equippedWeapon !== WeaponType.Fists && !isRolling) {
-          const wData = getWeapon(p.equippedWeapon);
-          const wImg = s.weaponImages[p.equippedWeapon];
-          if (wImg && wImg.complete && wImg.naturalWidth > 0) {
-            ctx.drawImage(wImg, 6, -24, 24, 12);
-          } else {
-            ctx.fillStyle = wData.color;
-            ctx.fillRect(8, -20, 16, 5);
-          }
-          if (wData.hasLaserSight) {
-            // Laser sight line
-            ctx.strokeStyle = 'rgba(239, 68, 68, 0.7)';
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            ctx.moveTo(30, -18);
-            ctx.lineTo(400, -18);
-            ctx.stroke();
-          }
-        }
-
-        // Hit flash overlay
-        if (p.fsm === PlayerFSMState.Hitstun) {
-          ctx.fillStyle = 'rgba(249, 115, 22, 0.45)';
-          ctx.fillRect(-16, -52, 32, 60);
-        }
-
-        // On fire flame effect
-        if (p.isOnFire) {
-          ctx.fillStyle = 'rgba(234, 88, 12, 0.6)';
+        // Fuego si está ardiendo
+        if (p.isOnFire || p.fireTicks > 0) {
+          ctx.fillStyle = 'rgba(249, 115, 22, 0.35)';
           ctx.beginPath();
-          ctx.arc(0, -20, 22 + Math.sin(p.stateTicks) * 4, 0, Math.PI * 2);
+          ctx.arc(0, 0, 34, 0, Math.PI * 2);
           ctx.fill();
         }
 
-        ctx.restore(); // restore flip
+        ctx.scale(p.facingRight ? 1 : -1, 1);
 
-        // Overhead Overhead Name & Health Bar
-        const barW = 56;
-        const barH = 6;
-        const barX = -barW / 2;
-        const barY = -60;
+        const sheet = isHuman ? s.p1WalkSheet : s.botWalkSheet;
+        const idleImg = isHuman ? s.p1IdleSprite : s.botIdleSprite;
+        const cfg = isHuman ? s.p1SheetConfig : s.botSheetConfig;
 
-        // Name Tag
-        ctx.fillStyle = nameTagColor;
-        ctx.font = 'bold 11px "Chakra Petch", sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText(p.name, 0, barY - 4);
+        // Estado de caminata activo sobre el suelo
+        const isWalking =
+          p.onGround &&
+          p.isMovingHorizontally &&
+          p.fsm !== PlayerFSMState.Roll &&
+          p.fsm !== PlayerFSMState.KnockedDown &&
+          p.fsm !== PlayerFSMState.GetUp &&
+          p.fsm !== PlayerFSMState.Dead;
 
-        // Bar Background
-        ctx.fillStyle = '#0f172a';
-        ctx.fillRect(barX - 1, barY - 1, barW + 2, barH + 2);
+        // 1. Facción con Spritesheet multicelda activo (ej. Asesino con sus 14 frames) mientras camina:
+        if (isWalking && cfg?.hasWalkSheet && sheet && sheet.complete && sheet.naturalWidth > 0 && sheet.naturalHeight > 0) {
+          const cols = cfg.cols || 4;
+          const rows = cfg.rows || 4;
+          const totalFrames = cfg.totalFrames || 14;
 
-        // Health fill
-        const hpPct = Math.max(0, p.health / p.maxHealth);
-        ctx.fillStyle =
-          hpPct > 0.6 ? '#22c55e' : hpPct > 0.3 ? '#eab308' : '#ef4444';
-        ctx.fillRect(barX, barY, barW * hpPct, barH);
+          const frameW = sheet.naturalWidth / cols;
+          const frameH = sheet.naturalHeight / rows;
 
-        // Stamina bar (human only)
-        if (isHuman) {
-          const stmPct = Math.max(0, p.stamina / GameConstants.MaxStamina);
-          ctx.fillStyle = '#38bdf8';
-          ctx.fillRect(barX, barY + barH + 1, barW * stmPct, 2);
+          const currentFrame = p.animFrame;
+          const safeFrame = Math.max(0, Math.min(currentFrame, totalFrames - 1));
+          const col = safeFrame % cols;
+          const row = Math.floor(safeFrame / cols);
+          const sx = col * frameW;
+          const sy = row * frameH;
+
+          ctx.drawImage(sheet, sx, sy, frameW, frameH, drawX, drawY, charW, charH);
+        } else if (idleImg && idleImg.complete && idleImg.naturalWidth > 0) {
+          // 2. Facción seleccionada con su propia skin/textura (Asesino, Matón, Punk, etc. en idle o caminata):
+          if (isWalking) {
+            // Ciclo de caminata dinámico sincronizado a animFrame y animSpeed
+            const walkStep = (p.animFrame / 14) * Math.PI * 2;
+            const walkBobY = Math.sin(walkStep) * 2.5;
+            const walkTilt = Math.sin(walkStep) * 0.05;
+            ctx.rotate(walkTilt);
+            ctx.drawImage(idleImg, drawX, drawY + walkBobY, charW, charH);
+          } else {
+            // Fotograma estático exacto al detenerse (idle): Muestra la imagen del asesino o personaje seleccionado
+            ctx.drawImage(idleImg, drawX, drawY, charW, charH);
+          }
+        } else if (sprite && sprite.complete && sprite.naturalWidth > 0) {
+          ctx.drawImage(sprite, drawX, drawY, charW, charH);
+        } else {
+          ctx.fillStyle = isHuman ? '#0284c7' : '#e11d48';
+          ctx.fillRect(drawX, drawY, charW, charH);
+          ctx.fillStyle = '#f8fafc';
+          ctx.fillRect(drawX + 18, drawY + 10, 8, 8);
+        }
+
+        // Arma equipada en mano (proporcional al personaje aumentado)
+        if (p.equippedWeapon !== WeaponType.Fists) {
+          const wImg = s.weaponImages[p.equippedWeapon];
+          if (wImg && wImg.complete && wImg.naturalWidth > 0) {
+            ctx.drawImage(wImg, 8, -6, 32, 16);
+          }
         }
 
         ctx.restore();
+
+        // Barra de salud sobre cabeza (ajustada a la nueva escala del personaje)
+        const hpPercent = Math.max(0, p.health / p.maxHealth);
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(p.x - 24, p.y - 48, 48, 6);
+        ctx.fillStyle = hpPercent > 0.5 ? '#22c55e' : hpPercent > 0.25 ? '#eab308' : '#ef4444';
+        ctx.fillRect(p.x - 23, p.y - 47, 46 * hpPercent, 4);
+
+        // Nombre
+        ctx.fillStyle = nameTagColor;
+        ctx.font = 'bold 10px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(p.name, p.x, p.y - 54);
       };
 
       renderFighter(s.p1, s.p1Sprite, '#38bdf8', true);
       renderFighter(s.bot, s.botSprite, '#f87171', false);
 
-      // 6. Projectiles
+      // 11. PROYECTILES
       for (const pr of s.projectiles) {
-        ctx.save();
+        ctx.fillStyle = pr.color;
         if (pr.isGrenade) {
-          ctx.fillStyle = pr.color;
           ctx.beginPath();
           ctx.arc(pr.x, pr.y, 5, 0, Math.PI * 2);
           ctx.fill();
-          ctx.strokeStyle = '#000';
-          ctx.stroke();
         } else {
-          // Tracer bullet / rocket
-          ctx.fillStyle = pr.color;
-          ctx.shadowColor = pr.color;
-          ctx.shadowBlur = 6;
-          ctx.beginPath();
-          ctx.arc(pr.x, pr.y, pr.weaponType === WeaponType.Bazooka ? 5 : 2.5, 0, Math.PI * 2);
-          ctx.fill();
-
-          // Bullet trail
-          ctx.strokeStyle = pr.color;
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.moveTo(pr.x, pr.y);
-          ctx.lineTo(pr.x - pr.vx * 0.03, pr.y - pr.vy * 0.03);
-          ctx.stroke();
+          ctx.fillRect(pr.x - 3, pr.y - 1.5, 6, 3);
         }
-        ctx.restore();
       }
 
-      // 7. Particles
+      // 12. PARTÍCULAS
       for (const pt of s.particles) {
-        ctx.save();
-        ctx.globalAlpha = pt.life / pt.maxLife;
         ctx.fillStyle = pt.color;
-        ctx.fillRect(pt.x, pt.y, pt.size, pt.size);
-        ctx.restore();
+        ctx.globalAlpha = pt.life / pt.maxLife;
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, pt.size, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
       }
 
-      // 8. Floating damage numbers
+      // 13. TEXTOS FLOTANTES
       for (const ft of s.floatingTexts) {
-        ctx.save();
-        ctx.globalAlpha = Math.min(1, ft.life / 20);
         ctx.fillStyle = ft.color;
-        ctx.font = 'bold 15px "Chakra Petch", sans-serif';
+        ctx.font = 'bold 12px monospace';
         ctx.textAlign = 'center';
         ctx.fillText(ft.text, ft.x, ft.y);
-        ctx.restore();
       }
 
-      // 9. Central Big Announcement ("¡PELEA!", "¡JUGADOR 1 GANA!", etc.)
+      // 14. ANUNCIO CENTRAL
       if (s.announcement) {
-        ctx.save();
+        ctx.fillStyle = 'rgba(0,0,0,0.7)';
+        ctx.fillRect(0, ARENA_HEIGHT / 2 - 35, ARENA_WIDTH, 70);
         ctx.fillStyle = '#facc15';
-        ctx.shadowColor = '#000';
-        ctx.shadowBlur = 10;
-        ctx.font = 'bold 44px "Chakra Petch", sans-serif';
+        ctx.font = '900 32px "Chakra Petch", sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText(s.announcement, ARENA_WIDTH / 2, 180);
-        ctx.restore();
+        ctx.fillText(s.announcement, ARENA_WIDTH / 2, ARENA_HEIGHT / 2 + 10);
       }
 
       ctx.restore();
     };
 
-    const loop = (currentTime: number) => {
-      const delta = currentTime - lastTime;
-      lastTime = currentTime;
-      accumulatedTime += delta;
-
-      // Limit max catchup to avoid spiraling
-      if (accumulatedTime > 100) accumulatedTime = 100;
-
-      while (accumulatedTime >= timestep) {
-        updateGame();
-        accumulatedTime -= timestep;
-      }
-
+    const loop = () => {
+      updateGame();
       renderGame();
       animId = requestAnimationFrame(loop);
     };
 
     animId = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(animId);
-  }, [maxRounds, botFaction, playerFaction, restartRound, onMatchComplete]);
+  }, [maxRounds, restartRound]);
 
   return (
-    <div className="relative w-full h-full flex flex-col items-center justify-center bg-neutral-950 p-2 overflow-hidden select-none">
-      {/* Top Header Match Tracker */}
-      <div className="w-full max-w-[960px] bg-neutral-900/90 border border-neutral-800 rounded-t-lg px-4 py-2 flex items-center justify-between text-neutral-200">
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-pulse"></span>
-            <span className="font-bold text-cyan-400 text-sm tracking-wider">
-              P1 ({playerArch.name.toUpperCase()})
-            </span>
-          </div>
-          <span className="text-xl font-bold font-mono-code text-cyan-300">
-            {hudState.p1Score}
-          </span>
+    <div className="relative w-full h-full flex flex-col items-center justify-center p-2 select-none overflow-hidden bg-neutral-950">
+      {/* HUD Superior: Marcador y Nombre del Mundo */}
+      <div className="w-full max-w-[960px] bg-neutral-900/90 border border-neutral-800 rounded-t-xl px-4 py-2 flex items-center justify-between text-xs font-mono-code">
+        <div className="flex items-center gap-2">
+          <span className="text-cyan-400 font-bold">{hudState.worldName}</span>
+          <span className="text-neutral-500">|</span>
+          <span className="text-neutral-300">Ronda {hudState.round} / {hudState.maxRounds}</span>
         </div>
 
-        <div className="flex flex-col items-center">
-          <span className="text-sm font-bold uppercase tracking-widest text-neutral-300">
-            Round {hudState.round} / {hudState.maxRounds}
-          </span>
-          <span className="text-xs text-neutral-400 font-mono-code">
-            Al mejor de {Math.floor(hudState.maxRounds / 2) + 1}
-          </span>
+        <div className="flex items-center gap-3 text-sm font-extrabold">
+          <span className="text-cyan-400">{hudState.p1Score}</span>
+          <span className="text-neutral-500">-</span>
+          <span className="text-rose-400">{hudState.botScore}</span>
         </div>
 
-        <div className="flex items-center gap-3">
-          <span className="text-xl font-bold font-mono-code text-rose-400">
-            {hudState.botScore}
-          </span>
-          <div className="flex items-center gap-2">
-            <span className="font-bold text-rose-400 text-sm tracking-wider">
-              BOT ({botArch.name.toUpperCase()})
-            </span>
-            <span className="w-2.5 h-2.5 rounded-full bg-rose-500"></span>
-          </div>
-        </div>
+        <button
+          onClick={onExitToMenu}
+          className="px-3 py-1 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white rounded-lg text-xs font-bold transition cursor-pointer"
+        >
+          Salir (ESC)
+        </button>
       </div>
 
-      {/* Main Canvas Viewport */}
+      {/* Viewport del Canvas */}
       <div className="relative border-x border-neutral-800 shadow-2xl bg-black">
         <canvas
           ref={canvasRef}
@@ -1708,35 +2722,35 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           className="w-full max-w-[960px] max-h-[70vh] aspect-[16/9] object-contain block focus:outline-none"
         />
 
-        {/* Round or Match Overlay Banner */}
+        {/* Modal de Fin de Partida con Revancha */}
         {hudState.isMatchOver && (
-          <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center p-6 gap-4 z-20 backdrop-blur-sm animate-fade-in">
-            <h2 className="text-5xl font-extrabold tracking-wider text-yellow-400">
+          <div className="absolute inset-0 bg-black/85 flex flex-col items-center justify-center p-6 gap-4 z-20 backdrop-blur-sm animate-fade-in">
+            <h2 className="text-4xl sm:text-5xl font-black tracking-wider text-yellow-400 drop-shadow-[0_0_20px_rgba(250,204,21,0.5)]">
               {hudState.matchWinner}
             </h2>
-            <p className="text-neutral-300 text-lg">
+            <p className="text-neutral-300 text-base sm:text-lg font-mono-code">
               Marcador Final: {hudState.p1Score} - {hudState.botScore}
             </p>
             <div className="flex gap-4 mt-2">
               <button
-                onClick={restartRound}
-                className="px-6 py-2.5 bg-cyan-600 hover:bg-cyan-500 text-white font-bold rounded-lg shadow-lg transition"
+                onClick={() => restartRound(true)}
+                className="px-6 py-3 min-h-[48px] bg-gradient-to-r from-cyan-500 to-emerald-400 hover:from-cyan-400 hover:to-emerald-300 text-neutral-950 font-black rounded-xl shadow-[0_0_20px_rgba(6,182,212,0.4)] transition cursor-pointer touch-manipulation"
               >
                 Jugar Revancha (R)
               </button>
               <button
                 onClick={onExitToMenu}
-                className="px-6 py-2.5 bg-neutral-700 hover:bg-neutral-600 text-neutral-200 font-bold rounded-lg shadow-lg transition"
+                className="px-6 py-3 min-h-[48px] bg-neutral-800 hover:bg-neutral-700 text-neutral-200 font-bold rounded-xl border border-neutral-700 transition cursor-pointer touch-manipulation"
               >
-                Volver al Menú (ESC)
+                Elegir Otro Mundo / Menú
               </button>
             </div>
           </div>
         )}
       </div>
 
-      {/* Bottom Fighter Controls & Health HUD */}
-      <div className="w-full max-w-[960px] bg-neutral-900/95 border border-neutral-800 rounded-b-lg p-3 grid grid-cols-3 items-center gap-4 text-xs">
+      {/* Barra de Estadísticas de Combatientes */}
+      <div className="w-full max-w-[960px] bg-neutral-900/95 border border-neutral-800 rounded-b-xl p-3 grid grid-cols-3 items-center gap-4 text-xs">
         {/* P1 Stats */}
         <div className="flex flex-col gap-1.5">
           <div className="flex justify-between items-center text-cyan-400 font-bold">
@@ -1769,7 +2783,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         </div>
 
         {/* Current Equipped Weapon */}
-        <div className="flex flex-col items-center justify-center p-2 bg-neutral-950/80 rounded border border-neutral-800 text-center">
+        <div className="flex flex-col items-center justify-center p-2 bg-neutral-950/80 rounded-xl border border-neutral-800 text-center">
           <span className="text-[10px] text-neutral-400 uppercase font-semibold">Arma P1</span>
           <div className="flex items-center gap-2 my-0.5">
             {getWeapon(hudState.p1Weapon)?.iconUrl ? (
@@ -1788,10 +2802,10 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           </span>
         </div>
 
-        {/* Opponent Bot Stats */}
+        {/* Bot / J2 Stats */}
         <div className="flex flex-col gap-1.5">
           <div className="flex justify-between items-center text-rose-400 font-bold">
-            <span>BOT ({botArch.name.toUpperCase()})</span>
+            <span>{gameMode === 'local1v1' ? 'J2' : 'BOT'} ({botArch.name.toUpperCase()})</span>
             <span>{Math.ceil(hudState.botHealth)} / {hudState.botMaxHealth}</span>
           </div>
           <div className="w-full h-3 bg-neutral-800 rounded overflow-hidden">
@@ -1808,7 +2822,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           </div>
 
           <div className="flex justify-between items-center text-neutral-400">
-            <span>ARMA DEL BOT</span>
+            <span>{gameMode === 'local1v1' ? 'ARMA DE J2' : 'ARMA DEL BOT'}</span>
             <div className="flex items-center gap-1.5 font-bold text-rose-300">
               {getWeapon(hudState.botWeapon)?.iconUrl ? (
                 <img
@@ -1821,19 +2835,6 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             </div>
           </div>
         </div>
-      </div>
-
-      {/* Quick Controls Reminder Strip */}
-      <div className="w-full max-w-[960px] mt-1.5 flex flex-wrap justify-between items-center text-[11px] text-neutral-400 px-2 font-mono-code">
-        <span><strong className="text-neutral-200">A / D</strong>: Caminar</span>
-        <span><strong className="text-neutral-200">Shift + A/D</strong>: Correr</span>
-        <span><strong className="text-neutral-200">W / Espacio</strong>: Salto</span>
-        <span><strong className="text-neutral-200">S / C</strong>: Rodar (Roll)</span>
-        <span><strong className="text-neutral-200">N / J</strong>: Melee</span>
-        <span><strong className="text-neutral-200">M / K</strong>: Disparar</span>
-        <span><strong className="text-neutral-200">G</strong>: Granada</span>
-        <span><strong className="text-neutral-200">R</strong>: Reiniciar</span>
-        <span><strong className="text-neutral-200">ESC</strong>: Menú</span>
       </div>
     </div>
   );

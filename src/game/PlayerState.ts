@@ -83,6 +83,12 @@ export interface PlayerState {
   damageDealtModifier: number;
   damageTakenModifier: number;
   meleeForceModifier: number;
+
+  // Animación de caminata sincronizada con spritesheet
+  animFrame: number;
+  animFrameTimer: number;
+  animSpeed: number;
+  isMovingHorizontally: boolean;
 }
 
 export function createPlayerState(
@@ -131,5 +137,9 @@ export function createPlayerState(
     damageDealtModifier: GameConstants.DD_Normal,
     damageTakenModifier: GameConstants.DT_Normal,
     meleeForceModifier: 1.0,
+    animFrame: 0,
+    animFrameTimer: 0,
+    animSpeed: 1.0,
+    isMovingHorizontally: false,
   };
 }

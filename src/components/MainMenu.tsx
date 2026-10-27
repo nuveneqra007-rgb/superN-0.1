@@ -7,21 +7,36 @@ import React, { useState } from 'react';
 import { BotFaction, BotArchetypeDatabase, getBotArchetype } from '../game/BotData';
 import { WeaponDatabase, WeaponType, getWeapon } from '../game/WeaponData';
 import { sounds } from '../game/SoundEffects';
-import { Play, Shield, Zap, Skull, Swords, Volume2, VolumeX, User, CheckCircle2, Crosshair, Sparkles } from 'lucide-react';
+import { Play, Shield, Zap, Skull, Swords, Volume2, VolumeX, User, CheckCircle2, Crosshair, Sparkles, ArrowLeft, ArrowRight } from 'lucide-react';
+
+import { GameMode } from './ModeSelectScreen';
 
 interface MainMenuProps {
-  onStartGame: (playerFaction: BotFaction, botFaction: BotFaction, rounds: number) => void;
+  gameMode: GameMode;
+  selectedPlayerFaction: BotFaction;
+  onSelectPlayerFaction: (faction: BotFaction) => void;
+  selectedBotFaction: BotFaction;
+  onSelectBotFaction: (faction: BotFaction) => void;
+  rounds: number;
+  onSelectRounds: (rounds: number) => void;
+  onGoToWorldSelect: (playerFaction: BotFaction, botFaction: BotFaction, rounds: number) => void;
   onOpenArsenal: () => void;
+  onBackToLanding: () => void;
 }
 
 export const MainMenu: React.FC<MainMenuProps> = ({
-  onStartGame,
+  gameMode,
+  selectedPlayerFaction,
+  onSelectPlayerFaction,
+  selectedBotFaction,
+  onSelectBotFaction,
+  rounds,
+  onSelectRounds,
+  onGoToWorldSelect,
   onOpenArsenal,
+  onBackToLanding,
 }) => {
-  const [selectedPlayerFaction, setSelectedPlayerFaction] = useState<BotFaction>(BotFaction.Assassin);
-  const [selectedBotFaction, setSelectedBotFaction] = useState<BotFaction>(BotFaction.Thug);
   const [activeTab, setActiveTab] = useState<'player' | 'bot'>('player');
-  const [rounds, setRounds] = useState<number>(5);
   const [muted, setMuted] = useState<boolean>(sounds.getMuted());
 
   const toggleSound = () => {
@@ -34,17 +49,19 @@ export const MainMenu: React.FC<MainMenuProps> = ({
   const botArchetype = getBotArchetype(selectedBotFaction);
   const currentArchetype = activeTab === 'player' ? playerArchetype : botArchetype;
 
-  const handleStart = () => {
-    sounds.playPickup();
-    onStartGame(selectedPlayerFaction, selectedBotFaction, rounds);
+  const handleNext = () => {
+    if (selectedPlayerFaction && selectedBotFaction) {
+      sounds.playPickup();
+      onGoToWorldSelect(selectedPlayerFaction, selectedBotFaction, rounds);
+    }
   };
 
   const handleSelectCharacter = (faction: BotFaction) => {
     sounds.playPickup();
     if (activeTab === 'player') {
-      setSelectedPlayerFaction(faction);
+      onSelectPlayerFaction(faction);
     } else {
-      setSelectedBotFaction(faction);
+      onSelectBotFaction(faction);
     }
   };
 
@@ -55,11 +72,24 @@ export const MainMenu: React.FC<MainMenuProps> = ({
 
       {/* Top Bar with Audio & Credits */}
       <div className="w-full max-w-5xl flex items-center justify-between mb-3 px-2">
-        <div className="flex items-center gap-2 text-xs font-mono-code text-neutral-400">
-          <span className="px-2 py-0.5 rounded bg-neutral-900 border border-neutral-800 text-sky-400 font-bold">
-            v0.1-web
-          </span>
-          <span>Basado en Superfighters Deluxe & superN</span>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => {
+              sounds.playPickup();
+              onBackToLanding();
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-neutral-900/90 hover:bg-neutral-800 border border-neutral-800 hover:border-neutral-700 rounded-lg text-xs font-bold text-neutral-300 hover:text-white transition shadow-sm cursor-pointer"
+            title="Volver a la pantalla de inicio"
+          >
+            <ArrowLeft className="w-4 h-4 text-cyan-400" />
+            <span>Volver</span>
+          </button>
+          <div className="hidden sm:flex items-center gap-2 text-xs font-mono-code text-neutral-400">
+            <span className="px-2 py-0.5 rounded bg-neutral-900 border border-neutral-800 text-sky-400 font-bold">
+              v0.1-web
+            </span>
+            <span>Basado en Superfighters Deluxe & superN</span>
+          </div>
         </div>
         <div className="flex items-center gap-3">
           {/* New Dedicated Arsenal Button */}
@@ -95,7 +125,9 @@ export const MainMenu: React.FC<MainMenuProps> = ({
           </h1>
         </div>
         <p className="text-neutral-400 text-xs tracking-wide font-medium">
-          2D Platform Tactical Fighter — Elige tu Protagonista y tu Oponente Rival
+          {gameMode === 'local1v1'
+            ? '2D Platform Tactical Fighter — Elige los combatientes para JUGADOR 1 y JUGADOR 2'
+            : '2D Platform Tactical Fighter — Elige tu Protagonista y tu Oponente Rival'}
         </p>
       </div>
 
@@ -123,7 +155,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
             <div>
               <div className="flex items-center gap-1.5 text-[10px] font-mono-code font-bold uppercase text-cyan-400">
                 <User className="w-3.5 h-3.5" />
-                <span>Jugador 1 (Protagonista)</span>
+                <span>{gameMode === 'local1v1' ? 'Jugador 1' : 'Jugador 1 (Protagonista)'}</span>
               </div>
               <h3 className="text-base font-extrabold text-white">{playerArchetype.name}</h3>
               <div className="text-[11px] text-neutral-400 flex flex-wrap items-center gap-2">
@@ -154,7 +186,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
           <span className="text-[10px] font-mono-code text-neutral-400 mt-1 uppercase">Duelo</span>
         </div>
 
-        {/* Bot Opponent Box */}
+        {/* P2 / Bot Opponent Box */}
         <div
           onClick={() => setActiveTab('bot')}
           className={`md:col-span-5 p-3 rounded-lg border cursor-pointer transition flex items-center justify-between gap-3 ${
@@ -175,14 +207,20 @@ export const MainMenu: React.FC<MainMenuProps> = ({
             </div>
             <div>
               <div className="flex items-center gap-1.5 text-[10px] font-mono-code font-bold uppercase text-rose-400">
-                <Skull className="w-3.5 h-3.5" />
-                <span>Oponente Rival (Bot)</span>
+                {gameMode === 'local1v1' ? <User className="w-3.5 h-3.5" /> : <Skull className="w-3.5 h-3.5" />}
+                <span>{gameMode === 'local1v1' ? 'Jugador 2' : 'Oponente Rival (Bot)'}</span>
               </div>
               <h3 className="text-base font-extrabold text-white">{botArchetype.name}</h3>
               <div className="text-[11px] text-neutral-400 flex items-center gap-2">
                 <span>HP: <strong className="text-rose-400">{botArchetype.maxHealth}</strong></span>
                 <span>•</span>
-                <span>IA: <strong className="text-sky-300 capitalize">{botArchetype.aiType}</strong></span>
+                <span>
+                  {gameMode === 'local1v1' ? (
+                    <>Vel: <strong className="text-amber-400">×{botArchetype.speedModifier.toFixed(2)}</strong></>
+                  ) : (
+                    <>IA: <strong className="text-sky-300 capitalize">{botArchetype.aiType}</strong></>
+                  )}
+                </span>
               </div>
             </div>
           </div>
@@ -380,11 +418,11 @@ export const MainMenu: React.FC<MainMenuProps> = ({
             {/* Matchup Summary Badge */}
             <div className="p-3 bg-neutral-950/80 border border-neutral-800 rounded-lg text-xs space-y-2 mb-3">
               <div className="flex justify-between items-center pb-1.5 border-b border-neutral-800">
-                <span className="text-neutral-400">Protagonista P1:</span>
+                <span className="text-neutral-400">{gameMode === 'local1v1' ? 'Jugador 1:' : 'Protagonista P1:'}</span>
                 <span className="font-bold text-cyan-300">{playerArchetype.name}</span>
               </div>
               <div className="flex justify-between items-center pb-1.5 border-b border-neutral-800">
-                <span className="text-neutral-400">Oponente Rival:</span>
+                <span className="text-neutral-400">{gameMode === 'local1v1' ? 'Jugador 2:' : 'Oponente Rival:'}</span>
                 <span className="font-bold text-rose-400">{botArchetype.name}</span>
               </div>
               <div className="flex justify-between items-center pb-1.5 border-b border-neutral-800">
@@ -404,7 +442,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
               {[1, 3, 5, 7].map((num) => (
                 <button
                   key={num}
-                  onClick={() => setRounds(num)}
+                  onClick={() => onSelectRounds(num)}
                   className={`flex-1 py-1.5 rounded-lg font-bold text-xs border transition ${
                     rounds === num
                       ? 'bg-amber-500/20 border-amber-400 text-amber-300'
@@ -424,11 +462,16 @@ export const MainMenu: React.FC<MainMenuProps> = ({
           </div>
 
           <button
-            onClick={handleStart}
-            className="w-full mt-3 py-3.5 bg-gradient-to-r from-cyan-500 via-sky-400 to-emerald-400 hover:from-cyan-400 hover:to-emerald-300 text-neutral-950 font-black text-base tracking-wider uppercase rounded-xl shadow-[0_0_20px_rgba(6,182,212,0.4)] transition transform hover:-translate-y-0.5 active:translate-y-0 flex items-center justify-center gap-2"
+            onClick={handleNext}
+            disabled={!selectedPlayerFaction || !selectedBotFaction}
+            className={`w-full mt-3 py-3.5 text-neutral-950 font-black text-base tracking-wider uppercase rounded-xl transition transform flex items-center justify-center gap-2 cursor-pointer ${
+              selectedPlayerFaction && selectedBotFaction
+                ? 'bg-gradient-to-r from-cyan-500 via-sky-400 to-emerald-400 hover:from-cyan-400 hover:to-emerald-300 shadow-[0_0_20px_rgba(6,182,212,0.4)] hover:-translate-y-0.5 active:translate-y-0'
+                : 'bg-neutral-800 text-neutral-500 cursor-not-allowed opacity-50'
+            }`}
           >
-            <Play className="w-5 h-5 fill-current" />
-            ¡ENTRAR A LA ARENA!
+            <span>ELEGIR MUNDO</span>
+            <ArrowRight className="w-5 h-5" />
           </button>
         </div>
       </div>
@@ -436,14 +479,21 @@ export const MainMenu: React.FC<MainMenuProps> = ({
       {/* Controls Manual */}
       <div className="w-full max-w-5xl bg-neutral-900/60 border border-neutral-800/80 rounded-lg px-4 py-2 flex flex-wrap items-center justify-between gap-2 text-xs text-neutral-400">
         <span className="font-bold text-neutral-300">Controles de Teclado:</span>
-        <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-[11px]">
-          <span><strong className="text-sky-300">A / D ó Flechas</strong>: Correr</span>
-          <span><strong className="text-sky-300">W ó ↑ / Espacio</strong>: Saltar</span>
-          <span><strong className="text-sky-300">S ó ↓</strong>: Agacharse / Rodar</span>
-          <span><strong className="text-sky-300">N ó J</strong>: Ataque Melee (Combo 3 golpes)</span>
-          <span><strong className="text-sky-300">M ó K</strong>: Disparar</span>
-          <span><strong className="text-sky-300">G</strong>: Granada / Molotov</span>
-        </div>
+        {gameMode === 'local1v1' ? (
+          <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-[11px]">
+            <span><strong className="text-cyan-400">J1</strong>: Flechas, N (Melee), M (Disparar), , (Granada), . (Correr)</span>
+            <span><strong className="text-amber-400">J2</strong>: WASD, J (Melee), K (Disparar), L (Granada), Q (Correr)</span>
+          </div>
+        ) : (
+          <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-[11px]">
+            <span><strong className="text-sky-300">A / D ó Flechas</strong>: Correr</span>
+            <span><strong className="text-sky-300">W ó ↑ / Espacio</strong>: Saltar</span>
+            <span><strong className="text-sky-300">S ó ↓</strong>: Agacharse / Rodar</span>
+            <span><strong className="text-sky-300">N ó J</strong>: Ataque Melee</span>
+            <span><strong className="text-sky-300">M ó K</strong>: Disparar</span>
+            <span><strong className="text-sky-300">G</strong>: Granada / Molotov</span>
+          </div>
+        )}
       </div>
     </div>
   );

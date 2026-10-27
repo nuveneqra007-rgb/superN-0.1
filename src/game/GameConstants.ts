@@ -24,8 +24,8 @@ export const GameConstants = {
   EnergyRechargeSlow: 0.5,
 
   // ─── HITBOXES ─────────────────────────────────────────────
-  HitboxStand: { x: 28, y: 48 },
-  HitboxCrouch: { x: 28, y: 24 },
+  HitboxStand: { x: 34, y: 64 },
+  HitboxCrouch: { x: 34, y: 34 },
   PlatformDropTicks: 12,
 
   // ─── DODGE ROLL ───────────────────────────────────────────

@@ -202,7 +202,7 @@ export const BotArchetypeDatabase: Record<BotFaction, BotArchetypeData> = {
     equipWeaponChance: 0.9,
     preferredWeapon: WeaponType.Machete,
     description: 'Ninja veloz con máscara y traje azul, armado con katana/machete hiperrápido.',
-    spriteUrl: '/assets/sprites/bot/assassin.png',
+    spriteUrl: '/assets/sprites/player/Assassin_2.png',
   },
   [BotFaction.Cowboy]: {
     faction: BotFaction.Cowboy,

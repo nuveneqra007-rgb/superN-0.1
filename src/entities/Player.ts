@@ -270,7 +270,7 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
   private shootCooldownTimer: number = 0;
 
   // ── Sincronización de Animación y Spritesheet (14 frames) ──
-  // Base: Assassin (/assets/aistudio/Assassin-walk-trimmed_710f16f3.png)
+  // Base: Assassin (/assets/sprites/player/Assassin_2.png)
   // Para extender a otros personajes (Punk, Gánster, Policía, Mutante, etc.):
   // Cargar su spritesheet (1024x1024, 4x4, 14 frames) y mapear con estos mismos timers.
   public currentFrame: number = 0;

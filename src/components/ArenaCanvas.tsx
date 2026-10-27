@@ -11,7 +11,7 @@ import { GameConstants } from '../game/GameConstants';
 import { PhysicsRect, PhysicsStep } from '../game/PhysicsStep';
 import { PlayerFSM } from '../game/PlayerFSM';
 import { createPlayerState, PlayerFSMState, PlayerState } from '../game/PlayerState';
-import { getWeapon, SpawnableWeaponsList, WeaponCategory, WeaponDatabase, WeaponType } from '../game/WeaponData';
+import { getWeapon, isBladeWeapon, SpawnableWeaponsList, WeaponCategory, WeaponDatabase, WeaponType } from '../game/WeaponData';
 import { PlayerController, PlayerInput, PlayerState as ControllerState, PLAYER_CONFIG } from '../game/PlayerController';
 import { sounds } from '../game/SoundEffects';
 import { getWorldConfig, WorldConfig, HazardCfg, PlatformRect } from '../game/WorldData';
@@ -45,14 +45,11 @@ export interface SpritesheetDef {
 
 export const CHARACTER_SPRITESHEETS: Record<string, SpritesheetDef> = {
   // ── 1. ASESINO (ASSASSIN) ──
-  // Utiliza el spritesheet dinámico de 1024x1024, 4 columnas x 4 filas, 14 frames activos
+  // Utiliza la imagen oficial prevista (/assets/sprites/player/Assassin_2.png)
+  // para idle y caminata con ciclo biomecánico fluido, sin cambiar a formas no previstas ni perder la imagen.
   [BotFaction.Assassin]: {
-    walkSheetUrl: '/assets/aistudio/Assassin-walk-trimmed_710f16f3.png',
     idleUrl: '/assets/sprites/player/Assassin_2.png',
-    cols: 4,
-    rows: 4,
-    totalFrames: 14,
-    hasWalkSheet: true,
+    hasWalkSheet: false,
   },
   // ── 2. MATÓN (THUG) ──
   [BotFaction.Thug]: {
@@ -171,6 +168,8 @@ interface DestructibleCrateEntity {
   h: number;
   health: number;
   maxHealth: number;
+  vx?: number;
+  vy?: number;
 }
 
 interface ExplosiveBarrelEntity {
@@ -181,6 +180,8 @@ interface ExplosiveBarrelEntity {
   h: number;
   health: number;
   maxHealth: number;
+  vx?: number;
+  vy?: number;
 }
 
 interface ConveyorEntity {
@@ -317,6 +318,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     botIdleSprite: HTMLImageElement | null;
     botSheetConfig: SpritesheetDef;
     weaponImages: Record<string, HTMLImageElement>;
+    swordComboSheet: HTMLImageElement | null;
   } | null>(null);
 
   // Helper para generar entidades interactivas del mundo
@@ -336,6 +338,8 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           h: h.h,
           health: h.health || 25,
           maxHealth: h.maxHealth || 25,
+          vx: 0,
+          vy: 0,
         });
       } else if (h.type === 'explosive_barrel') {
         barrels.push({
@@ -346,6 +350,8 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           h: h.h,
           health: h.health || 30,
           maxHealth: h.maxHealth || 30,
+          vx: 0,
+          vy: 0,
         });
       } else if (h.type === 'conveyor_belt') {
         conveyors.push({
@@ -451,6 +457,9 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       }
     });
 
+    const swordComboSheet = new Image();
+    swordComboSheet.src = '/assets/aistudio/assasin-asm_sword_triple_combo_3a606114.png';
+
     // Armas iniciales en las plataformas del mundo
     const worldWeapons: WorldWeaponEntity[] = worldCfg.weaponSpawns.map((pos, idx) => ({
       id: idx + 1,
@@ -503,6 +512,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       botIdleSprite,
       botSheetConfig: botCfg,
       weaponImages,
+      swordComboSheet,
     };
 
     // Iniciar ambientación procedural del mundo
@@ -919,53 +929,312 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         const firePressed = is1v1 ? !!keys['m'] : !!(keys['m'] || keys['k']);
         const throwPressed = is1v1 ? !!(keys[','] || keys['comma']) : !!(keys['g'] || keys['comma'] || keys[','] || keys['l']);
 
-        // Melee Attack P1
-        if (
-          meleePressed &&
-          p1.attackCooldown <= 0 &&
-          (p1.fsm === PlayerFSMState.Idle ||
-            p1.fsm === PlayerFSMState.Run ||
-            p1.fsm === PlayerFSMState.Crouch)
-        ) {
-          p1.comboStep = (p1.comboStep + 1) % 3;
-          p1.comboWindowTicks = GameConstants.FistsComboWindowTicks;
-          p1.attackCooldown = GameConstants.FistsCooldownTicks;
-          PlayerFSM.tryTransition(p1, PlayerFSMState.MeleeAttack);
-          sounds.playPunch();
+        // Melee Attack P1 - Advanced Melee System
+        const p1FacingDir = p1.facingRight ? 1 : -1;
+        const meleeHeld = is1v1 ? !!keys['n'] : !!(keys['n'] || keys['j']);
+        const meleeJustPressed = is1v1 ? !!s.keysJustPressed['n'] : !!(s.keysJustPressed['n'] || s.keysJustPressed['j']);
 
-          // Golpear rival
-          const hit = CombatSystem.resolveMelee(p1, bot);
-          if (hit.didHit) {
-            sounds.playHit();
-            addSparks(bot.x, bot.y, '#38bdf8', 12);
-            s.screenShake = 6;
+        if (p1.isGrappling && p1.grabbedTargetId === bot.id) {
+          p1.grappleTicks++;
+          bot.x = p1.x + p1FacingDir * 24;
+          bot.y = p1.y;
+          bot.velocityX = 0;
+          bot.velocityY = 0;
+          bot.isGrabbed = true;
+          s.p2Controller.setPosition(bot.x, bot.y);
+          s.p2Controller.vx = 0;
+          s.p2Controller.vy = 0;
+
+          if (meleeJustPressed) {
+            sounds.playThrow();
+            const throwDirX = leftKey ? -1 : (rightKey ? 1 : p1FacingDir);
+            const throwUp = jumpHeld || !crouchHeld;
+            const throwHit = CombatSystem.resolveThrow(p1, bot, throwDirX, throwUp);
+
+            p1.isGrappling = false;
+            p1.grabbedTargetId = null;
+            bot.isGrabbed = false;
+            p1.attackCooldown = 26;
+            s.screenShake = 10;
+            addSparks(bot.x, bot.y, '#38bdf8', 18);
+
             s.floatingTexts.push({
               id: s.nextEntityId++,
-              text: `-${Math.round(hit.damageDealt)}`,
+              text: `¡LANZAMIENTO! -${Math.round(throwHit.damageDealt)}`,
               x: bot.x,
-              y: bot.y - 25,
+              y: bot.y - 35,
               color: '#38bdf8',
-              life: 35,
+              life: 38,
             });
+
+            s.crates.forEach((c) => {
+              if (Math.hypot(bot.x - (c.x + c.w / 2), bot.y - (c.y + c.h / 2)) < 52) {
+                c.health -= 20;
+                c.vx = throwDirX * 360;
+                sounds.playCrateBreak();
+              }
+            });
+            s.barrels.forEach((b) => {
+              if (Math.hypot(bot.x - (b.x + b.w / 2), bot.y - (b.y + b.h / 2)) < 52) {
+                b.health -= 15;
+                b.vx = throwDirX * 420;
+                sounds.playHit();
+              }
+            });
+          } else if (p1.grappleTicks > 50) {
+            p1.isGrappling = false;
+            p1.grabbedTargetId = null;
+            bot.isGrabbed = false;
+            p1.attackCooldown = 15;
           }
+        } else {
+          const rivalDist = Math.hypot(bot.x - p1.x, bot.y - p1.y);
+          const isNearRival = rivalDist < 38 && Math.abs(bot.y - p1.y) < 26;
 
-          // Golpear cajas destructibles cercanas
-          s.crates.forEach((crate) => {
-            if (Math.hypot(p1.x - (crate.x + crate.w / 2), p1.y - (crate.y + crate.h / 2)) < 45) {
-              crate.health -= 15;
-              sounds.playHit();
-              addSparks(crate.x + 16, crate.y + 16, '#d97706', 8);
+          if (
+            meleeJustPressed &&
+            isNearRival &&
+            bot.isAlive &&
+            !bot.isGrabbed &&
+            !s.p2Controller.isInvulnerable &&
+            p1.attackCooldown <= 0 &&
+            p1.onGround &&
+            (crouchHeld || (p1.facingRight ? rightKey : leftKey))
+          ) {
+            p1.isGrappling = true;
+            p1.grabbedTargetId = bot.id;
+            p1.grappleTicks = 0;
+            bot.isGrabbed = true;
+            sounds.playGrapple();
+            s.floatingTexts.push({
+              id: s.nextEntityId++,
+              text: '¡AGARRE!',
+              x: p1.x,
+              y: p1.y - 30,
+              color: '#f59e0b',
+              life: 30,
+            });
+          } else if (
+            meleeJustPressed &&
+            p1.attackCooldown <= 0 &&
+            (crouchHeld || s.p1Controller.state === ControllerState.Roll || Math.abs(p1.velocityX) > 130) &&
+            p1.onGround
+          ) {
+            const isBladeP1 = isBladeWeapon(p1.equippedWeapon);
+            p1.isSliding = true;
+            p1.slideTicks = 18;
+            p1.attackCooldown = isBladeP1 ? 24 : 28;
+            p1.velocityX = p1FacingDir * (isBladeP1 ? 460 : 430);
+            s.p1Controller.vx = p1.velocityX;
+            if (isBladeP1) {
+              sounds.playSwordSwing();
+              sounds.playSlide();
+            } else {
+              sounds.playSlide();
             }
-          });
+            PlayerFSM.tryTransition(p1, PlayerFSMState.CrouchSlide);
+            addSparks(p1.x, p1.y + 16, isBladeP1 ? '#e0f2fe' : '#94a3b8', 14);
 
-          // Golpear barriles explosivos cercanos
-          s.barrels.forEach((barrel) => {
-            if (Math.hypot(p1.x - (barrel.x + barrel.w / 2), p1.y - (barrel.y + barrel.h / 2)) < 45) {
-              barrel.health -= 15;
-              sounds.playHit();
-              addSparks(barrel.x + 12, barrel.y + 16, '#ef4444', 8);
+            if (isBladeP1) {
+              const slideHit = CombatSystem.resolveBladeDashSlash(p1, bot);
+              if (slideHit.didHit) {
+                sounds.playBladeHit();
+                s.screenShake = 9;
+                addSparks(bot.x, bot.y + 12, '#38bdf8', 18);
+                addSparks(bot.x, bot.y + 12, '#ffffff', 12);
+                s.floatingTexts.push({
+                  id: s.nextEntityId++,
+                  text: `¡TAJO RASANTE! -${Math.round(slideHit.damageDealt)}`,
+                  x: bot.x,
+                  y: bot.y - 25,
+                  color: '#38bdf8',
+                  life: 35,
+                });
+              }
+            } else {
+              const slideHit = CombatSystem.resolveSlideTackle(p1, bot);
+              if (slideHit.didHit) {
+                sounds.playHit();
+                s.screenShake = 8;
+                addSparks(bot.x, bot.y + 12, '#38bdf8', 16);
+                s.floatingTexts.push({
+                  id: s.nextEntityId++,
+                  text: `¡BARRIDA! -${Math.round(slideHit.damageDealt)}`,
+                  x: bot.x,
+                  y: bot.y - 25,
+                  color: '#38bdf8',
+                  life: 35,
+                });
+              }
             }
-          });
+
+            s.crates.forEach((c) => {
+              if (Math.hypot(p1.x - (c.x + c.w / 2), p1.y - (c.y + c.h / 2)) < 50) {
+                c.health -= isBladeP1 ? 25 : 15;
+                c.vx = p1FacingDir * 320;
+                sounds.playHit();
+                addSparks(c.x + 16, c.y + 16, '#d97706', 10);
+              }
+            });
+            s.barrels.forEach((b) => {
+              if (Math.hypot(p1.x - (b.x + b.w / 2), b.y - (b.y + b.h / 2)) < 50) {
+                b.health -= 15;
+                b.vx = p1FacingDir * 380;
+                sounds.playHit();
+                addSparks(b.x + 12, b.y + 16, '#ef4444', 10);
+              }
+            });
+          } else if (
+            meleeHeld &&
+            p1.attackCooldown <= 0 &&
+            !p1.isSliding &&
+            (p1.fsm === PlayerFSMState.Idle ||
+              p1.fsm === PlayerFSMState.Run ||
+              p1.fsm === PlayerFSMState.Crouch)
+          ) {
+            const isBladeP1 = isBladeWeapon(p1.equippedWeapon);
+            if (!p1.isChargingHeavy) {
+              p1.isChargingHeavy = true;
+              p1.heavyChargeTicks = 0;
+              sounds.playHeavyCharge();
+            }
+            p1.heavyChargeTicks++;
+            p1.velocityX *= 0.88;
+            s.p1Controller.vx = p1.velocityX;
+
+            if (p1.heavyChargeTicks % 3 === 0) {
+              addSparks(
+                p1.x + (Math.random() - 0.5) * 24,
+                p1.y + (Math.random() - 0.5) * 24,
+                isBladeP1 ? '#e0f2fe' : '#38bdf8',
+                2
+              );
+            }
+          } else if (p1.isChargingHeavy && !meleeHeld) {
+            const isBladeP1 = isBladeWeapon(p1.equippedWeapon);
+            const charge = p1.heavyChargeTicks;
+            p1.isChargingHeavy = false;
+            p1.heavyChargeTicks = 0;
+
+            if (charge >= 12) {
+              const chargeRatio = Math.min(1, charge / 36);
+              if (isBladeP1) {
+                sounds.playHeavyBladeSlash();
+                p1.attackCooldown = 30;
+              } else {
+                sounds.playHeavySmash();
+                p1.attackCooldown = 32;
+              }
+              PlayerFSM.tryTransition(p1, PlayerFSMState.MeleeAttack);
+
+              p1.velocityX = p1FacingDir * (isBladeP1 ? (220 + 150 * chargeRatio) : (180 + 120 * chargeRatio));
+              s.p1Controller.vx = p1.velocityX;
+              s.screenShake = 12 + Math.round(chargeRatio * 8);
+
+              if (isBladeP1) {
+                const slashHit = CombatSystem.resolveBladeHeavySlash(p1, bot, chargeRatio);
+                if (slashHit.didHit) {
+                  sounds.playBladeHit();
+                  addSparks(bot.x, bot.y, '#e0f2fe', 26);
+                  addSparks(bot.x, bot.y, '#ef4444', 18);
+                  addSparks(bot.x, bot.y, '#38bdf8', 16);
+                  s.floatingTexts.push({
+                    id: s.nextEntityId++,
+                    text: chargeRatio > 0.75
+                      ? `¡TAJO DEMOLEDOR CRÍTICO! -${Math.round(slashHit.damageDealt)}`
+                      : `¡TAJO CON FILO! -${Math.round(slashHit.damageDealt)}`,
+                    x: bot.x,
+                    y: bot.y - 35,
+                    color: '#38bdf8',
+                    life: 45,
+                  });
+                }
+              } else {
+                const smashHit = CombatSystem.resolveHeavySmash(p1, bot, chargeRatio);
+                if (smashHit.didHit) {
+                  sounds.playHit();
+                  addSparks(bot.x, bot.y, '#f59e0b', 24);
+                  addSparks(bot.x, bot.y, '#ef4444', 16);
+                  s.floatingTexts.push({
+                    id: s.nextEntityId++,
+                    text: chargeRatio > 0.75
+                      ? `¡SMASH CRÍTICO! -${Math.round(smashHit.damageDealt)}`
+                      : `¡HEAVY SMASH! -${Math.round(smashHit.damageDealt)}`,
+                    x: bot.x,
+                    y: bot.y - 35,
+                    color: '#f59e0b',
+                    life: 45,
+                  });
+                }
+              }
+
+              s.crates.forEach((c) => {
+                if (Math.hypot(p1.x - (c.x + c.w / 2), p1.y - (c.y + c.h / 2)) < 55) {
+                  c.health -= isBladeP1 ? 30 : 25;
+                  c.vx = p1FacingDir * 460;
+                  sounds.playCrateBreak();
+                  addSparks(c.x + 16, c.y + 16, '#d97706', 14);
+                }
+              });
+              s.barrels.forEach((b) => {
+                if (Math.hypot(p1.x - (b.x + b.w / 2), b.y - (b.y + b.h / 2)) < 55) {
+                  b.health -= 20;
+                  b.vx = p1FacingDir * 520;
+                  sounds.playHit();
+                  addSparks(b.x + 12, b.y + 16, '#ef4444', 14);
+                }
+              });
+            } else {
+              p1.comboStep = (p1.comboStep + 1) % 3;
+              p1.comboWindowTicks = isBladeP1 ? 34 : GameConstants.FistsComboWindowTicks;
+              p1.attackCooldown = isBladeP1 ? 14 : GameConstants.FistsCooldownTicks;
+              PlayerFSM.tryTransition(p1, PlayerFSMState.MeleeAttack);
+
+              if (isBladeP1) {
+                sounds.playSwordSwing();
+                const hit = CombatSystem.resolveBladeMelee(p1, bot);
+                if (hit.didHit) {
+                  sounds.playBladeHit();
+                  addSparks(bot.x, bot.y, '#e0f2fe', 18);
+                  addSparks(bot.x, bot.y, '#ef4444', 14);
+                  s.screenShake = p1.comboStep === 2 ? 9 : 5;
+                  const bladeComboNames = ['¡TAJO HORIZONTAL!', '¡CLEAVE DESCENDENTE!', '¡CORTE FINAL!'];
+                  s.floatingTexts.push({
+                    id: s.nextEntityId++,
+                    text: `${bladeComboNames[p1.comboStep]} -${Math.round(hit.damageDealt)}`,
+                    x: bot.x,
+                    y: bot.y - 25,
+                    color: '#38bdf8',
+                    life: 35,
+                  });
+                }
+              } else {
+                sounds.playPunch();
+                const hit = CombatSystem.resolveMelee(p1, bot);
+                if (hit.didHit) {
+                  sounds.playHit();
+                  addSparks(bot.x, bot.y, '#38bdf8', 12);
+                  s.screenShake = p1.comboStep === 2 ? 8 : 5;
+                  const comboNames = ['¡JAB!', '¡CROSS!', '¡PATADA!'];
+                  s.floatingTexts.push({
+                    id: s.nextEntityId++,
+                    text: `${comboNames[p1.comboStep]} -${Math.round(hit.damageDealt)}`,
+                    x: bot.x,
+                    y: bot.y - 25,
+                    color: '#38bdf8',
+                    life: 35,
+                  });
+                }
+              }
+            }
+          }
+        }
+
+        if (p1.isSliding) {
+          p1.slideTicks--;
+          if (p1.slideTicks <= 0) {
+            p1.isSliding = false;
+          }
         }
 
         // Firearm / Ranged Fire P1
@@ -1123,53 +1392,350 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           const firePressed = !!keys['k'];
           const throwPressed = !!keys['l'];
 
-          // Melee J2
-          if (
-            meleePressed &&
-            bot.attackCooldown <= 0 &&
-            (bot.fsm === PlayerFSMState.Idle ||
-              bot.fsm === PlayerFSMState.Run ||
-              bot.fsm === PlayerFSMState.Crouch)
-          ) {
-            bot.comboStep = (bot.comboStep + 1) % 3;
-            bot.comboWindowTicks = GameConstants.FistsComboWindowTicks;
-            bot.attackCooldown = GameConstants.FistsCooldownTicks;
-            PlayerFSM.tryTransition(bot, PlayerFSMState.MeleeAttack);
-            sounds.playPunch();
+          // ── COMBATE MELEE AVANZADO JUGADOR 2 (1v1 LOCAL) ──
+          const p2FacingDir = bot.facingRight ? 1 : -1;
+          const j2MeleeHeld = !!keys['j'];
+          const j2MeleeJustPressed = !!s.keysJustPressed['j'];
 
-            if (s.p1Controller.isInvulnerable) {
+          if (bot.isGrappling && bot.grabbedTargetId === p1.id) {
+            bot.grappleTicks++;
+            p1.x = bot.x + p2FacingDir * 24;
+            p1.y = bot.y;
+            p1.velocityX = 0;
+            p1.velocityY = 0;
+            p1.isGrabbed = true;
+            s.p1Controller.setPosition(p1.x, p1.y);
+            s.p1Controller.vx = 0;
+            s.p1Controller.vy = 0;
+
+            if (j2MeleeJustPressed) {
+              sounds.playThrow();
+              const throwDirX = leftKey ? -1 : (rightKey ? 1 : p2FacingDir);
+              const throwUp = jumpHeld || !crouchHeld;
+              const throwHit = CombatSystem.resolveThrow(bot, p1, throwDirX, throwUp);
+
+              bot.isGrappling = false;
+              bot.grabbedTargetId = null;
+              p1.isGrabbed = false;
+              bot.attackCooldown = 26;
+              s.screenShake = 10;
+              addSparks(p1.x, p1.y, '#ef4444', 18);
+
               s.floatingTexts.push({
                 id: s.nextEntityId++,
-                text: '¡ESQUIVADO!',
+                text: `¡LANZAMIENTO J2! -${Math.round(throwHit.damageDealt)}`,
                 x: p1.x,
-                y: p1.y - 25,
-                color: '#38bdf8',
-                life: 25,
+                y: p1.y - 35,
+                color: '#ef4444',
+                life: 38,
               });
-            } else {
-              const hit = CombatSystem.resolveMelee(bot, p1);
-              if (hit.didHit) {
-                sounds.playHit();
-                addSparks(p1.x, p1.y, '#ef4444', 12);
-                s.screenShake = 6;
-                s.floatingTexts.push({
-                  id: s.nextEntityId++,
-                  text: `-${Math.round(hit.damageDealt)}`,
-                  x: p1.x,
-                  y: p1.y - 25,
-                  color: '#ef4444',
-                  life: 35,
+
+              s.crates.forEach((c) => {
+                if (Math.hypot(p1.x - (c.x + c.w / 2), p1.y - (c.y + c.h / 2)) < 52) {
+                  c.health -= 20;
+                  c.vx = throwDirX * 360;
+                  sounds.playCrateBreak();
+                }
+              });
+              s.barrels.forEach((b) => {
+                if (Math.hypot(p1.x - (b.x + b.w / 2), p1.y - (b.y + b.h / 2)) < 52) {
+                  b.health -= 15;
+                  b.vx = throwDirX * 420;
+                  sounds.playHit();
+                }
+              });
+            } else if (bot.grappleTicks > 50) {
+              bot.isGrappling = false;
+              bot.grabbedTargetId = null;
+              p1.isGrabbed = false;
+              bot.attackCooldown = 15;
+            }
+          } else {
+            const rivalDist = Math.hypot(p1.x - bot.x, p1.y - bot.y);
+            const isNearP1 = rivalDist < 38 && Math.abs(p1.y - bot.y) < 26;
+
+            if (
+              j2MeleeJustPressed &&
+              isNearP1 &&
+              p1.isAlive &&
+              !p1.isGrabbed &&
+              !s.p1Controller.isInvulnerable &&
+              bot.attackCooldown <= 0 &&
+              bot.onGround &&
+              (crouchHeld || (bot.facingRight ? rightKey : leftKey))
+            ) {
+              bot.isGrappling = true;
+              bot.grabbedTargetId = p1.id;
+              bot.grappleTicks = 0;
+              p1.isGrabbed = true;
+              sounds.playGrapple();
+              s.floatingTexts.push({
+                id: s.nextEntityId++,
+                text: '¡AGARRE J2!',
+                x: bot.x,
+                y: bot.y - 30,
+                color: '#f87171',
+                life: 30,
+              });
+            } else if (
+              j2MeleeJustPressed &&
+              bot.attackCooldown <= 0 &&
+              (crouchHeld || s.p2Controller.state === ControllerState.Roll || Math.abs(bot.velocityX) > 130) &&
+              bot.onGround
+            ) {
+              const isBladeJ2 = isBladeWeapon(bot.equippedWeapon);
+              bot.isSliding = true;
+              bot.slideTicks = 18;
+              bot.attackCooldown = isBladeJ2 ? 24 : 28;
+              bot.velocityX = p2FacingDir * (isBladeJ2 ? 460 : 430);
+              s.p2Controller.vx = bot.velocityX;
+              if (isBladeJ2) {
+                sounds.playSwordSwing();
+                sounds.playSlide();
+              } else {
+                sounds.playSlide();
+              }
+              PlayerFSM.tryTransition(bot, PlayerFSMState.CrouchSlide);
+              addSparks(bot.x, bot.y + 16, isBladeJ2 ? '#e0f2fe' : '#94a3b8', 14);
+
+              if (isBladeJ2) {
+                const slideHit = CombatSystem.resolveBladeDashSlash(bot, p1);
+                if (slideHit.didHit) {
+                  sounds.playBladeHit();
+                  s.screenShake = 9;
+                  addSparks(p1.x, p1.y + 12, '#ef4444', 18);
+                  addSparks(p1.x, p1.y + 12, '#ffffff', 12);
+                  s.floatingTexts.push({
+                    id: s.nextEntityId++,
+                    text: `¡TAJO RASANTE J2! -${Math.round(slideHit.damageDealt)}`,
+                    x: p1.x,
+                    y: p1.y - 25,
+                    color: '#ef4444',
+                    life: 35,
+                  });
+                }
+              } else {
+                const slideHit = CombatSystem.resolveSlideTackle(bot, p1);
+                if (slideHit.didHit) {
+                  sounds.playHit();
+                  s.screenShake = 8;
+                  addSparks(p1.x, p1.y + 12, '#ef4444', 16);
+                  s.floatingTexts.push({
+                    id: s.nextEntityId++,
+                    text: `¡BARRIDA J2! -${Math.round(slideHit.damageDealt)}`,
+                    x: p1.x,
+                    y: p1.y - 25,
+                    color: '#ef4444',
+                    life: 35,
+                  });
+                }
+              }
+
+              s.crates.forEach((c) => {
+                if (Math.hypot(bot.x - (c.x + c.w / 2), bot.y - (c.y + c.h / 2)) < 50) {
+                  c.health -= isBladeJ2 ? 25 : 15;
+                  c.vx = p2FacingDir * 320;
+                  sounds.playHit();
+                  addSparks(c.x + 16, c.y + 16, '#d97706', 10);
+                }
+              });
+              s.barrels.forEach((b) => {
+                if (Math.hypot(bot.x - (b.x + b.w / 2), bot.y - (b.y + b.h / 2)) < 50) {
+                  b.health -= 15;
+                  b.vx = p2FacingDir * 380;
+                  sounds.playHit();
+                  addSparks(b.x + 12, b.y + 16, '#ef4444', 10);
+                }
+              });
+            } else if (
+              j2MeleeHeld &&
+              bot.attackCooldown <= 0 &&
+              !bot.isSliding &&
+              (bot.fsm === PlayerFSMState.Idle ||
+                bot.fsm === PlayerFSMState.Run ||
+                bot.fsm === PlayerFSMState.Crouch)
+            ) {
+              if (!bot.isChargingHeavy) {
+                bot.isChargingHeavy = true;
+                bot.heavyChargeTicks = 0;
+                sounds.playHeavyCharge();
+              }
+              bot.heavyChargeTicks++;
+              bot.velocityX *= 0.88;
+              s.p2Controller.vx = bot.velocityX;
+
+              if (bot.heavyChargeTicks % 3 === 0) {
+                addSparks(
+                  bot.x + (Math.random() - 0.5) * 24,
+                  bot.y + (Math.random() - 0.5) * 24,
+                  '#ef4444',
+                  2
+                );
+              }
+            } else if (bot.isChargingHeavy && !j2MeleeHeld) {
+              const isBladeJ2 = isBladeWeapon(bot.equippedWeapon);
+              const charge = bot.heavyChargeTicks;
+              bot.isChargingHeavy = false;
+              bot.heavyChargeTicks = 0;
+
+              if (charge >= 12) {
+                const chargeRatio = Math.min(1, charge / 36);
+                if (isBladeJ2) {
+                  sounds.playHeavyBladeSlash();
+                  bot.attackCooldown = 30;
+                } else {
+                  sounds.playHeavySmash();
+                  bot.attackCooldown = 32;
+                }
+                PlayerFSM.tryTransition(bot, PlayerFSMState.MeleeAttack);
+
+                bot.velocityX = p2FacingDir * (isBladeJ2 ? (220 + 150 * chargeRatio) : (180 + 120 * chargeRatio));
+                s.p2Controller.vx = bot.velocityX;
+                s.screenShake = 12 + Math.round(chargeRatio * 8);
+
+                if (isBladeJ2) {
+                  const slashHit = CombatSystem.resolveBladeHeavySlash(bot, p1, chargeRatio);
+                  if (slashHit.didHit) {
+                    sounds.playBladeHit();
+                    addSparks(p1.x, p1.y, '#e0f2fe', 26);
+                    addSparks(p1.x, p1.y, '#ef4444', 20);
+                    s.floatingTexts.push({
+                      id: s.nextEntityId++,
+                      text: chargeRatio > 0.75
+                        ? `¡TAJO DEMOLEDOR CRÍTICO J2! -${Math.round(slashHit.damageDealt)}`
+                        : `¡TAJO CON FILO J2! -${Math.round(slashHit.damageDealt)}`,
+                      x: p1.x,
+                      y: p1.y - 35,
+                      color: '#ef4444',
+                      life: 45,
+                    });
+                  }
+                } else {
+                  const smashHit = CombatSystem.resolveHeavySmash(bot, p1, chargeRatio);
+                  if (smashHit.didHit) {
+                    sounds.playHit();
+                    addSparks(p1.x, p1.y, '#f59e0b', 24);
+                    addSparks(p1.x, p1.y, '#ef4444', 16);
+                    s.floatingTexts.push({
+                      id: s.nextEntityId++,
+                      text: chargeRatio > 0.75
+                        ? `¡SMASH CRÍTICO J2! -${Math.round(smashHit.damageDealt)}`
+                        : `¡HEAVY SMASH J2! -${Math.round(smashHit.damageDealt)}`,
+                      x: p1.x,
+                      y: p1.y - 35,
+                      color: '#f59e0b',
+                      life: 45,
+                    });
+                  }
+                }
+
+                s.crates.forEach((c) => {
+                  if (Math.hypot(bot.x - (c.x + c.w / 2), bot.y - (c.y + c.h / 2)) < 55) {
+                    c.health -= isBladeJ2 ? 30 : 25;
+                    c.vx = p2FacingDir * 460;
+                    sounds.playCrateBreak();
+                    addSparks(c.x + 16, c.y + 16, '#d97706', 14);
+                  }
+                });
+                s.barrels.forEach((b) => {
+                  if (Math.hypot(bot.x - (b.x + b.w / 2), b.y - (b.y + b.h / 2)) < 55) {
+                    b.health -= 20;
+                    b.vx = p2FacingDir * 520;
+                    sounds.playHit();
+                    addSparks(b.x + 12, b.y + 16, '#ef4444', 14);
+                  }
+                });
+              } else {
+                bot.comboStep = (bot.comboStep + 1) % 3;
+                bot.comboWindowTicks = isBladeJ2 ? 34 : GameConstants.FistsComboWindowTicks;
+                bot.attackCooldown = isBladeJ2 ? 14 : GameConstants.FistsCooldownTicks;
+                PlayerFSM.tryTransition(bot, PlayerFSMState.MeleeAttack);
+
+                if (isBladeJ2) {
+                  sounds.playSwordSwing();
+                  if (s.p1Controller.isInvulnerable) {
+                    s.floatingTexts.push({
+                      id: s.nextEntityId++,
+                      text: '¡ESQUIVADO!',
+                      x: p1.x,
+                      y: p1.y - 25,
+                      color: '#38bdf8',
+                      life: 25,
+                    });
+                  } else {
+                    const hit = CombatSystem.resolveBladeMelee(bot, p1);
+                    if (hit.didHit) {
+                      sounds.playBladeHit();
+                      addSparks(p1.x, p1.y, '#e0f2fe', 18);
+                      addSparks(p1.x, p1.y, '#ef4444', 14);
+                      s.screenShake = bot.comboStep === 2 ? 9 : 5;
+                      const bladeComboNames = ['¡TAJO HORIZONTAL!', '¡CLEAVE DESCENDENTE!', '¡CORTE FINAL!'];
+                      s.floatingTexts.push({
+                        id: s.nextEntityId++,
+                        text: `${bladeComboNames[bot.comboStep]} J2 -${Math.round(hit.damageDealt)}`,
+                        x: p1.x,
+                        y: p1.y - 25,
+                        color: '#ef4444',
+                        life: 35,
+                      });
+                    }
+                  }
+                } else {
+                  sounds.playPunch();
+                  if (s.p1Controller.isInvulnerable) {
+                    s.floatingTexts.push({
+                      id: s.nextEntityId++,
+                      text: '¡ESQUIVADO!',
+                      x: p1.x,
+                      y: p1.y - 25,
+                      color: '#38bdf8',
+                      life: 25,
+                    });
+                  } else {
+                    const hit = CombatSystem.resolveMelee(bot, p1);
+                    if (hit.didHit) {
+                      sounds.playHit();
+                      addSparks(p1.x, p1.y, '#ef4444', 12);
+                      s.screenShake = bot.comboStep === 2 ? 8 : 5;
+                      const comboNames = ['¡JAB!', '¡CROSS!', '¡PATADA!'];
+                      s.floatingTexts.push({
+                        id: s.nextEntityId++,
+                        text: `${comboNames[bot.comboStep]} -${Math.round(hit.damageDealt)}`,
+                        x: p1.x,
+                        y: p1.y - 25,
+                        color: '#ef4444',
+                        life: 35,
+                      });
+                    }
+                  }
+                }
+
+                s.crates.forEach((crate) => {
+                  if (Math.hypot(bot.x - (crate.x + crate.w / 2), bot.y - (crate.y + crate.h / 2)) < 45) {
+                    crate.health -= 15;
+                    crate.vx = p2FacingDir * 180;
+                    sounds.playHit();
+                    addSparks(crate.x + 16, crate.y + 16, '#d97706', 8);
+                  }
+                });
+
+                s.barrels.forEach((barrel) => {
+                  if (Math.hypot(bot.x - (barrel.x + barrel.w / 2), bot.y - (barrel.y + barrel.h / 2)) < 45) {
+                    barrel.health -= 15;
+                    barrel.vx = p2FacingDir * 240;
+                    sounds.playHit();
+                    addSparks(barrel.x + 12, barrel.y + 16, '#ef4444', 8);
+                  }
                 });
               }
             }
+          }
 
-            s.crates.forEach((crate) => {
-              if (Math.hypot(bot.x - (crate.x + crate.w / 2), bot.y - (crate.y + crate.h / 2)) < 45) {
-                crate.health -= 15;
-                sounds.playHit();
-                addSparks(crate.x + 16, crate.y + 16, '#d97706', 8);
-              }
-            });
+          if (bot.isSliding) {
+            bot.slideTicks--;
+            if (bot.slideTicks <= 0) {
+              bot.isSliding = false;
+            }
           }
 
           // Fire J2
@@ -1316,54 +1882,253 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             sounds.playJump();
           }
 
-          // Bot Melee
-          if (
+          // ── COMBATE MELEE AVANZADO IA (vsBot) ──
+          const botFacingDir = bot.facingRight ? 1 : -1;
+          const targetDist = Math.hypot(p1.x - bot.x, p1.y - bot.y);
+
+          if (bot.isGrappling && bot.grabbedTargetId === p1.id) {
+            bot.grappleTicks++;
+            p1.x = bot.x + botFacingDir * 24;
+            p1.y = bot.y;
+            p1.velocityX = 0;
+            p1.velocityY = 0;
+            p1.isGrabbed = true;
+            s.p1Controller.setPosition(p1.x, p1.y);
+            s.p1Controller.vx = 0;
+            s.p1Controller.vy = 0;
+
+            if (bot.grappleTicks >= 25) {
+              sounds.playThrow();
+              const throwDirX = p1.x > 480 ? -1 : 1;
+              const throwHit = CombatSystem.resolveThrow(bot, p1, throwDirX, true);
+
+              bot.isGrappling = false;
+              bot.grabbedTargetId = null;
+              p1.isGrabbed = false;
+              bot.attackCooldown = 30;
+              s.screenShake = 10;
+              addSparks(p1.x, p1.y, '#ef4444', 18);
+
+              s.floatingTexts.push({
+                id: s.nextEntityId++,
+                text: `¡LANZAMIENTO BOT! -${Math.round(throwHit.damageDealt)}`,
+                x: p1.x,
+                y: p1.y - 35,
+                color: '#ef4444',
+                life: 38,
+              });
+            }
+          } else if (
             botInput.melee &&
             bot.attackCooldown <= 0 &&
             (bot.fsm === PlayerFSMState.Idle ||
               bot.fsm === PlayerFSMState.Run ||
               bot.fsm === PlayerFSMState.Crouch)
           ) {
-            bot.comboStep = (bot.comboStep + 1) % 3;
-            bot.comboWindowTicks = GameConstants.FistsComboWindowTicks;
-            bot.attackCooldown = GameConstants.FistsCooldownTicks;
-            PlayerFSM.tryTransition(bot, PlayerFSMState.MeleeAttack);
-            sounds.playPunch();
+            const canGrapple = targetDist < 38 && p1.isAlive && !p1.isGrabbed && !s.p1Controller.isInvulnerable && bot.onGround;
+            const canSlide = targetDist > 35 && targetDist < 75 && Math.abs(bot.velocityX) > 90 && bot.onGround;
+            const canHeavySmash = p1.fsm === PlayerFSMState.KnockedDown || p1.fsm === PlayerFSMState.Hitstun;
 
-            if (s.p1Controller.isInvulnerable) {
+            if (canGrapple && Math.random() < 0.28) {
+              bot.isGrappling = true;
+              bot.grabbedTargetId = p1.id;
+              bot.grappleTicks = 0;
+              p1.isGrabbed = true;
+              sounds.playGrapple();
               s.floatingTexts.push({
                 id: s.nextEntityId++,
-                text: '¡ESQUIVADO!',
-                x: p1.x,
-                y: p1.y - 25,
-                color: '#38bdf8',
-                life: 25,
+                text: '¡AGARRE BOT!',
+                x: bot.x,
+                y: bot.y - 30,
+                color: '#f87171',
+                life: 30,
               });
+            } else if (canSlide && Math.random() < 0.35) {
+              const isBladeBot = isBladeWeapon(bot.equippedWeapon);
+              bot.isSliding = true;
+              bot.slideTicks = 18;
+              bot.attackCooldown = isBladeBot ? 25 : 30;
+              bot.velocityX = botFacingDir * (isBladeBot ? 460 : 430);
+              s.p2Controller.vx = bot.velocityX;
+              if (isBladeBot) {
+                sounds.playSwordSwing();
+                sounds.playSlide();
+              } else {
+                sounds.playSlide();
+              }
+              PlayerFSM.tryTransition(bot, PlayerFSMState.CrouchSlide);
+              addSparks(bot.x, bot.y + 16, isBladeBot ? '#e0f2fe' : '#94a3b8', 14);
+
+              if (isBladeBot) {
+                const slideHit = CombatSystem.resolveBladeDashSlash(bot, p1);
+                if (slideHit.didHit) {
+                  sounds.playBladeHit();
+                  s.screenShake = 9;
+                  addSparks(p1.x, p1.y + 12, '#ef4444', 18);
+                  addSparks(p1.x, p1.y + 12, '#ffffff', 12);
+                  s.floatingTexts.push({
+                    id: s.nextEntityId++,
+                    text: `¡TAJO RASANTE BOT! -${Math.round(slideHit.damageDealt)}`,
+                    x: p1.x,
+                    y: p1.y - 25,
+                    color: '#ef4444',
+                    life: 35,
+                  });
+                }
+              } else {
+                const slideHit = CombatSystem.resolveSlideTackle(bot, p1);
+                if (slideHit.didHit) {
+                  sounds.playHit();
+                  s.screenShake = 8;
+                  addSparks(p1.x, p1.y + 12, '#ef4444', 16);
+                  s.floatingTexts.push({
+                    id: s.nextEntityId++,
+                    text: `¡BARRIDA BOT! -${Math.round(slideHit.damageDealt)}`,
+                    x: p1.x,
+                    y: p1.y - 25,
+                    color: '#ef4444',
+                    life: 35,
+                  });
+                }
+              }
+            } else if (canHeavySmash && Math.random() < 0.5) {
+              const isBladeBot = isBladeWeapon(bot.equippedWeapon);
+              const chargeRatio = 0.85;
+              if (isBladeBot) {
+                sounds.playHeavyBladeSlash();
+                bot.attackCooldown = 32;
+              } else {
+                sounds.playHeavySmash();
+                bot.attackCooldown = 36;
+              }
+              PlayerFSM.tryTransition(bot, PlayerFSMState.MeleeAttack);
+
+              bot.velocityX = botFacingDir * (isBladeBot ? 280 : 240);
+              s.p2Controller.vx = bot.velocityX;
+              s.screenShake = 14;
+
+              if (isBladeBot) {
+                const smashHit = CombatSystem.resolveBladeHeavySlash(bot, p1, chargeRatio);
+                if (smashHit.didHit) {
+                  sounds.playBladeHit();
+                  addSparks(p1.x, p1.y, '#e0f2fe', 26);
+                  addSparks(p1.x, p1.y, '#ef4444', 18);
+                  s.floatingTexts.push({
+                    id: s.nextEntityId++,
+                    text: `¡TAJO DEMOLEDOR BOT! -${Math.round(smashHit.damageDealt)}`,
+                    x: p1.x,
+                    y: p1.y - 35,
+                    color: '#ef4444',
+                    life: 45,
+                  });
+                }
+              } else {
+                const smashHit = CombatSystem.resolveHeavySmash(bot, p1, chargeRatio);
+                if (smashHit.didHit) {
+                  sounds.playHit();
+                  addSparks(p1.x, p1.y, '#f59e0b', 24);
+                  addSparks(p1.x, p1.y, '#ef4444', 16);
+                  s.floatingTexts.push({
+                    id: s.nextEntityId++,
+                    text: `¡HEAVY SMASH BOT! -${Math.round(smashHit.damageDealt)}`,
+                    x: p1.x,
+                    y: p1.y - 35,
+                    color: '#f59e0b',
+                    life: 45,
+                  });
+                }
+              }
             } else {
-              const hit = CombatSystem.resolveMelee(bot, p1);
-              if (hit.didHit) {
-                sounds.playHit();
-                addSparks(p1.x, p1.y, '#ef4444', 12);
-                s.screenShake = 6;
-                s.floatingTexts.push({
-                  id: s.nextEntityId++,
-                  text: `-${Math.round(hit.damageDealt)}`,
-                  x: p1.x,
-                  y: p1.y - 25,
-                  color: '#ef4444',
-                  life: 35,
-                });
+              const isBladeBot = isBladeWeapon(bot.equippedWeapon);
+              bot.comboStep = (bot.comboStep + 1) % 3;
+              bot.comboWindowTicks = isBladeBot ? 34 : GameConstants.FistsComboWindowTicks;
+              bot.attackCooldown = isBladeBot ? 14 : GameConstants.FistsCooldownTicks;
+              PlayerFSM.tryTransition(bot, PlayerFSMState.MeleeAttack);
+
+              if (isBladeBot) {
+                sounds.playSwordSwing();
+                if (s.p1Controller.isInvulnerable) {
+                  s.floatingTexts.push({
+                    id: s.nextEntityId++,
+                    text: '¡ESQUIVADO!',
+                    x: p1.x,
+                    y: p1.y - 25,
+                    color: '#38bdf8',
+                    life: 25,
+                  });
+                } else {
+                  const hit = CombatSystem.resolveBladeMelee(bot, p1);
+                  if (hit.didHit) {
+                    sounds.playBladeHit();
+                    addSparks(p1.x, p1.y, '#e0f2fe', 18);
+                    addSparks(p1.x, p1.y, '#ef4444', 14);
+                    s.screenShake = bot.comboStep === 2 ? 9 : 5;
+                    const bladeComboNames = ['¡TAJO HORIZONTAL!', '¡CLEAVE DESCENDENTE!', '¡CORTE FINAL!'];
+                    s.floatingTexts.push({
+                      id: s.nextEntityId++,
+                      text: `${bladeComboNames[bot.comboStep]} BOT -${Math.round(hit.damageDealt)}`,
+                      x: p1.x,
+                      y: p1.y - 25,
+                      color: '#ef4444',
+                      life: 35,
+                    });
+                  }
+                }
+              } else {
+                sounds.playPunch();
+                if (s.p1Controller.isInvulnerable) {
+                  s.floatingTexts.push({
+                    id: s.nextEntityId++,
+                    text: '¡ESQUIVADO!',
+                    x: p1.x,
+                    y: p1.y - 25,
+                    color: '#38bdf8',
+                    life: 25,
+                  });
+                } else {
+                  const hit = CombatSystem.resolveMelee(bot, p1);
+                  if (hit.didHit) {
+                    sounds.playHit();
+                    addSparks(p1.x, p1.y, '#ef4444', 12);
+                    s.screenShake = bot.comboStep === 2 ? 8 : 5;
+                    const comboNames = ['¡JAB!', '¡CROSS!', '¡PATADA!'];
+                    s.floatingTexts.push({
+                      id: s.nextEntityId++,
+                      text: `${comboNames[bot.comboStep]} -${Math.round(hit.damageDealt)}`,
+                      x: p1.x,
+                      y: p1.y - 25,
+                      color: '#ef4444',
+                      life: 35,
+                    });
+                  }
+                }
               }
             }
 
-            // Bot rompe cajas si están en su camino
             s.crates.forEach((crate) => {
               if (Math.hypot(bot.x - (crate.x + crate.w / 2), bot.y - (crate.y + crate.h / 2)) < 45) {
                 crate.health -= 15;
+                crate.vx = botFacingDir * 200;
                 sounds.playHit();
                 addSparks(crate.x + 16, crate.y + 16, '#d97706', 8);
               }
             });
+
+            s.barrels.forEach((barrel) => {
+              if (Math.hypot(bot.x - (barrel.x + barrel.w / 2), barrel.y - (barrel.y + barrel.h / 2)) < 45) {
+                barrel.health -= 15;
+                barrel.vx = botFacingDir * 240;
+                sounds.playHit();
+                addSparks(barrel.x + 12, barrel.y + 16, '#ef4444', 8);
+              }
+            });
+          }
+
+          if (bot.isSliding) {
+            bot.slideTicks--;
+            if (bot.slideTicks <= 0) {
+              bot.isSliding = false;
+            }
           }
 
           // Bot Disparo
@@ -1658,6 +2423,50 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         } else {
           const retProg = (press.tick - 155) / 25;
           press.currentY = press.baseY + (1 - retProg) * press.maxDrop;
+        }
+      });
+
+      // ── FÍSICA DE INERCIA Y COLISIÓN PARA CAJAS Y BARRILES (Superfighters) ──
+      s.crates.forEach((crate) => {
+        if (crate.vx && Math.abs(crate.vx) > 3) {
+          crate.x += crate.vx * (1 / 60);
+          crate.vx *= 0.91; // Fricción
+          if (crate.x < 15) { crate.x = 15; crate.vx = -crate.vx * 0.4; }
+          if (crate.x + crate.w > ARENA_WIDTH - 15) { crate.x = ARENA_WIDTH - 15 - crate.w; crate.vx = -crate.vx * 0.4; }
+        }
+      });
+
+      s.barrels.forEach((barrel) => {
+        if (barrel.vx && Math.abs(barrel.vx) > 3) {
+          barrel.x += barrel.vx * (1 / 60);
+          barrel.vx *= 0.93; // Fricción en suelo
+          if (barrel.x < 15) { barrel.x = 15; barrel.vx = -barrel.vx * 0.4; }
+          if (barrel.x + barrel.w > ARENA_WIDTH - 15) { barrel.x = ARENA_WIDTH - 15 - barrel.w; barrel.vx = -barrel.vx * 0.4; }
+
+          // Barriles en movimiento a gran velocidad impactando a combatientes
+          const currentVx = barrel.vx;
+          if (Math.abs(currentVx) > 85) {
+            [s.p1, s.bot].forEach((target) => {
+              if (!target.isAlive) return;
+              if (Math.hypot((barrel.x + barrel.w / 2) - target.x, (barrel.y + barrel.h / 2) - target.y) < 32) {
+                barrel.health -= 15;
+                target.health = Math.max(0, target.health - 16);
+                target.velocityX = currentVx * 0.75;
+                target.velocityY = -150;
+                PlayerFSM.tryTransition(target, PlayerFSMState.KnockedDown);
+                sounds.playHit();
+                addSparks(target.x, target.y, '#f97316', 15);
+                s.floatingTexts.push({
+                  id: s.nextEntityId++,
+                  text: '¡IMPACTO DE BARRIL! -16',
+                  x: target.x,
+                  y: target.y - 30,
+                  color: '#f97316',
+                  life: 35,
+                });
+              }
+            });
+          }
         }
       });
 
@@ -2520,13 +3329,22 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         const charH = isBigFighter ? 82 : 74;
         const drawX = -charW / 2;
         const drawY = -charH / 2;
+        const sheet = isHuman ? s.p1WalkSheet : s.botWalkSheet;
+        const idleImg = isHuman ? s.p1IdleSprite : s.botIdleSprite;
+        const cfg = isHuman ? s.p1SheetConfig : s.botSheetConfig;
 
         if (!p.isAlive) {
           ctx.save();
-          ctx.translate(p.x, p.y + 18);
+          ctx.translate(p.x, p.y + 16);
           ctx.rotate((p.facingRight ? 1 : -1) * 1.5);
-          ctx.fillStyle = 'rgba(100, 116, 139, 0.6)';
-          ctx.fillRect(-charW / 3, -charH / 2, (charW * 2) / 3, charH);
+          ctx.globalAlpha = 0.65;
+          const deadImg = idleImg || sprite;
+          if (deadImg && deadImg.complete && deadImg.naturalWidth > 0) {
+            ctx.drawImage(deadImg, drawX, drawY, charW, charH);
+          } else {
+            ctx.fillStyle = 'rgba(100, 116, 139, 0.6)';
+            ctx.fillRect(-charW / 3, -charH / 2, (charW * 2) / 3, charH);
+          }
           ctx.restore();
           return;
         }
@@ -2545,6 +3363,26 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           ctx.shadowBlur = 16;
         }
 
+        // Aura pulsante durante la carga de Heavy Smash
+        if (p.isChargingHeavy) {
+          const pulse = Math.sin(p.heavyChargeTicks * 0.45) * 0.5 + 0.5;
+          ctx.save();
+          ctx.strokeStyle = isHuman
+            ? `rgba(56, 189, 248, ${0.45 + pulse * 0.55})`
+            : `rgba(244, 63, 94, ${0.45 + pulse * 0.55})`;
+          ctx.lineWidth = 3 + pulse * 3;
+          ctx.beginPath();
+          ctx.arc(0, 0, charH * 0.52, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+        }
+
+        // Postura aerodinámica agachada al ejecutar Barrida (Slide)
+        if (p.isSliding) {
+          ctx.translate(0, charH * 0.16);
+          ctx.scale(1.18, 0.72);
+        }
+
         // Fuego si está ardiendo
         if (p.isOnFire || p.fireTicks > 0) {
           ctx.fillStyle = 'rgba(249, 115, 22, 0.35)';
@@ -2555,10 +3393,6 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
         ctx.scale(p.facingRight ? 1 : -1, 1);
 
-        const sheet = isHuman ? s.p1WalkSheet : s.botWalkSheet;
-        const idleImg = isHuman ? s.p1IdleSprite : s.botIdleSprite;
-        const cfg = isHuman ? s.p1SheetConfig : s.botSheetConfig;
-
         // Estado de caminata activo sobre el suelo
         const isWalking =
           p.onGround &&
@@ -2568,8 +3402,65 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           p.fsm !== PlayerFSMState.GetUp &&
           p.fsm !== PlayerFSMState.Dead;
 
-        // 1. Facción con Spritesheet multicelda activo (ej. Asesino con sus 14 frames) mientras camina:
-        if (isWalking && cfg?.hasWalkSheet && sheet && sheet.complete && sheet.naturalWidth > 0 && sheet.naturalHeight > 0) {
+        const isBlade = isBladeWeapon(p.equippedWeapon);
+        const isBladeAttacking =
+          isBlade &&
+          (p.fsm === PlayerFSMState.MeleeAttack || p.isSliding || p.isChargingHeavy);
+
+        // Si el personaje está blandiendo un arma de filo (cuchillos, katanas, machetes, espadas, hachas):
+        // Se ejecuta la coreografía marcial de la hoja del spritesheet de 16 fotogramas con arcos de corte y estelas.
+        if (
+          isBladeAttacking &&
+          s.swordComboSheet &&
+          s.swordComboSheet.complete &&
+          s.swordComboSheet.naturalWidth > 0
+        ) {
+          const swordCols = 4;
+          const swordRows = 4;
+          const sw = s.swordComboSheet.naturalWidth / swordCols;
+          const sh = s.swordComboSheet.naturalHeight / swordRows;
+          let sFrame = 0;
+          if (p.isChargingHeavy) {
+            sFrame = 2; // Guardia alta cargando poder
+          } else if (p.isSliding) {
+            sFrame = 10; // Tajo rasante rozando el suelo
+          } else if (p.fsm === PlayerFSMState.MeleeAttack) {
+            if (p.comboStep === 0) sFrame = 4; // Tajo 1 horizontal con arco
+            else if (p.comboStep === 1) sFrame = 5; // Tajo 2 cleave diagonal
+            else sFrame = 12; // Tajo 3 estocada / remate devastador
+          }
+          const sCol = sFrame % swordCols;
+          const sRow = Math.floor(sFrame / swordCols);
+          const sx = sCol * sw;
+          const sy = sRow * sh;
+
+          const swordDrawW = charW * 1.5;
+          const swordDrawH = charH * 1.5;
+          const swordDrawX = -swordDrawW / 2 + 10;
+          const swordDrawY = -swordDrawH / 2 - 4;
+
+          ctx.drawImage(s.swordComboSheet, sx, sy, sw, sh, swordDrawX, swordDrawY, swordDrawW, swordDrawH);
+
+          // Arco y estela dinámica de corte con brillo de acero
+          ctx.save();
+          ctx.strokeStyle = '#e0f2fe';
+          ctx.shadowColor = '#38bdf8';
+          ctx.shadowBlur = 12;
+          ctx.lineWidth = 3.8;
+          ctx.beginPath();
+          if (p.isSliding) {
+            ctx.moveTo(-8, 16);
+            ctx.quadraticCurveTo(24, 22, 54, 14);
+          } else if (p.comboStep === 0) {
+            ctx.arc(8, -6, 42, -Math.PI * 0.35, Math.PI * 0.35, false);
+          } else if (p.comboStep === 1) {
+            ctx.arc(6, -10, 44, -Math.PI * 0.6, Math.PI * 0.15, false);
+          } else {
+            ctx.arc(12, -2, 48, -Math.PI * 0.45, Math.PI * 0.45, false);
+          }
+          ctx.stroke();
+          ctx.restore();
+        } else if (isWalking && cfg?.hasWalkSheet && sheet && sheet.complete && sheet.naturalWidth > 0 && sheet.naturalHeight > 0) {
           const cols = cfg.cols || 4;
           const rows = cfg.rows || 4;
           const totalFrames = cfg.totalFrames || 14;
@@ -2586,16 +3477,45 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
           ctx.drawImage(sheet, sx, sy, frameW, frameH, drawX, drawY, charW, charH);
         } else if (idleImg && idleImg.complete && idleImg.naturalWidth > 0) {
-          // 2. Facción seleccionada con su propia skin/textura (Asesino, Matón, Punk, etc. en idle o caminata):
-          if (isWalking) {
-            // Ciclo de caminata dinámico sincronizado a animFrame y animSpeed
+          // 2. Facción con su imagen oficial prevista (ej. Assassin_2.png, Agent_2.png, etc.):
+          // Se mantiene SIEMPRE la imagen correcta en todos los estados sin perderla ni deformarla.
+          if (isRolling) {
+            const rollTicksLeft = p.rollTicks > 0 ? p.rollTicks : 12;
+            const rollProgress = Math.min(1, Math.max(0, 1 - (rollTicksLeft / (GameConstants.RollDurationTicks || 24))));
+            ctx.rotate(rollProgress * Math.PI * 2);
+            ctx.drawImage(idleImg, drawX, drawY, charW, charH);
+          } else if (p.fsm === PlayerFSMState.Crouch) {
+            ctx.translate(0, charH * 0.12);
+            ctx.scale(1.05, 0.78);
+            ctx.drawImage(idleImg, drawX, drawY, charW, charH);
+          } else if (p.fsm === PlayerFSMState.KnockedDown || p.fsm === PlayerFSMState.GetUp) {
+            ctx.translate(0, charH * 0.28);
+            ctx.rotate(-Math.PI / 2);
+            ctx.drawImage(idleImg, drawX, drawY, charW, charH);
+          } else if (isWalking) {
+            // Ciclo de caminata dinámico y continuo con la imagen oficial prevista:
+            // - Rebote de pasos (bobbing)
+            // - Inclinación biomecánica hacia adelante/atrás (lean)
+            // - Ligera compresión de impacto en cada paso
             const walkStep = (p.animFrame / 14) * Math.PI * 2;
-            const walkBobY = Math.sin(walkStep) * 2.5;
-            const walkTilt = Math.sin(walkStep) * 0.05;
+            const walkBobY = -Math.abs(Math.sin(walkStep * 2)) * 3;
+            const walkTilt = Math.sin(walkStep) * 0.07;
+            const walkSquash = 1 + Math.sin(walkStep * 2) * 0.03;
+
+            ctx.translate(0, walkBobY);
             ctx.rotate(walkTilt);
-            ctx.drawImage(idleImg, drawX, drawY + walkBobY, charW, charH);
+            ctx.scale(1 / walkSquash, walkSquash);
+            ctx.drawImage(idleImg, drawX, drawY, charW, charH);
+          } else if (!p.onGround) {
+            // En el aire (salto / caída)
+            if (p.velocityY < -60) {
+              ctx.scale(0.95, 1.05);
+            } else if (p.velocityY > 60) {
+              ctx.rotate(0.05);
+            }
+            ctx.drawImage(idleImg, drawX, drawY, charW, charH);
           } else {
-            // Fotograma estático exacto al detenerse (idle): Muestra la imagen del asesino o personaje seleccionado
+            // Posición estática (idle de pie): mantiene la imagen oficial exacta
             ctx.drawImage(idleImg, drawX, drawY, charW, charH);
           }
         } else if (sprite && sprite.complete && sprite.naturalWidth > 0) {
@@ -2608,7 +3528,8 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         }
 
         // Arma equipada en mano (proporcional al personaje aumentado)
-        if (p.equippedWeapon !== WeaponType.Fists) {
+        // Si está ejecutando el ataque de filo, el arma ya forma parte de la animación fluida del spritesheet
+        if (p.equippedWeapon !== WeaponType.Fists && !isBladeAttacking) {
           const wImg = s.weaponImages[p.equippedWeapon];
           if (wImg && wImg.complete && wImg.naturalWidth > 0) {
             ctx.drawImage(wImg, 8, -6, 32, 16);

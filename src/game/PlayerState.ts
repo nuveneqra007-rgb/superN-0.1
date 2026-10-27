@@ -89,6 +89,15 @@ export interface PlayerState {
   animFrameTimer: number;
   animSpeed: number;
   isMovingHorizontally: boolean;
+
+  // Nuevas mecánicas avanzadas de melee (Heavy Smash, Slide, Grapple)
+  heavyChargeTicks: number;
+  isChargingHeavy: boolean;
+  isSliding: boolean;
+  isGrappling: boolean;
+  isGrabbed: boolean;
+  grabbedTargetId: number | null;
+  grappleTicks: number;
 }
 
 export function createPlayerState(
@@ -141,5 +150,12 @@ export function createPlayerState(
     animFrameTimer: 0,
     animSpeed: 1.0,
     isMovingHorizontally: false,
+    heavyChargeTicks: 0,
+    isChargingHeavy: false,
+    isSliding: false,
+    isGrappling: false,
+    isGrabbed: false,
+    grabbedTargetId: null,
+    grappleTicks: 0,
   };
 }

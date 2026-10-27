@@ -1039,3 +1039,13 @@ export const SpawnableWeaponsList: WeaponType[] = [
 export function getWeapon(type: WeaponType): WeaponData {
   return WeaponDatabase[type] || WeaponDatabase[WeaponType.Fists];
 }
+
+export function isBladeWeapon(type: WeaponType): boolean {
+  return (
+    type === WeaponType.Knife ||
+    type === WeaponType.Machete ||
+    type === WeaponType.Axe ||
+    type === WeaponType.Sword ||
+    type === WeaponType.Katana
+  );
+}

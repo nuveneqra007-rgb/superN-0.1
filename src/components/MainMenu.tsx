@@ -481,15 +481,15 @@ export const MainMenu: React.FC<MainMenuProps> = ({
         <span className="font-bold text-neutral-300">Controles de Teclado:</span>
         {gameMode === 'local1v1' ? (
           <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-[11px]">
-            <span><strong className="text-cyan-400">J1</strong>: Flechas, N (Melee), M (Disparar), , (Granada), . (Correr)</span>
-            <span><strong className="text-amber-400">J2</strong>: WASD, J (Melee), K (Disparar), L (Granada), Q (Correr)</span>
+            <span><strong className="text-cyan-400">J1</strong>: Flechas, N (Melee / Mantén: Smash / Agarre / Barrida), M (Disparar), , (Granada)</span>
+            <span><strong className="text-amber-400">J2</strong>: WASD, J (Melee / Mantén: Smash / Agarre / Barrida), K (Disparar), L (Granada)</span>
           </div>
         ) : (
           <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-[11px]">
             <span><strong className="text-sky-300">A / D ó Flechas</strong>: Correr</span>
             <span><strong className="text-sky-300">W ó ↑ / Espacio</strong>: Saltar</span>
             <span><strong className="text-sky-300">S ó ↓</strong>: Agacharse / Rodar</span>
-            <span><strong className="text-sky-300">N ó J</strong>: Ataque Melee</span>
+            <span><strong className="text-sky-300">N ó J</strong>: Melee (Combo / Mantén: Heavy Smash / Abajo+Melee: Barrida / Cerca: Agarre)</span>
             <span><strong className="text-sky-300">M ó K</strong>: Disparar</span>
             <span><strong className="text-sky-300">G</strong>: Granada / Molotov</span>
           </div>

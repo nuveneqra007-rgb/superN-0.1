@@ -108,6 +108,289 @@ export const CombatSystem = {
     };
   },
 
+  resolveHeavySmash(attacker: PlayerState, defender: PlayerState, chargeRatio: number): HitResult {
+    if (!defender.isAlive || defender.invulnerabilityTicks > 0) {
+      return this.miss();
+    }
+
+    const hitW = 68;
+    const hitH = 60;
+    const dirX = attacker.facingRight ? 1 : -1;
+    const hitCx = attacker.x + dirX * (hitW / 2 + 12);
+    const hitCy = attacker.y;
+
+    if (
+      !this.rectsOverlap(
+        hitCx,
+        hitCy,
+        hitW,
+        hitH,
+        defender.x,
+        defender.y,
+        GameConstants.HitboxStand.x,
+        GameConstants.HitboxStand.y
+      )
+    ) {
+      return this.miss();
+    }
+
+    const baseDmg = 24 + 18 * Math.min(1, Math.max(0, chargeRatio));
+    const dmg = this.applyModifiers(
+      baseDmg,
+      attacker.damageDealtModifier,
+      defender.damageTakenModifier
+    );
+
+    const forceMult = attacker.meleeForceModifier || 1.0;
+    const kbX = dirX * (440 + 260 * chargeRatio) * forceMult;
+    const kbY = -(260 + 140 * chargeRatio);
+
+    // Desarme forzado por golpe demoledor
+    this.disarmPlayer(defender);
+
+    this.applyDamage(defender, dmg, GameConstants.HitstunTicksStrong, kbX, kbY, true);
+
+    return {
+      didHit: true,
+      damageDealt: dmg,
+      knockbackX: kbX,
+      knockbackY: kbY,
+      hitstunTicks: GameConstants.HitstunTicksStrong,
+      causedKnockdown: true,
+      ignitedTarget: false,
+    };
+  },
+
+  resolveSlideTackle(attacker: PlayerState, defender: PlayerState): HitResult {
+    if (!defender.isAlive || defender.invulnerabilityTicks > 0) {
+      return this.miss();
+    }
+
+    const dist = Math.hypot(defender.x - attacker.x, defender.y - attacker.y);
+    if (dist > 48 || Math.abs(defender.y - attacker.y) > 28) {
+      return this.miss();
+    }
+
+    const dirX = attacker.facingRight ? 1 : -1;
+    const baseDmg = 14;
+    const dmg = this.applyModifiers(
+      baseDmg,
+      attacker.damageDealtModifier,
+      defender.damageTakenModifier
+    );
+
+    const kbX = dirX * 220;
+    const kbY = -120;
+
+    this.applyDamage(defender, dmg, GameConstants.HitstunTicksStrong, kbX, kbY, true);
+
+    return {
+      didHit: true,
+      damageDealt: dmg,
+      knockbackX: kbX,
+      knockbackY: kbY,
+      hitstunTicks: GameConstants.HitstunTicksStrong,
+      causedKnockdown: true,
+      ignitedTarget: false,
+    };
+  },
+
+  resolveThrow(attacker: PlayerState, defender: PlayerState, throwDirectionX: number, throwUp: boolean): HitResult {
+    if (!defender.isAlive) {
+      return this.miss();
+    }
+
+    const dirX = throwDirectionX !== 0 ? throwDirectionX : (attacker.facingRight ? 1 : -1);
+    const baseDmg = 18;
+    const dmg = this.applyModifiers(
+      baseDmg,
+      attacker.damageDealtModifier,
+      defender.damageTakenModifier
+    );
+
+    const forceMult = attacker.meleeForceModifier || 1.0;
+    const kbX = dirX * 450 * forceMult;
+    const kbY = throwUp ? -320 : -160;
+
+    this.applyDamage(defender, dmg, GameConstants.HitstunTicksStrong, kbX, kbY, true);
+
+    return {
+      didHit: true,
+      damageDealt: dmg,
+      knockbackX: kbX,
+      knockbackY: kbY,
+      hitstunTicks: GameConstants.HitstunTicksStrong,
+      causedKnockdown: true,
+      ignitedTarget: false,
+    };
+  },
+
+  // ══════════════════════════════════════════════════════════════
+  // ESTILO DE COMBATE CON ARMAS DE FILO (Espadas, Cuchillos, etc.)
+  // ══════════════════════════════════════════════════════════════
+
+  resolveBladeMelee(attacker: PlayerState, defender: PlayerState): HitResult {
+    if (!defender.isAlive || defender.invulnerabilityTicks > 0) {
+      return this.miss();
+    }
+
+    const step = Math.min(Math.max(attacker.comboStep, 0), 2);
+    // Alcance extendido por el filo del arma (68px de ancho frontal)
+    const hitW = 68;
+    const hitH = 58;
+    const dirX = attacker.facingRight ? 1 : -1;
+    const hitCx = attacker.x + dirX * (hitW / 2 + 10);
+    const hitCy = attacker.y;
+
+    if (
+      !this.rectsOverlap(
+        hitCx,
+        hitCy,
+        hitW,
+        hitH,
+        defender.x,
+        defender.y,
+        GameConstants.HitboxStand.x,
+        GameConstants.HitboxStand.y
+      )
+    ) {
+      return this.miss();
+    }
+
+    // Progresión de daño combo con filo
+    const bladeComboDamages = [18, 26, 36];
+    const baseDmg = bladeComboDamages[step];
+    const dmg = this.applyModifiers(
+      baseDmg,
+      attacker.damageDealtModifier,
+      defender.damageTakenModifier
+    );
+
+    // Impulso y knockback lacerante
+    const forceMult = attacker.meleeForceModifier || 1.0;
+    const kbXSteps = [220, 290, 420];
+    const kbYSteps = [-60, -110, -240];
+    const kbX = dirX * kbXSteps[step] * forceMult;
+    const kbY = kbYSteps[step];
+
+    const hitstun = step === 2 ? GameConstants.HitstunTicksStrong + 4 : GameConstants.HitstunTicksLight + 2;
+    const knockdown = step === 2 || defender.health - dmg <= 0.01;
+
+    // Desarme en el 3er golpe del combo de filo (desarma con 65% de probabilidad o si rival tiene < 50 HP)
+    if (step === 2 && (defender.health < 50 || Math.random() < 0.65)) {
+      this.disarmPlayer(defender);
+    }
+
+    // Bonificaciones de arquetipo
+    const upperAttackerName = attacker.name.toUpperCase();
+    if (upperAttackerName.includes('MOTERO') || upperAttackerName.includes('BIKER')) {
+      attacker.health = Math.min(attacker.maxHealth, attacker.health + 4);
+    }
+    if (upperAttackerName.includes('BERSERKER')) {
+      attacker.health = Math.min(attacker.maxHealth, attacker.health + 5);
+    }
+
+    this.applyDamage(defender, dmg, hitstun, kbX, kbY, knockdown);
+
+    return {
+      didHit: true,
+      damageDealt: dmg,
+      knockbackX: kbX,
+      knockbackY: kbY,
+      hitstunTicks: hitstun,
+      causedKnockdown: knockdown,
+      ignitedTarget: false,
+    };
+  },
+
+  resolveBladeHeavySlash(attacker: PlayerState, defender: PlayerState, chargeRatio: number): HitResult {
+    if (!defender.isAlive || defender.invulnerabilityTicks > 0) {
+      return this.miss();
+    }
+
+    // Alcance masivo de la onda de corte / tajo cargado (82px)
+    const hitW = 82;
+    const hitH = 64;
+    const dirX = attacker.facingRight ? 1 : -1;
+    const hitCx = attacker.x + dirX * (hitW / 2 + 12);
+    const hitCy = attacker.y;
+
+    if (
+      !this.rectsOverlap(
+        hitCx,
+        hitCy,
+        hitW,
+        hitH,
+        defender.x,
+        defender.y,
+        GameConstants.HitboxStand.x,
+        GameConstants.HitboxStand.y
+      )
+    ) {
+      return this.miss();
+    }
+
+    const baseDmg = 34 + 28 * Math.min(1, Math.max(0, chargeRatio));
+    const dmg = this.applyModifiers(
+      baseDmg,
+      attacker.damageDealtModifier,
+      defender.damageTakenModifier
+    );
+
+    const forceMult = attacker.meleeForceModifier || 1.0;
+    const kbX = dirX * (480 + 300 * chargeRatio) * forceMult;
+    const kbY = -(280 + 160 * chargeRatio);
+
+    // Corte crítico siempre desarma
+    this.disarmPlayer(defender);
+
+    this.applyDamage(defender, dmg, GameConstants.HitstunTicksStrong + 6, kbX, kbY, true);
+
+    return {
+      didHit: true,
+      damageDealt: dmg,
+      knockbackX: kbX,
+      knockbackY: kbY,
+      hitstunTicks: GameConstants.HitstunTicksStrong + 6,
+      causedKnockdown: true,
+      ignitedTarget: false,
+    };
+  },
+
+  resolveBladeDashSlash(attacker: PlayerState, defender: PlayerState): HitResult {
+    if (!defender.isAlive || defender.invulnerabilityTicks > 0) {
+      return this.miss();
+    }
+
+    const dist = Math.hypot(defender.x - attacker.x, defender.y - attacker.y);
+    if (dist > 58 || Math.abs(defender.y - attacker.y) > 30) {
+      return this.miss();
+    }
+
+    const dirX = attacker.facingRight ? 1 : -1;
+    const baseDmg = 22;
+    const dmg = this.applyModifiers(
+      baseDmg,
+      attacker.damageDealtModifier,
+      defender.damageTakenModifier
+    );
+
+    const kbX = dirX * 280;
+    const kbY = -140;
+
+    this.applyDamage(defender, dmg, GameConstants.HitstunTicksStrong, kbX, kbY, true);
+
+    return {
+      didHit: true,
+      damageDealt: dmg,
+      knockbackX: kbX,
+      knockbackY: kbY,
+      hitstunTicks: GameConstants.HitstunTicksStrong,
+      causedKnockdown: true,
+      ignitedTarget: false,
+    };
+  },
+
   resolveProjectile(
     attacker: PlayerState,
     defender: PlayerState,

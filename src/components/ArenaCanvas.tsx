@@ -16,6 +16,20 @@ import { PlayerController, PlayerInput, PlayerState as ControllerState, PLAYER_C
 import { sounds } from '../game/SoundEffects';
 import { getWorldConfig, WorldConfig, HazardCfg, PlatformRect } from '../game/WorldData';
 import { GameMode } from './ModeSelectScreen';
+import {
+  GrenadeType,
+  GrenadeConfig,
+  GRENADE_DATABASE,
+  GRENADE_MAX_CAPACITY,
+  GrenadeInventory,
+  createGrenadeInventory,
+  getTotalGrenades,
+  canAddGrenade,
+  addGrenades,
+  cycleGrenadeType,
+  consumeGrenade,
+  GrenadePickupEntity,
+} from '../game/GrenadeSystem';
 
 interface ArenaCanvasProps {
   gameMode?: GameMode;
@@ -139,8 +153,20 @@ interface ProjectileEntity {
   maxLifeTicks: number;
   isGrenade?: boolean;
   isMolotov?: boolean;
+  grenadeType?: GrenadeType;
+  rotation?: number;
+  rotationSpeed?: number;
   fuseTicks?: number;
   color: string;
+}
+
+interface SmokeCloudEntity {
+  id: number;
+  x: number;
+  y: number;
+  radius: number;
+  remainingTicks: number;
+  maxTicks: number;
 }
 
 interface WorldWeaponEntity {
@@ -150,6 +176,22 @@ interface WorldWeaponEntity {
   y: number;
   baseY: number;
   bobTicks: number;
+  spawnSlotIndex?: number; // Índice del punto de spawn designado que generó esta arma
+}
+
+/**
+ * Representa el estado y ciclo de vida de un punto de spawn designado en el mapa.
+ * Permite que cada punto controle su propio ciclo de sustitución garantizando
+ * que nunca se solapen o acumulen armas en la misma ubicación.
+ */
+interface WeaponSpawnSlot {
+  slotIndex: number;
+  x: number;
+  y: number;
+  currentWeaponId: number | null; // ID del arma actual en este punto (null si ya fue recogida)
+  timer: number;                  // Contador de ticks para el siguiente ciclo de reemplazo
+  spawnInterval: number;          // Ticks totales requeridos para el reemplazo
+  lastWeaponType?: WeaponType;    // Último tipo de arma generada para promover variedad
 }
 
 interface MedkitEntity {
@@ -262,10 +304,16 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     p1Weapon: WeaponType.Fists,
     p1Ammo: 0,
     p1MaxAmmo: -1,
+    p1GrenadeType: GrenadeType.Frag,
+    p1GrenadeCount: 3,
+    p1GrenadeTotal: 3,
+    p1GrenadeMax: GRENADE_MAX_CAPACITY,
     botHealth: botArch.maxHealth,
     botMaxHealth: botArch.maxHealth,
     botWeapon: WeaponType.Fists,
     botAmmo: 0,
+    botGrenadeType: GrenadeType.Frag,
+    botGrenadeCount: 3,
     round: 1,
     maxRounds,
     p1Score: 0,
@@ -286,6 +334,13 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     botAI: ReturnType<typeof createBotFSMData>;
     projectiles: ProjectileEntity[];
     worldWeapons: WorldWeaponEntity[];
+    weaponSlots: WeaponSpawnSlot[];
+    p1Grenades: GrenadeInventory;
+    botGrenades: GrenadeInventory;
+    grenadePickups: GrenadePickupEntity[];
+    smokeClouds: SmokeCloudEntity[];
+    flashbangFlash: number;
+    grenadeImages: Record<GrenadeType, HTMLImageElement>;
     medkits: MedkitEntity[];
     crates: DestructibleCrateEntity[];
     barrels: ExplosiveBarrelEntity[];
@@ -383,6 +438,177 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     return { crates, barrels, conveyors, presses };
   }, []);
 
+  // Helpers de combate y efectos de partículas
+  const addSparks = (x: number, y: number, color: string, count: number = 8) => {
+    if (!stateRef.current) return;
+    for (let i = 0; i < count; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 40 + Math.random() * 90;
+      stateRef.current.particles.push({
+        x,
+        y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        life: 10 + Math.random() * 12,
+        maxLife: 22,
+        color,
+        size: 1.5 + Math.random() * 2,
+      });
+    }
+  };
+
+  // ─────────────────────────────────────────────────────────────
+  // SISTEMA MODULAR DE GESTIÓN Y CICLO DE VIDA DE ARMAS (SPAWN SLOTS)
+  // ─────────────────────────────────────────────────────────────
+
+  /**
+   * Inicializa la estructura de puntos de spawn asignados para la arena.
+   * Cada slot mantiene su estado, el ID del arma actualmente presente y
+   * su temporizador para el siguiente reemplazo.
+   */
+  const initializeWeaponSpawnSlots = (worldCfg: WorldConfig): WeaponSpawnSlot[] => {
+    return worldCfg.weaponSpawns.map((pos, idx) => ({
+      slotIndex: idx,
+      x: pos.x,
+      y: pos.y,
+      currentWeaponId: null,
+      timer: idx * 180, // Escalonamiento inicial para que las armas no ciclen en el mismo fotograma
+      spawnInterval: 780 + (idx % 3) * 60, // Ciclo individual de ~13 a 15 segundos (a 60 FPS)
+      lastWeaponType: undefined,
+    }));
+  };
+
+  /**
+   * Destruye de forma segura el arma presente en un punto de spawn específico.
+   * REGLA ESTRICTA: El arma anterior se elimina automáticamente antes de instanciar la nueva.
+   * Incluye comprobaciones estrictas de nulidad (null-checks): si el combatiente ya había
+   * recogido el arma antes del ciclo de spawn, la referencia nula se gestiona limpiamente sin errores.
+   *
+   * @param s Estado activo de la partida
+   * @param slotIndex Índice del punto de spawn designado
+   * @param triggerVisuals Determina si genera partículas de desvanecimiento
+   * @returns Entidad eliminada o null si no había ninguna arma tirada en el punto
+   */
+  const destroyWeaponAtSpawnSlot = (
+    s: NonNullable<typeof stateRef.current>,
+    slotIndex: number,
+    triggerVisuals: boolean = true
+  ): WorldWeaponEntity | null => {
+    if (!s || !s.weaponSlots || !s.weaponSlots[slotIndex]) return null;
+    const slot = s.weaponSlots[slotIndex];
+
+    // Validación de nulidad: si no hay arma registrada actualmente en este slot, salir limpiamente
+    if (slot.currentWeaponId === null) {
+      return null;
+    }
+
+    // Buscar el índice del arma en la lista del mundo por ID o proximidad al spawn point
+    const targetId = slot.currentWeaponId;
+    const weaponIdx = s.worldWeapons.findIndex(
+      (w) => w && (w.id === targetId || (w.spawnSlotIndex === slotIndex && Math.hypot(w.x - slot.x, w.baseY - slot.y) < 26))
+    );
+
+    // Validación de nulidad: si el arma ya fue recogida o eliminada previamente
+    if (weaponIdx === -1) {
+      slot.currentWeaponId = null;
+      return null;
+    }
+
+    const removedWeapon = s.worldWeapons[weaponIdx];
+    if (!removedWeapon) {
+      slot.currentWeaponId = null;
+      return null;
+    }
+
+    // Efecto visual sutil de desmaterialización / reemplazo del arma obsoleta
+    if (triggerVisuals) {
+      addSparks(removedWeapon.x, removedWeapon.y, '#94a3b8', 8);
+      addSparks(removedWeapon.x, removedWeapon.y, '#38bdf8', 6);
+    }
+
+    // Destrucción y eliminación limpia del arreglo del mundo
+    s.worldWeapons.splice(weaponIdx, 1);
+    slot.currentWeaponId = null;
+
+    return removedWeapon;
+  };
+
+  /**
+   * Instancia una nueva arma en el punto de spawn designado.
+   * Cumple con la regla estricta:
+   * 1. Destruye automáticamente cualquier arma previa en este punto exacto (si aún sigue allí).
+   * 2. Instancia la nueva arma en las coordenadas exactas del spawn point.
+   * 3. Reinicia el temporizador del ciclo de vida para este punto.
+   *
+   * @param s Estado activo de la partida
+   * @param slotIndex Índice del punto de spawn designado
+   * @param forcedWeaponType Tipo opcional forzado de arma
+   * @returns La nueva entidad WorldWeaponEntity instanciada
+   */
+  const instantiateWeaponAtSpawnSlot = (
+    s: NonNullable<typeof stateRef.current>,
+    slotIndex: number,
+    forcedWeaponType?: WeaponType
+  ): WorldWeaponEntity | null => {
+    if (!s || !s.weaponSlots || !s.weaponSlots[slotIndex]) return null;
+    const slot = s.weaponSlots[slotIndex];
+
+    // 1. DESTRUCCIÓN PREVIA: Asegurar que el arma anterior desaparezca antes de generar la nueva
+    destroyWeaponAtSpawnSlot(s, slotIndex, true);
+
+    // 2. SELECCIÓN DE ARMA: Elegir un arma aleatoria del catálogo (priorizando variedad)
+    let selectedWeaponType = forcedWeaponType;
+    if (!selectedWeaponType) {
+      const candidates = SpawnableWeaponsList.filter((w) => w !== slot.lastWeaponType);
+      const pool = candidates.length > 0 ? candidates : SpawnableWeaponsList;
+      selectedWeaponType = pool[Math.floor(Math.random() * pool.length)];
+    }
+
+    // 3. INSTANCIACIÓN: Crear la nueva entidad en el punto exacto
+    const newId = s.nextEntityId++;
+    const newWeapon: WorldWeaponEntity = {
+      id: newId,
+      weaponType: selectedWeaponType,
+      x: slot.x,
+      y: slot.y,
+      baseY: slot.y,
+      bobTicks: slotIndex * 15,
+      spawnSlotIndex: slotIndex,
+    };
+
+    // 4. REGISTRO EN EL MUNDO Y SLOT:
+    s.worldWeapons.push(newWeapon);
+    slot.currentWeaponId = newId;
+    slot.lastWeaponType = selectedWeaponType;
+    slot.timer = 0; // Reinicio estricto del temporizador del ciclo
+
+    // Efecto visual de aparición del arma
+    addSparks(slot.x, slot.y, '#38bdf8', 12);
+
+    return newWeapon;
+  };
+
+  /**
+   * Actualiza el ciclo de vida y temporizadores de todos los puntos de spawn en el mapa.
+   * Ejecutado en el tick principal a 60Hz. Cuando un punto cumple su tiempo de ciclo,
+   * reemplaza el arma automáticamente llamando a `instantiateWeaponAtSpawnSlot`.
+   */
+  const updateWeaponSpawns = (s: NonNullable<typeof stateRef.current>): void => {
+    if (!s || !s.weaponSlots || s.weaponSlots.length === 0) return;
+
+    for (let i = 0; i < s.weaponSlots.length; i++) {
+      const slot = s.weaponSlots[i];
+      if (!slot) continue;
+
+      slot.timer++;
+
+      // Al cumplirse el temporizador del ciclo para este punto exacto:
+      if (slot.timer >= slot.spawnInterval) {
+        instantiateWeaponAtSpawnSlot(s, i);
+      }
+    }
+  };
+
   // Inicializar estado del juego
   useEffect(() => {
     const worldCfg = getWorldConfig(worldId);
@@ -460,15 +686,33 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     const swordComboSheet = new Image();
     swordComboSheet.src = '/assets/aistudio/assasin-asm_sword_triple_combo_3a606114.png';
 
-    // Armas iniciales en las plataformas del mundo
-    const worldWeapons: WorldWeaponEntity[] = worldCfg.weaponSpawns.map((pos, idx) => ({
-      id: idx + 1,
-      weaponType: SpawnableWeaponsList[Math.floor(Math.random() * SpawnableWeaponsList.length)],
-      x: pos.x,
-      y: pos.y,
-      baseY: pos.y,
-      bobTicks: idx * 20,
-    }));
+    // Preload grenade sprites
+    const grenadeImages = {} as Record<GrenadeType, HTMLImageElement>;
+    Object.values(GRENADE_DATABASE).forEach((g) => {
+      const gImg = new Image();
+      gImg.src = g.iconUrl;
+      grenadeImages[g.type] = gImg;
+    });
+
+    // Inicialización de slots de spawn y armas en el mundo
+    const weaponSlots = initializeWeaponSpawnSlots(worldCfg);
+    const worldWeapons: WorldWeaponEntity[] = [];
+
+    weaponSlots.forEach((slot, idx) => {
+      const weaponType = SpawnableWeaponsList[Math.floor(Math.random() * SpawnableWeaponsList.length)];
+      const wId = idx + 1;
+      worldWeapons.push({
+        id: wId,
+        weaponType,
+        x: slot.x,
+        y: slot.y,
+        baseY: slot.y,
+        bobTicks: idx * 20,
+        spawnSlotIndex: idx,
+      });
+      slot.currentWeaponId = wId;
+      slot.lastWeaponType = weaponType;
+    });
 
     const hazards = createWorldHazards(worldCfg);
 
@@ -480,6 +724,13 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       botAI: createBotFSMData(arch.aiType),
       projectiles: [],
       worldWeapons,
+      weaponSlots,
+      p1Grenades: createGrenadeInventory(GRENADE_MAX_CAPACITY, GrenadeType.Frag, GRENADE_INITIAL_COUNT),
+      botGrenades: createGrenadeInventory(GRENADE_MAX_CAPACITY, GrenadeType.Frag, GRENADE_INITIAL_COUNT),
+      grenadePickups: [],
+      smokeClouds: [],
+      flashbangFlash: 0,
+      grenadeImages,
       medkits: [],
       crates: hazards.crates,
       barrels: hazards.barrels,
@@ -578,15 +829,24 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       s.p2Controller.facingRight = false;
     }
 
-    // Regenerar armas en plataformas
-    s.worldWeapons = worldCfg.weaponSpawns.map((pos, idx) => ({
-      id: s.nextEntityId++,
-      weaponType: SpawnableWeaponsList[Math.floor(Math.random() * SpawnableWeaponsList.length)],
-      x: pos.x,
-      y: pos.y,
-      baseY: pos.y,
-      bobTicks: idx * 20,
-    }));
+    // Reinicializar puntos de spawn y armas en plataformas
+    s.weaponSlots = initializeWeaponSpawnSlots(worldCfg);
+    s.worldWeapons = [];
+    s.weaponSlots.forEach((slot, idx) => {
+      const weaponType = SpawnableWeaponsList[Math.floor(Math.random() * SpawnableWeaponsList.length)];
+      const wId = s.nextEntityId++;
+      s.worldWeapons.push({
+        id: wId,
+        weaponType,
+        x: slot.x,
+        y: slot.y,
+        baseY: slot.y,
+        bobTicks: idx * 20,
+        spawnSlotIndex: idx,
+      });
+      slot.currentWeaponId = wId;
+      slot.lastWeaponType = weaponType;
+    });
 
     // Regenerar peligros si es revancha o se quedaron vacíos
     if (isFullRematch || s.crates.length === 0 || s.barrels.length === 0) {
@@ -602,6 +862,11 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     s.particles = [];
     s.fireZones = [];
     s.floatingTexts = [];
+    s.p1Grenades = createGrenadeInventory(GRENADE_MAX_CAPACITY, GrenadeType.Frag, GRENADE_INITIAL_COUNT);
+    s.botGrenades = createGrenadeInventory(GRENADE_MAX_CAPACITY, GrenadeType.Frag, GRENADE_INITIAL_COUNT);
+    s.grenadePickups = [];
+    s.smokeClouds = [];
+    s.flashbangFlash = 0;
     s.roundActive = true;
     s.announcement = '¡PELEA!';
     s.announcementTicks = 90;
@@ -626,6 +891,22 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       if (key === 'r') {
         restartRound(stateRef.current.p1Score >= Math.floor(maxRounds / 2) + 1 || stateRef.current.botScore >= Math.floor(maxRounds / 2) + 1);
       }
+      if (key === 'c' || key === 't') {
+        const nextType = cycleGrenadeType(stateRef.current.p1Grenades);
+        const gCfg = GRENADE_DATABASE[nextType];
+        sounds.playPickup();
+        stateRef.current.floatingTexts.push({
+          id: stateRef.current.nextEntityId++,
+          text: `EQUIPADA: ${gCfg.shortName} (${stateRef.current.p1Grenades.ammo[nextType]} disp.)`,
+          x: stateRef.current.p1.x,
+          y: stateRef.current.p1.y - 35,
+          color: gCfg.color,
+          life: 30,
+        });
+      }
+      if (key === 'y' && gameMode === 'local1v1') {
+        cycleGrenadeType(stateRef.current.botGrenades);
+      }
       if (key === 'escape') {
         onExitToMenu();
       }
@@ -647,24 +928,6 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
   }, [onExitToMenu, restartRound, maxRounds]);
 
   // Helpers de combate y efectos
-  const addSparks = (x: number, y: number, color: string, count: number = 8) => {
-    if (!stateRef.current) return;
-    for (let i = 0; i < count; i++) {
-      const angle = Math.random() * Math.PI * 2;
-      const speed = 40 + Math.random() * 90;
-      stateRef.current.particles.push({
-        x,
-        y,
-        vx: Math.cos(angle) * speed,
-        vy: Math.sin(angle) * speed,
-        life: 10 + Math.random() * 12,
-        maxLife: 22,
-        color,
-        size: 1.5 + Math.random() * 2,
-      });
-    }
-  };
-
   const createExplosion = (
     x: number,
     y: number,
@@ -737,24 +1000,114 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     });
   };
 
-  // Aparición periódica de armas
-  const spawnRandomWeapon = () => {
-    if (!stateRef.current) return;
-    const s = stateRef.current;
-    const worldCfg = s.worldConfig;
-    const spawnPoints = worldCfg.weaponSpawns;
-    const pt = spawnPoints[Math.floor(Math.random() * spawnPoints.length)];
-    const randomWpn = SpawnableWeaponsList[Math.floor(Math.random() * SpawnableWeaponsList.length)];
+  /**
+   * Resuelve la detonación visual y física específica según el tipo de granada arrojada:
+   * - Frag: Explosión HE clásica destructiva + onda expansiva
+   * - Smoke: Cortina de humo denso persistente que bloquea visión
+   * - Flashbang: Ráfaga enceguecedora + aturdimiento masivo (Hitstun) a combatientes
+   * - Molotov: Impacto directo y generación de zona de fuego prolongada
+   */
+  const triggerGrenadeDetonation = (
+    s: NonNullable<typeof stateRef.current>,
+    pr: ProjectileEntity
+  ) => {
+    const gType = pr.grenadeType || GrenadeType.Frag;
+    const gCfg = GRENADE_DATABASE[gType];
 
-    s.worldWeapons.push({
-      id: s.nextEntityId++,
-      weaponType: randomWpn,
-      x: pt.x,
-      y: pt.y,
-      baseY: pt.y,
-      bobTicks: 0,
-    });
-    addSparks(pt.x, pt.y, '#38bdf8', 12);
+    switch (gType) {
+      case GrenadeType.Frag: {
+        createExplosion(pr.x, pr.y, gCfg.explosionRadius, gCfg.damage, false);
+        addSparks(pr.x, pr.y, '#f97316', 30);
+        addSparks(pr.x, pr.y, '#e2e8f0', 20);
+        addSparks(pr.x, pr.y, '#34d399', 15);
+        s.screenShake = 16;
+        sounds.playExplosion();
+        break;
+      }
+
+      case GrenadeType.Smoke: {
+        s.screenShake = 6;
+        s.smokeClouds.push({
+          id: s.nextEntityId++,
+          x: pr.x,
+          y: pr.y,
+          radius: gCfg.explosionRadius,
+          remainingTicks: gCfg.smokeDurationTicks || 360,
+          maxTicks: gCfg.smokeDurationTicks || 360,
+        });
+
+        // 45 partículas densas de humo
+        for (let k = 0; k < 45; k++) {
+          const ang = Math.random() * Math.PI * 2;
+          const spd = 15 + Math.random() * 50;
+          s.particles.push({
+            x: pr.x + (Math.random() - 0.5) * 24,
+            y: pr.y + (Math.random() - 0.5) * 18,
+            vx: Math.cos(ang) * spd,
+            vy: Math.sin(ang) * spd * 0.4 - 10,
+            life: 180 + Math.random() * 120,
+            maxLife: 300,
+            color: k % 2 === 0 ? 'rgba(203, 213, 225, 0.7)' : 'rgba(148, 163, 184, 0.6)',
+            size: 14 + Math.random() * 16,
+          });
+        }
+
+        [s.p1, s.bot].forEach((target) => {
+          if (!target.isAlive) return;
+          const dist = Math.hypot(target.x - pr.x, target.y - pr.y);
+          if (dist < gCfg.explosionRadius) {
+            target.health = Math.max(0, target.health - gCfg.damage);
+          }
+        });
+
+        s.floatingTexts.push({
+          id: s.nextEntityId++,
+          text: '¡CORTINA DE HUMO!',
+          x: pr.x,
+          y: pr.y - 30,
+          color: '#cbd5e1',
+          life: 45,
+        });
+        break;
+      }
+
+      case GrenadeType.Flashbang: {
+        s.flashbangFlash = 35;
+        s.screenShake = 12;
+        sounds.playRoundGong(false);
+
+        addSparks(pr.x, pr.y, '#fef08a', 35);
+        addSparks(pr.x, pr.y, '#ffffff', 25);
+        addSparks(pr.x, pr.y, '#38bdf8', 15);
+
+        [s.p1, s.bot].forEach((target) => {
+          if (!target.isAlive) return;
+          const dist = Math.hypot(target.x - pr.x, target.y - pr.y);
+          if (dist < gCfg.explosionRadius) {
+            target.health = Math.max(0, target.health - gCfg.damage);
+            target.hitstunTicks = gCfg.stunTicks || 70;
+            PlayerFSM.tryTransition(target, PlayerFSMState.Hitstun);
+            s.floatingTexts.push({
+              id: s.nextEntityId++,
+              text: '¡CEGADO / ATURDIDO!',
+              x: target.x,
+              y: target.y - 35,
+              color: '#facc15',
+              life: 45,
+            });
+          }
+        });
+        break;
+      }
+
+      case GrenadeType.Molotov: {
+        sounds.playExplosion();
+        addSparks(pr.x, pr.y, '#f97316', 30);
+        addSparks(pr.x, pr.y, '#93c5fd', 15);
+        createExplosion(pr.x, pr.y, gCfg.explosionRadius, gCfg.damage, true);
+        break;
+      }
+    }
   };
 
   // LOOP PRINCIPAL DE JUEGO (60Hz)
@@ -872,6 +1225,74 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           roll: rollPressed && !dropThrough,
           dropThrough,
         };
+
+        // Recuperación activa de derribo para P1 mediante teclas de movimiento (Flechas, WASD, salto, rodada)
+        if (p1.fsm === PlayerFSMState.KnockedDown || p1.fsm === PlayerFSMState.GetUp) {
+          const hasDirInput = moveDir !== 0;
+          const hasVerticalInput = jumpJustPressed || rollPressed || crouchHeld;
+          const anyMovementPressed = hasDirInput || hasVerticalInput || (is1v1 ? !!keys['n'] || !!keys['m'] : !!keys['n'] || !!keys['j'] || !!keys['m'] || !!keys['k']);
+
+          // Si presiona teclas tras un mínimo amortiguamiento de impacto (4 ticks)
+          if (anyMovementPressed && p1.stateTicks >= 4) {
+            if (rollPressed || (crouchHeld && hasDirInput)) {
+              // Rodada de escape / recuperación inmediata
+              if (hasDirInput) p1.facingRight = moveDir > 0;
+              PlayerFSM.tryTransition(p1, PlayerFSMState.Roll);
+              s.p1Controller.setPosition(p1.x, p1.y);
+              s.p1Controller.isOnFloor = p1.onGround;
+              s.p1Controller.facingRight = p1.facingRight;
+              s.p1Controller.state = ControllerState.Roll;
+              p1.rollTicks = GameConstants.RollDurationTicks;
+              p1.invulnerabilityTicks = 20;
+              sounds.playRoll();
+              s.floatingTexts.push({
+                id: s.nextEntityId++,
+                text: '¡RODADA DE RECUPERACIÓN!',
+                x: p1.x,
+                y: p1.y - 28,
+                color: '#38bdf8',
+                life: 25,
+              });
+            } else if (jumpJustPressed) {
+              // Salto de recuperación vertical
+              PlayerFSM.tryTransition(p1, PlayerFSMState.Jump);
+              s.p1Controller.setPosition(p1.x, p1.y);
+              s.p1Controller.isOnFloor = false;
+              s.p1Controller.vy = -GameConstants.JumpVelocity;
+              p1.velocityY = -GameConstants.JumpVelocity;
+              p1.invulnerabilityTicks = 16;
+              sounds.playJump();
+              s.floatingTexts.push({
+                id: s.nextEntityId++,
+                text: '¡SALTO DE RECUPERACIÓN!',
+                x: p1.x,
+                y: p1.y - 28,
+                color: '#4ade80',
+                life: 25,
+              });
+            } else {
+              // Levantarse inmediatamente al presionar flecha izquierda / derecha, o tecla de dirección
+              if (hasDirInput) {
+                p1.facingRight = moveDir > 0;
+                s.p1Controller.facingRight = p1.facingRight;
+              }
+              PlayerFSM.tryTransition(p1, PlayerFSMState.Idle);
+              s.p1Controller.setPosition(p1.x, p1.y);
+              s.p1Controller.isOnFloor = p1.onGround;
+              s.p1Controller.state = ControllerState.Idle;
+              p1.invulnerabilityTicks = 18;
+              addSparks(p1.x, p1.y + 12, '#38bdf8', 8);
+              s.floatingTexts.push({
+                id: s.nextEntityId++,
+                text: '¡DE PIE!',
+                x: p1.x,
+                y: p1.y - 28,
+                color: '#e2e8f0',
+                life: 25,
+              });
+            }
+          }
+        }
 
         if (
           p1.fsm !== PlayerFSMState.KnockedDown &&
@@ -1283,28 +1704,58 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           }
         }
 
-        // Granadas / Molotov
+        // Granadas / Armas Arrojadizas P1 (Consumo limitado de inventario con representación visual)
         if (throwPressed && p1.attackCooldown <= 0) {
-          p1.attackCooldown = 60;
-          sounds.playGunshot('grenade');
-          const dir = p1.facingRight ? 1 : -1;
-          s.projectiles.push({
-            id: s.nextEntityId++,
-            x: p1.x + dir * 18,
-            y: p1.y - 12,
-            vx: dir * 420,
-            vy: -320,
-            damage: 60 * p1.damageDealtModifier,
-            onFireDuration: 240,
-            explosionRadius: 85,
-            shooterId: p1.id,
-            weaponType: WeaponType.Grenade,
-            pelletCount: 1,
-            lifeTicks: 0,
-            maxLifeTicks: 120,
-            isGrenade: true,
-            color: '#10b981',
-          });
+          const thrownType = consumeGrenade(s.p1Grenades);
+          if (thrownType) {
+            p1.attackCooldown = 50;
+            sounds.playGunshot('grenade');
+            const dir = p1.facingRight ? 1 : -1;
+            const gCfg = GRENADE_DATABASE[thrownType];
+
+            s.projectiles.push({
+              id: s.nextEntityId++,
+              x: p1.x + dir * 18,
+              y: p1.y - 12,
+              vx: dir * 420 + p1.velocityX * 0.35,
+              vy: -320,
+              damage: gCfg.damage * p1.damageDealtModifier,
+              onFireDuration: gCfg.burnDurationTicks || 0,
+              explosionRadius: gCfg.explosionRadius,
+              shooterId: p1.id,
+              weaponType: WeaponType.Grenade,
+              pelletCount: 1,
+              lifeTicks: 0,
+              maxLifeTicks: gCfg.fuseTicks || 85,
+              isGrenade: true,
+              isMolotov: thrownType === GrenadeType.Molotov,
+              grenadeType: thrownType,
+              rotation: 0,
+              rotationSpeed: dir * 0.22,
+              color: gCfg.color,
+            });
+
+            s.floatingTexts.push({
+              id: s.nextEntityId++,
+              text: `¡${gCfg.shortName}! (${s.p1Grenades.ammo[thrownType]} rest.)`,
+              x: p1.x,
+              y: p1.y - 32,
+              color: gCfg.color,
+              life: 30,
+            });
+          } else {
+            // Sin munición de granadas
+            p1.attackCooldown = 15;
+            sounds.playDryFire();
+            s.floatingTexts.push({
+              id: s.nextEntityId++,
+              text: '¡SIN GRANADAS!',
+              x: p1.x,
+              y: p1.y - 30,
+              color: '#ef4444',
+              life: 25,
+            });
+          }
         }
       }
 
@@ -1335,6 +1786,70 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             roll: rollPressed && !dropThrough,
             dropThrough,
           };
+
+          // Recuperación activa de derribo para P2 (1v1) mediante teclas de movimiento (W, A, S, D, salto, rodada)
+          if (bot.fsm === PlayerFSMState.KnockedDown || bot.fsm === PlayerFSMState.GetUp) {
+            const hasDirInput = moveDir !== 0;
+            const hasVerticalInput = jumpJustPressed || rollPressed || crouchHeld;
+            const anyP2Input = hasDirInput || hasVerticalInput || !!keys['j'] || !!keys['k'] || !!keys['l'];
+
+            if (anyP2Input && bot.stateTicks >= 4) {
+              if (rollPressed || (crouchHeld && hasDirInput)) {
+                if (hasDirInput) bot.facingRight = moveDir > 0;
+                PlayerFSM.tryTransition(bot, PlayerFSMState.Roll);
+                s.p2Controller.setPosition(bot.x, bot.y);
+                s.p2Controller.isOnFloor = bot.onGround;
+                s.p2Controller.facingRight = bot.facingRight;
+                s.p2Controller.state = ControllerState.Roll;
+                bot.rollTicks = GameConstants.RollDurationTicks;
+                bot.invulnerabilityTicks = 20;
+                sounds.playRoll();
+                s.floatingTexts.push({
+                  id: s.nextEntityId++,
+                  text: '¡RODADA DE RECUPERACIÓN!',
+                  x: bot.x,
+                  y: bot.y - 28,
+                  color: '#f43f5e',
+                  life: 25,
+                });
+              } else if (jumpJustPressed) {
+                PlayerFSM.tryTransition(bot, PlayerFSMState.Jump);
+                s.p2Controller.setPosition(bot.x, bot.y);
+                s.p2Controller.isOnFloor = false;
+                s.p2Controller.vy = -GameConstants.JumpVelocity;
+                bot.velocityY = -GameConstants.JumpVelocity;
+                bot.invulnerabilityTicks = 16;
+                sounds.playJump();
+                s.floatingTexts.push({
+                  id: s.nextEntityId++,
+                  text: '¡SALTO DE RECUPERACIÓN!',
+                  x: bot.x,
+                  y: bot.y - 28,
+                  color: '#fb7185',
+                  life: 25,
+                });
+              } else {
+                if (hasDirInput) {
+                  bot.facingRight = moveDir > 0;
+                  s.p2Controller.facingRight = bot.facingRight;
+                }
+                PlayerFSM.tryTransition(bot, PlayerFSMState.Idle);
+                s.p2Controller.setPosition(bot.x, bot.y);
+                s.p2Controller.isOnFloor = bot.onGround;
+                s.p2Controller.state = ControllerState.Idle;
+                bot.invulnerabilityTicks = 18;
+                addSparks(bot.x, bot.y + 12, '#f43f5e', 8);
+                s.floatingTexts.push({
+                  id: s.nextEntityId++,
+                  text: '¡DE PIE!',
+                  x: bot.x,
+                  y: bot.y - 28,
+                  color: '#e2e8f0',
+                  life: 25,
+                });
+              }
+            }
+          }
 
           if (
             bot.fsm !== PlayerFSMState.KnockedDown &&
@@ -1783,28 +2298,56 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             }
           }
 
-          // Granadas J2
+          // Granadas J2 (Consumo limitado de inventario con representación visual)
           if (throwPressed && bot.attackCooldown <= 0) {
-            bot.attackCooldown = 45;
-            sounds.playGunshot('grenade');
-            const dir = bot.facingRight ? 1 : -1;
-            s.projectiles.push({
-              id: s.nextEntityId++,
-              x: bot.x + dir * 18,
-              y: bot.y - 12,
-              vx: dir * 420,
-              vy: -320,
-              damage: 60 * bot.damageDealtModifier,
-              onFireDuration: 240,
-              explosionRadius: 85,
-              shooterId: bot.id,
-              weaponType: WeaponType.Grenade,
-              pelletCount: 1,
-              lifeTicks: 0,
-              maxLifeTicks: 120,
-              isGrenade: true,
-              color: '#f97316',
-            });
+            const thrownType = consumeGrenade(s.botGrenades);
+            if (thrownType) {
+              bot.attackCooldown = 50;
+              sounds.playGunshot('grenade');
+              const dir = bot.facingRight ? 1 : -1;
+              const gCfg = GRENADE_DATABASE[thrownType];
+              s.projectiles.push({
+                id: s.nextEntityId++,
+                x: bot.x + dir * 18,
+                y: bot.y - 12,
+                vx: dir * 420 + bot.velocityX * 0.35,
+                vy: -320,
+                damage: gCfg.damage * bot.damageDealtModifier,
+                onFireDuration: gCfg.burnDurationTicks || 0,
+                explosionRadius: gCfg.explosionRadius,
+                shooterId: bot.id,
+                weaponType: WeaponType.Grenade,
+                pelletCount: 1,
+                lifeTicks: 0,
+                maxLifeTicks: gCfg.fuseTicks || 85,
+                isGrenade: true,
+                isMolotov: thrownType === GrenadeType.Molotov,
+                grenadeType: thrownType,
+                rotation: 0,
+                rotationSpeed: dir * 0.22,
+                color: gCfg.color,
+              });
+
+              s.floatingTexts.push({
+                id: s.nextEntityId++,
+                text: `¡${gCfg.shortName}! (${s.botGrenades.ammo[thrownType]} rest.)`,
+                x: bot.x,
+                y: bot.y - 32,
+                color: gCfg.color,
+                life: 30,
+              });
+            } else {
+              bot.attackCooldown = 15;
+              sounds.playDryFire();
+              s.floatingTexts.push({
+                id: s.nextEntityId++,
+                text: '¡SIN GRANADAS!',
+                x: bot.x,
+                y: bot.y - 32,
+                color: '#94a3b8',
+                life: 25,
+              });
+            }
           }
         } else {
           // IA DE COMBATE (BOT RIVAL ORIGINAL vsBOT)
@@ -1846,6 +2389,25 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           ) {
             botInput.jump = true;
             s.botAI.jumpCooldown = 40;
+          }
+
+          // Recuperación activa de derribo para bot IA
+          if (bot.fsm === PlayerFSMState.KnockedDown && bot.stateTicks >= 8) {
+            if (botInput.crouch && bot.onGround) {
+              PlayerFSM.tryTransition(bot, PlayerFSMState.Roll);
+              bot.rollTicks = GameConstants.RollDurationTicks;
+              bot.invulnerabilityTicks = 20;
+              sounds.playRoll();
+            } else if (botInput.jump && bot.onGround) {
+              PlayerFSM.tryTransition(bot, PlayerFSMState.Jump);
+              bot.velocityY = GameConstants.JumpVelocity;
+              bot.invulnerabilityTicks = 16;
+              sounds.playJump();
+            } else if (Math.abs(botInput.moveX) > 0.2 || bot.stateTicks >= 18) {
+              PlayerFSM.tryTransition(bot, PlayerFSMState.Idle);
+              bot.invulnerabilityTicks = 18;
+              addSparks(bot.x, bot.y + 12, '#ef4444', 8);
+            }
           }
 
           const botSpeed = GameConstants.RunSpeed * bot.speedModifier;
@@ -2175,12 +2737,63 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
               }
             }
           }
+
+          // Uso táctico de granadas por parte de la IA rival
+          if (
+            bot.attackCooldown <= 0 &&
+            targetDist >= 130 &&
+            targetDist <= 380 &&
+            bot.fsm !== PlayerFSMState.Roll &&
+            bot.fsm !== PlayerFSMState.KnockedDown &&
+            Math.random() < 0.03
+          ) {
+            const thrownType = consumeGrenade(s.botGrenades);
+            if (thrownType) {
+              bot.attackCooldown = 55;
+              sounds.playGunshot('grenade');
+              const dir = bot.facingRight ? 1 : -1;
+              const gCfg = GRENADE_DATABASE[thrownType];
+              s.projectiles.push({
+                id: s.nextEntityId++,
+                x: bot.x + dir * 18,
+                y: bot.y - 12,
+                vx: dir * (360 + Math.random() * 80) + bot.velocityX * 0.3,
+                vy: -300 - Math.random() * 60,
+                damage: gCfg.damage * bot.damageDealtModifier,
+                onFireDuration: gCfg.burnDurationTicks || 0,
+                explosionRadius: gCfg.explosionRadius,
+                shooterId: bot.id,
+                weaponType: WeaponType.Grenade,
+                pelletCount: 1,
+                lifeTicks: 0,
+                maxLifeTicks: gCfg.fuseTicks || 85,
+                isGrenade: true,
+                isMolotov: thrownType === GrenadeType.Molotov,
+                grenadeType: thrownType,
+                rotation: 0,
+                rotationSpeed: dir * 0.22,
+                color: gCfg.color,
+              });
+
+              s.floatingTexts.push({
+                id: s.nextEntityId++,
+                text: `¡${gCfg.shortName} BOT! (${s.botGrenades.ammo[thrownType]} rest.)`,
+                x: bot.x,
+                y: bot.y - 32,
+                color: gCfg.color,
+                life: 30,
+              });
+            }
+          }
         }
       }
 
       // ─────────────────────────────────────────────────────────
       // 3. FÍSICAS DE JUGADORES Y ESTADOS
       // ─────────────────────────────────────────────────────────
+      const prevP1Fsm = p1.fsm;
+      const prevBotFsm = bot.fsm;
+
       if (
         !p1.isAlive ||
         p1.fsm === PlayerFSMState.KnockedDown ||
@@ -2208,6 +2821,23 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       }
       PlayerFSM.tick(p1);
       PlayerFSM.tick(bot);
+
+      // Sincronización inmediata al levantarse automáticamente hacia Idle
+      if (p1.fsm === PlayerFSMState.Idle && (prevP1Fsm === PlayerFSMState.KnockedDown || prevP1Fsm === PlayerFSMState.GetUp)) {
+        s.p1Controller.setPosition(p1.x, p1.y);
+        s.p1Controller.isOnFloor = p1.onGround;
+        s.p1Controller.facingRight = p1.facingRight;
+        s.p1Controller.state = ControllerState.Idle;
+      }
+
+      if (bot.fsm === PlayerFSMState.Idle && (prevBotFsm === PlayerFSMState.KnockedDown || prevBotFsm === PlayerFSMState.GetUp)) {
+        if (gameMode === 'local1v1') {
+          s.p2Controller.setPosition(bot.x, bot.y);
+          s.p2Controller.isOnFloor = bot.onGround;
+          s.p2Controller.facingRight = bot.facingRight;
+          s.p2Controller.state = ControllerState.Idle;
+        }
+      }
 
       CombatSystem.tickFireDamage(p1);
       CombatSystem.tickFireDamage(bot);
@@ -2478,9 +3108,9 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           addSparks(crate.x + crate.w / 2, crate.y + crate.h / 2, '#d97706', 20);
           addSparks(crate.x + crate.w / 2, crate.y + crate.h / 2, '#78350f', 15);
 
-          // Soltar arma o botiquín
+          // Soltar arma, paquete de granadas tácticas o botiquín
           const dropRoll = Math.random();
-          if (dropRoll < 0.5) {
+          if (dropRoll < 0.38) {
             // Suelta arma
             const wpn = SpawnableWeaponsList[Math.floor(Math.random() * SpawnableWeaponsList.length)];
             s.worldWeapons.push({
@@ -2497,6 +3127,27 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
               x: crate.x + crate.w / 2,
               y: crate.y - 20,
               color: '#38bdf8',
+              life: 40,
+            });
+          } else if (dropRoll < 0.72) {
+            // Suelta paquete de granadas tácticas (aporta +2 al inventario limitado)
+            const gTypes = ALL_GRENADE_TYPES;
+            const pickedType = gTypes[Math.floor(Math.random() * gTypes.length)];
+            s.grenadePickups.push({
+              id: s.nextEntityId++,
+              type: pickedType,
+              amount: 2,
+              x: crate.x + crate.w / 2,
+              y: crate.y,
+              baseY: crate.y,
+              bobTicks: 0,
+            });
+            s.floatingTexts.push({
+              id: s.nextEntityId++,
+              text: `¡${GRENADE_DATABASE[pickedType].shortName} x2!`,
+              x: crate.x + crate.w / 2,
+              y: crate.y - 20,
+              color: GRENADE_DATABASE[pickedType].color,
               life: 40,
             });
           } else {
@@ -2580,6 +3231,61 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         }
       }
 
+      // 4.6. RECOLECCIÓN DE GRANADAS EN EL MAPA (LÍMITE ESTRICTO DE 8 EN INVENTARIO)
+      for (let i = s.grenadePickups.length - 1; i >= 0; i--) {
+        const gp = s.grenadePickups[i];
+        gp.bobTicks++;
+        gp.y = gp.baseY + Math.sin(gp.bobTicks * 0.09) * 4;
+        const gCfg = GRENADE_DATABASE[gp.type];
+
+        // P1 pickup
+        if (p1.isAlive && Math.hypot(gp.x - p1.x, gp.y - p1.y) < 32) {
+          if (canAddGrenade(s.p1Grenades)) {
+            const added = addGrenades(s.p1Grenades, gp.type, gp.amount);
+            sounds.playPickup();
+            addSparks(gp.x, gp.y, gCfg.color, 12);
+            s.floatingTexts.push({
+              id: s.nextEntityId++,
+              text: `+${added} ${gCfg.shortName} (${s.p1Grenades.ammo[gp.type]}/${GRENADE_MAX_CAPACITY})`,
+              x: p1.x,
+              y: p1.y - 30,
+              color: gCfg.color,
+              life: 45,
+            });
+            s.grenadePickups.splice(i, 1);
+            continue;
+          } else if (s.worldTick % 35 === 0) {
+            s.floatingTexts.push({
+              id: s.nextEntityId++,
+              text: `¡BOLSA LLENA (${GRENADE_MAX_CAPACITY}/${GRENADE_MAX_CAPACITY})!`,
+              x: p1.x,
+              y: p1.y - 30,
+              color: '#f59e0b',
+              life: 25,
+            });
+          }
+        }
+
+        // Bot / J2 pickup
+        if (bot.isAlive && Math.hypot(gp.x - bot.x, gp.y - bot.y) < 32) {
+          if (canAddGrenade(s.botGrenades)) {
+            const added = addGrenades(s.botGrenades, gp.type, gp.amount);
+            sounds.playPickup();
+            addSparks(gp.x, gp.y, gCfg.color, 12);
+            s.floatingTexts.push({
+              id: s.nextEntityId++,
+              text: `+${added} ${gCfg.shortName} (${s.botGrenades.ammo[gp.type]}/${GRENADE_MAX_CAPACITY})`,
+              x: bot.x,
+              y: bot.y - 30,
+              color: gCfg.color,
+              life: 45,
+            });
+            s.grenadePickups.splice(i, 1);
+            continue;
+          }
+        }
+      }
+
       // Recolección de armas
       for (let i = s.worldWeapons.length - 1; i >= 0; i--) {
         const w = s.worldWeapons[i];
@@ -2607,6 +3313,14 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             color: '#38bdf8',
             life: 45,
           });
+
+          // Validación y liberación segura de referencia en el punto de spawn si pertenecía a uno
+          if (w.spawnSlotIndex !== undefined && s.weaponSlots && s.weaponSlots[w.spawnSlotIndex]) {
+            if (s.weaponSlots[w.spawnSlotIndex].currentWeaponId === w.id) {
+              s.weaponSlots[w.spawnSlotIndex].currentWeaponId = null;
+            }
+          }
+
           s.worldWeapons.splice(i, 1);
           continue;
         }
@@ -2631,17 +3345,24 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             color: '#f97316',
             life: 45,
           });
+
+          // Validación y liberación segura de referencia en el punto de spawn si pertenecía a uno
+          if (w.spawnSlotIndex !== undefined && s.weaponSlots && s.weaponSlots[w.spawnSlotIndex]) {
+            if (s.weaponSlots[w.spawnSlotIndex].currentWeaponId === w.id) {
+              s.weaponSlots[w.spawnSlotIndex].currentWeaponId = null;
+            }
+          }
+
           s.worldWeapons.splice(i, 1);
           continue;
         }
       }
 
-      // Generar armas periódicamente
-      s.weaponSpawnTimer++;
-      if (s.weaponSpawnTimer >= 900) {
-        spawnRandomWeapon();
-        s.weaponSpawnTimer = 0;
-      }
+      // 4.4. CICLOS DE REEMPLAZO DE ARMAS EN PUNTOS DE SPAWN DESIGNADOS
+      // Regla estricta: Cada arma permanece indefinidamente en su punto exacto
+      // hasta que el ciclo de spawn genere una nueva arma en esa misma ubicación,
+      // momento en el cual el arma anterior se destruye automáticamente antes de crear la nueva.
+      updateWeaponSpawns(s);
 
       // ─────────────────────────────────────────────────────────
       // 5. PROYECTILES Y COLISIONES
@@ -2654,23 +3375,50 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           pr.vy += GameConstants.Gravity * (1 / 60);
           pr.x += pr.vx * (1 / 60);
           pr.y += pr.vy * (1 / 60);
+          pr.rotation = (pr.rotation || 0) + (pr.rotationSpeed || 0.15);
+
+          // Estela de partículas según el tipo de granada arrojada
+          if (Math.random() < 0.45) {
+            const gType = pr.grenadeType || GrenadeType.Frag;
+            const trailColor =
+              gType === GrenadeType.Flashbang
+                ? '#e0f2fe'
+                : gType === GrenadeType.Smoke
+                ? '#94a3b8'
+                : gType === GrenadeType.Molotov
+                ? '#f97316'
+                : '#64748b';
+            s.particles.push({
+              x: pr.x,
+              y: pr.y,
+              vx: (Math.random() - 0.5) * 15,
+              vy: (Math.random() - 0.5) * 15,
+              life: 12,
+              maxLife: 15,
+              color: trailColor,
+              size: gType === GrenadeType.Smoke ? 4 : 2.5,
+            });
+          }
 
           if (pr.y >= 500) {
             pr.y = 500;
-            pr.vy = -pr.vy * 0.55;
-            pr.vx *= 0.8;
-            if (pr.isMolotov) {
-              createExplosion(pr.x, pr.y, pr.explosionRadius, pr.damage, true);
+            pr.vy = -pr.vy * 0.52;
+            pr.vx *= 0.78;
+            pr.rotationSpeed = (pr.rotationSpeed || 0.1) * 0.75;
+            if (pr.grenadeType === GrenadeType.Molotov || pr.isMolotov) {
+              triggerGrenadeDetonation(s, pr);
               s.projectiles.splice(i, 1);
               continue;
             }
           }
           if (pr.x <= 20 || pr.x >= 940) {
             pr.vx = -pr.vx * 0.6;
+            pr.rotationSpeed = -(pr.rotationSpeed || 0.15);
           }
 
-          if (pr.lifeTicks >= (pr.isMolotov ? 70 : 90)) {
-            createExplosion(pr.x, pr.y, pr.explosionRadius, pr.damage, !!pr.isMolotov);
+          const maxFuse = pr.maxLifeTicks || (pr.isMolotov ? 70 : 85);
+          if (pr.lifeTicks >= maxFuse) {
+            triggerGrenadeDetonation(s, pr);
             s.projectiles.splice(i, 1);
             continue;
           }
@@ -2815,6 +3563,34 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         }
       }
 
+      // 6.2. NUBES DE HUMO TÁCTICO
+      for (let i = s.smokeClouds.length - 1; i >= 0; i--) {
+        const sc = s.smokeClouds[i];
+        sc.remainingTicks--;
+
+        if (Math.random() < 0.28) {
+          s.particles.push({
+            x: sc.x + (Math.random() - 0.5) * sc.radius * 1.4,
+            y: sc.y + (Math.random() - 0.5) * (sc.radius * 0.7),
+            vx: (Math.random() - 0.5) * 12,
+            vy: -15 - Math.random() * 20,
+            life: 25,
+            maxLife: 35,
+            color: '#cbd5e1',
+            size: 8 + Math.random() * 8,
+          });
+        }
+
+        if (sc.remainingTicks <= 0) {
+          s.smokeClouds.splice(i, 1);
+        }
+      }
+
+      // 6.3. DECAY DE DESTELLO CEGADOR (FLASHBANG)
+      if (s.flashbangFlash > 0) {
+        s.flashbangFlash = Math.max(0, s.flashbangFlash - 0.035);
+      }
+
       // Partículas
       for (let i = s.particles.length - 1; i >= 0; i--) {
         const pt = s.particles[i];
@@ -2851,10 +3627,16 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           p1Weapon: p1.equippedWeapon,
           p1Ammo: p1.ammo,
           p1MaxAmmo: getWeapon(p1.equippedWeapon)?.magSize ?? -1,
+          p1GrenadeType: s.p1Grenades.activeType,
+          p1GrenadeCount: s.p1Grenades.ammo[s.p1Grenades.activeType] || 0,
+          p1GrenadeTotal: getTotalGrenades(s.p1Grenades),
+          p1GrenadeMax: GRENADE_MAX_CAPACITY,
           botHealth: bot.health,
           botMaxHealth: bot.maxHealth,
           botWeapon: bot.equippedWeapon,
           botAmmo: bot.ammo,
+          botGrenadeType: s.botGrenades.activeType,
+          botGrenadeCount: s.botGrenades.ammo[s.botGrenades.activeType] || 0,
           round: s.round,
           p1Score: s.p1Score,
           botScore: s.botScore,
@@ -3301,6 +4083,43 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         ctx.fillText('▼', w.x, w.y - 14 + bobY);
       }
 
+      // 8.5. PAQUETES DE GRANADAS EN EL MUNDO
+      for (const gp of s.grenadePickups) {
+        const gCfg = GRENADE_DATABASE[gp.type];
+        const gImg = s.grenadeImages[gp.type];
+        const bobY = Math.sin(gp.bobTicks * 0.1) * 4;
+
+        // Aura de color según el tipo de granada
+        ctx.fillStyle = gCfg.color + '40';
+        ctx.beginPath();
+        ctx.arc(gp.x, gp.y + bobY, 16, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Caja de suministro táctico
+        ctx.fillStyle = '#0f172a';
+        ctx.strokeStyle = gCfg.color;
+        ctx.lineWidth = 1.5;
+        ctx.fillRect(gp.x - 12, gp.y - 10 + bobY, 24, 20);
+        ctx.strokeRect(gp.x - 12, gp.y - 10 + bobY, 24, 20);
+
+        if (gImg && gImg.complete && gImg.naturalWidth > 0) {
+          ctx.drawImage(gImg, gp.x - 9, gp.y - 8 + bobY, 18, 16);
+        } else {
+          ctx.fillStyle = gCfg.color;
+          ctx.beginPath();
+          ctx.arc(gp.x, gp.y + bobY, 5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        // Etiqueta del tipo y cantidad
+        ctx.fillStyle = '#f8fafc';
+        ctx.font = 'bold 8px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(`${gCfg.shortName} x${gp.amount}`, gp.x, gp.y + 18 + bobY);
+        ctx.fillStyle = gCfg.color;
+        ctx.fillText('▼', gp.x, gp.y - 13 + bobY);
+      }
+
       // 9. ZONAS DE FUEGO
       for (const fz of s.fireZones) {
         const grad = ctx.createRadialGradient(fz.x, fz.y, 5, fz.x, fz.y, fz.radius);
@@ -3488,9 +4307,19 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             ctx.translate(0, charH * 0.12);
             ctx.scale(1.05, 0.78);
             ctx.drawImage(idleImg, drawX, drawY, charW, charH);
-          } else if (p.fsm === PlayerFSMState.KnockedDown || p.fsm === PlayerFSMState.GetUp) {
+          } else if (p.fsm === PlayerFSMState.KnockedDown) {
             ctx.translate(0, charH * 0.28);
             ctx.rotate(-Math.PI / 2);
+            ctx.drawImage(idleImg, drawX, drawY, charW, charH);
+          } else if (p.fsm === PlayerFSMState.GetUp) {
+            // Animación suave de levantarse de -90° hasta 0° (de pie)
+            const getUpTicksMax = 16;
+            const remaining = Math.max(0, p.getUpTicks);
+            const progress = Math.min(1, Math.max(0, 1 - (remaining / getUpTicksMax)));
+            const angle = (-Math.PI / 2) * (1 - progress);
+            const offsetY = (charH * 0.28) * (1 - progress);
+            ctx.translate(0, offsetY);
+            ctx.rotate(angle);
             ctx.drawImage(idleImg, drawX, drawY, charW, charH);
           } else if (isWalking) {
             // Ciclo de caminata dinámico y continuo con la imagen oficial prevista:
@@ -3536,6 +4365,30 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           }
         }
 
+        // Granada táctica activa visible en el cinturón / funda del combatiente
+        const fighterGrenades = isHuman ? s.p1Grenades : s.botGrenades;
+        const activeGType = fighterGrenades.activeType;
+        const activeCount = fighterGrenades.ammo[activeGType] || 0;
+        if (activeCount > 0) {
+          const gImg = s.grenadeImages[activeGType];
+          ctx.save();
+          // Portada en el cinturón / funda táctica de la cadera
+          ctx.translate(-8, 6);
+          ctx.rotate(-0.15);
+          if (gImg && gImg.complete && gImg.naturalWidth > 0) {
+            ctx.drawImage(gImg, -8, -8, 16, 16);
+          } else {
+            ctx.fillStyle = GRENADE_DATABASE[activeGType].color;
+            ctx.beginPath();
+            ctx.arc(0, 0, 5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = '#0f172a';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+          }
+          ctx.restore();
+        }
+
         ctx.restore();
 
         // Barra de salud sobre cabeza (ajustada a la nueva escala del personaje)
@@ -3557,14 +4410,47 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
       // 11. PROYECTILES
       for (const pr of s.projectiles) {
-        ctx.fillStyle = pr.color;
         if (pr.isGrenade) {
-          ctx.beginPath();
-          ctx.arc(pr.x, pr.y, 5, 0, Math.PI * 2);
-          ctx.fill();
+          const gType = pr.grenadeType || GrenadeType.Frag;
+          const gImg = s.grenadeImages[gType];
+          ctx.save();
+          ctx.translate(pr.x, pr.y);
+          ctx.rotate(pr.rotation || 0);
+
+          if (gImg && gImg.complete && gImg.naturalWidth > 0) {
+            // Renderizado físico preciso con la imagen/modelo de la granada equipada
+            ctx.drawImage(gImg, -10, -10, 20, 20);
+          } else {
+            ctx.fillStyle = pr.color;
+            ctx.beginPath();
+            ctx.arc(0, 0, 6, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = '#f8fafc';
+            ctx.lineWidth = 1.5;
+            ctx.strokeRect(-2, -8, 4, 3);
+          }
+          ctx.restore();
         } else {
+          ctx.fillStyle = pr.color;
           ctx.fillRect(pr.x - 3, pr.y - 1.5, 6, 3);
         }
+      }
+
+      // 11.5. NUBES DE HUMO TÁCTICO
+      for (const sc of s.smokeClouds) {
+        const lifeRatio = Math.min(1, sc.remainingTicks / 60);
+        ctx.save();
+        ctx.fillStyle = `rgba(148, 163, 184, ${0.5 * lifeRatio})`;
+        ctx.beginPath();
+        ctx.arc(sc.x, sc.y, sc.radius, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = `rgba(203, 213, 225, ${0.35 * lifeRatio})`;
+        ctx.beginPath();
+        ctx.arc(sc.x - sc.radius * 0.25, sc.y - sc.radius * 0.15, sc.radius * 0.65, 0, Math.PI * 2);
+        ctx.arc(sc.x + sc.radius * 0.28, sc.y + sc.radius * 0.1, sc.radius * 0.6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
       }
 
       // 12. PARTÍCULAS
@@ -3583,6 +4469,14 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         ctx.font = 'bold 12px monospace';
         ctx.textAlign = 'center';
         ctx.fillText(ft.text, ft.x, ft.y);
+      }
+
+      // 13.5. DESTELLO DE CEGADORA (FLASHBANG SCREEN FLASH OVERLAY)
+      if (s.flashbangFlash > 0.01) {
+        ctx.save();
+        ctx.fillStyle = `rgba(255, 255, 255, ${Math.min(0.92, s.flashbangFlash)})`;
+        ctx.fillRect(0, 0, ARENA_WIDTH, ARENA_HEIGHT);
+        ctx.restore();
       }
 
       // 14. ANUNCIO CENTRAL

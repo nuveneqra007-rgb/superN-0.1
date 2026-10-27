@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 50 30" width="50" height="30">
+  <!-- Canister Smoke Grenade (Pixel/Arcade style) -->
+  <defs>
+    <linearGradient id="smokeBody" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#94a3b8" />
+      <stop offset="50%" stop-color="#64748b" />
+      <stop offset="100%" stop-color="#475569" />
+    </linearGradient>
+  </defs>
+  <!-- Main cylinder body -->
+  <rect x="18" y="7" width="14" height="19" rx="3" fill="url(#smokeBody)" stroke="#1e293b" stroke-width="1.5" />
+  <!-- White/Grey tactical stripe -->
+  <rect x="18" y="14" width="14" height="4" fill="#cbd5e1" opacity="0.9" />
+  <!-- Top cap and fuse -->
+  <rect x="22" y="4" width="6" height="3" fill="#334155" stroke="#1e293b" stroke-width="1" />
+  <!-- Spoon / Lever -->
+  <path d="M22 5 L16 8 L16 19" fill="none" stroke="#64748b" stroke-width="1.8" stroke-linecap="round" />
+  <!-- Pull ring -->
+  <circle cx="28" cy="5" r="2.2" fill="none" stroke="#e2e8f0" stroke-width="1.2" />
+  <!-- Smoke vent ports -->
+  <circle cx="21" cy="10" r="0.9" fill="#0f172a" />
+  <circle cx="29" cy="10" r="0.9" fill="#0f172a" />
+  <circle cx="25" cy="22" r="0.9" fill="#0f172a" />
+</svg>

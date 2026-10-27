@@ -54,9 +54,43 @@ export const PlayerFSM = {
       return false;
     }
 
-    // LedgeClimb y GetUp bloquean input
-    if (current === PlayerFSMState.LedgeClimb && next !== PlayerFSMState.Dead) return false;
-    if (current === PlayerFSMState.GetUp && next !== PlayerFSMState.Dead) return false;
+    // LedgeClimb bloquea transiciones normales excepto muerte o Idle
+    if (current === PlayerFSMState.LedgeClimb && next !== PlayerFSMState.Dead && next !== PlayerFSMState.Idle) {
+      return false;
+    }
+
+    // GetUp: permite levantarse a Idle, o recuperarse con Roll, Jump, Walk, Run, Fall, Dead
+    if (current === PlayerFSMState.GetUp) {
+      if (
+        next === PlayerFSMState.Idle ||
+        next === PlayerFSMState.Roll ||
+        next === PlayerFSMState.Jump ||
+        next === PlayerFSMState.Walk ||
+        next === PlayerFSMState.Run ||
+        next === PlayerFSMState.Fall ||
+        next === PlayerFSMState.Dead ||
+        next === PlayerFSMState.Hitstun
+      ) {
+        return true;
+      }
+      return false;
+    }
+
+    // KnockedDown: permite levantarse (GetUp), rodar, saltar, idle directo, caer o morir
+    if (current === PlayerFSMState.KnockedDown) {
+      if (
+        next === PlayerFSMState.GetUp ||
+        next === PlayerFSMState.Idle ||
+        next === PlayerFSMState.Roll ||
+        next === PlayerFSMState.Jump ||
+        next === PlayerFSMState.Fall ||
+        next === PlayerFSMState.Dead ||
+        next === PlayerFSMState.Hitstun
+      ) {
+        return true;
+      }
+      return false;
+    }
 
     const currPrio = Priorities[current] || 1;
     const nextPrio = Priorities[next] || 1;
@@ -90,12 +124,12 @@ export const PlayerFSM = {
         break;
 
       case PlayerFSMState.GetUp:
-        p.getUpTicks = 20;
-        p.invulnerabilityTicks = GameConstants.GetUpInvulTicks;
+        p.getUpTicks = 16;
+        p.invulnerabilityTicks = 24;
         break;
 
       case PlayerFSMState.KnockedDown:
-        p.knockdownTicks = 48;
+        p.knockdownTicks = 36;
         break;
 
       case PlayerFSMState.Dead:

@@ -5,21 +5,24 @@
 
 import React, { useState } from 'react';
 import { BotFaction, BotArchetypeDatabase, getBotArchetype } from '../game/BotData';
-import { WeaponDatabase } from '../game/WeaponData';
+import { WeaponDatabase, WeaponType, getWeapon } from '../game/WeaponData';
 import { sounds } from '../game/SoundEffects';
-import { Play, Shield, Zap, Skull, Swords, Volume2, VolumeX, Info, User, CheckCircle2 } from 'lucide-react';
+import { Play, Shield, Zap, Skull, Swords, Volume2, VolumeX, User, CheckCircle2, Crosshair, Sparkles } from 'lucide-react';
 
 interface MainMenuProps {
   onStartGame: (playerFaction: BotFaction, botFaction: BotFaction, rounds: number) => void;
+  onOpenArsenal: () => void;
 }
 
-export const MainMenu: React.FC<MainMenuProps> = ({ onStartGame }) => {
+export const MainMenu: React.FC<MainMenuProps> = ({
+  onStartGame,
+  onOpenArsenal,
+}) => {
   const [selectedPlayerFaction, setSelectedPlayerFaction] = useState<BotFaction>(BotFaction.Assassin);
   const [selectedBotFaction, setSelectedBotFaction] = useState<BotFaction>(BotFaction.Thug);
   const [activeTab, setActiveTab] = useState<'player' | 'bot'>('player');
   const [rounds, setRounds] = useState<number>(5);
   const [muted, setMuted] = useState<boolean>(sounds.getMuted());
-  const [showWeaponInfo, setShowWeaponInfo] = useState<boolean>(false);
 
   const toggleSound = () => {
     const next = !muted;
@@ -59,13 +62,21 @@ export const MainMenu: React.FC<MainMenuProps> = ({ onStartGame }) => {
           <span>Basado en Superfighters Deluxe & superN</span>
         </div>
         <div className="flex items-center gap-3">
+          {/* New Dedicated Arsenal Button */}
           <button
-            onClick={() => setShowWeaponInfo(!showWeaponInfo)}
-            className="flex items-center gap-1.5 px-3 py-1 bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 rounded text-xs text-neutral-300 transition"
+            onClick={() => {
+              sounds.playPickup();
+              onOpenArsenal();
+            }}
+            className="flex items-center gap-2 px-3.5 py-1.5 bg-gradient-to-r from-sky-500/20 via-cyan-500/15 to-neutral-900 hover:from-sky-500/30 hover:to-cyan-500/30 border border-sky-500/50 hover:border-sky-400 rounded-lg text-xs font-bold text-sky-300 hover:text-white transition shadow-[0_0_15px_rgba(14,165,233,0.25)] group"
           >
-            <Info className="w-3.5 h-3.5 text-sky-400" />
-            <span>{showWeaponInfo ? 'Ocultar Arsenal' : 'Ver Arsenal de Armas'}</span>
+            <Swords className="w-4 h-4 text-sky-400 group-hover:rotate-12 transition-transform" />
+            <span>Ver Arsenal de Armas</span>
+            <span className="px-1.5 py-0.5 bg-sky-500/30 text-sky-200 border border-sky-400/30 rounded text-[10px] font-mono-code font-bold">
+              51 Armas
+            </span>
           </button>
+
           <button
             onClick={toggleSound}
             className="p-1.5 bg-neutral-900 hover:bg-neutral-800 border border-neutral-800 rounded text-neutral-300 transition"
@@ -87,63 +98,6 @@ export const MainMenu: React.FC<MainMenuProps> = ({ onStartGame }) => {
           2D Platform Tactical Fighter — Elige tu Protagonista y tu Oponente Rival
         </p>
       </div>
-
-      {showWeaponInfo ? (
-        /* Weapon Arsenal Grid with Photos */
-        <div className="w-full max-w-5xl bg-neutral-900/95 border border-neutral-800 rounded-xl p-4 mb-4 backdrop-blur shadow-2xl animate-fade-in max-h-[50vh] overflow-y-auto">
-          <div className="flex justify-between items-center mb-3 sticky top-0 bg-neutral-900/95 py-1 z-10 border-b border-neutral-800">
-            <h3 className="text-sm font-bold text-sky-400 flex items-center gap-2">
-              <Swords className="w-4 h-4" /> Arsenal y Armas Oficiales de BotExtended
-            </h3>
-            <button
-              onClick={() => setShowWeaponInfo(false)}
-              className="text-xs text-neutral-400 hover:text-white px-2 py-0.5 rounded bg-neutral-800"
-            >
-              Cerrar ×
-            </button>
-          </div>
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5 text-xs">
-            {Object.values(WeaponDatabase).map((w) => (
-              <div
-                key={w.type}
-                className="p-2.5 bg-neutral-950/90 rounded border border-neutral-800 flex flex-col justify-between hover:border-neutral-700 transition"
-              >
-                <div>
-                  <div className="flex items-center gap-2 mb-2 pb-1.5 border-b border-neutral-800/80">
-                    <div className="w-12 h-9 bg-neutral-900 border border-neutral-800 rounded flex items-center justify-center p-1 shrink-0 overflow-hidden shadow-inner">
-                      {w.iconUrl ? (
-                        <img
-                          src={w.iconUrl}
-                          alt={w.name}
-                          className="max-h-full max-w-full object-contain [image-rendering:pixelated]"
-                        />
-                      ) : (
-                        <div className="w-4 h-4 rounded-full" style={{ backgroundColor: w.color }} />
-                      )}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <span className="font-bold text-white block truncate text-xs">{w.name}</span>
-                      <span className="text-[9px] uppercase font-mono-code px-1.5 py-0.5 rounded bg-neutral-800 text-neutral-400">
-                        {w.category}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="text-neutral-400 text-[11px] space-y-0.5">
-                    <div>Daño: <strong className="text-yellow-400">{w.damage}</strong></div>
-                    <div>Munición: <strong className="text-neutral-200">{w.magSize === -1 ? 'Infinito' : w.magSize}</strong></div>
-                    {w.explosionRadius ? (
-                      <div className="text-orange-400">Explosión: {w.explosionRadius}px</div>
-                    ) : null}
-                    {w.onFireDuration ? (
-                      <div className="text-rose-400">¡Enciende en llamas!</div>
-                    ) : null}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      ) : null}
 
       {/* Versus Showcase Banner */}
       <div className="w-full max-w-5xl mb-3 bg-neutral-900/90 border border-neutral-800 rounded-xl p-3 grid grid-cols-1 md:grid-cols-11 gap-3 items-center backdrop-blur shadow-xl">
@@ -172,10 +126,12 @@ export const MainMenu: React.FC<MainMenuProps> = ({ onStartGame }) => {
                 <span>Jugador 1 (Protagonista)</span>
               </div>
               <h3 className="text-base font-extrabold text-white">{playerArchetype.name}</h3>
-              <div className="text-[11px] text-neutral-400 flex items-center gap-2">
+              <div className="text-[11px] text-neutral-400 flex flex-wrap items-center gap-2">
                 <span>HP: <strong className="text-emerald-400">{playerArchetype.maxHealth}</strong></span>
                 <span>•</span>
                 <span>Vel: <strong className="text-amber-400">×{playerArchetype.speedModifier.toFixed(2)}</strong></span>
+                <span>•</span>
+                <span className="text-cyan-300 font-semibold">Inicio: Desarmado (Puños)</span>
               </div>
             </div>
           </div>
@@ -431,6 +387,10 @@ export const MainMenu: React.FC<MainMenuProps> = ({ onStartGame }) => {
                 <span className="text-neutral-400">Oponente Rival:</span>
                 <span className="font-bold text-rose-400">{botArchetype.name}</span>
               </div>
+              <div className="flex justify-between items-center pb-1.5 border-b border-neutral-800">
+                <span className="text-neutral-400">Inicio de Ronda:</span>
+                <span className="font-bold text-neutral-200">Desarmados (Cuerpo a cuerpo)</span>
+              </div>
               <div className="flex justify-between items-center">
                 <span className="text-neutral-400">Objetivo:</span>
                 <span className="font-bold text-yellow-300">{Math.floor(rounds / 2) + 1} victorias</span>
@@ -457,9 +417,9 @@ export const MainMenu: React.FC<MainMenuProps> = ({ onStartGame }) => {
             </div>
 
             <div className="p-2.5 bg-neutral-950/70 border border-neutral-800/80 rounded-lg text-[11px] space-y-1.5 text-neutral-400">
-              <div>• Armas caen en plataformas cada 15s.</div>
+              <div>• <strong className="text-sky-300">Ambos luchadores inician sin armas</strong> (combate a puñetazos).</div>
+              <div>• <strong className="text-yellow-300">Recoge las armas</strong> que aparecen sobre las plataformas para usarlas.</div>
               <div>• Rodar con <strong className="text-sky-300">S / Abajo</strong> extingue llamas.</div>
-              <div>• Combos cuerpo a cuerpo con <strong className="text-sky-300">N / J</strong>.</div>
             </div>
           </div>
 

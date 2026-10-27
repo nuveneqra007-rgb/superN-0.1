@@ -176,6 +176,6 @@ export const GameConstants = {
   AI_GunPreferredRange: 300,
   AI_DodgeReactionTicks: 6,
   AI_FleeHPThreshold: 25,
-  AI_WpnSearchNearby: 20,
-  AI_WpnSearchInSight: 120,
+  AI_WpnSearchNearby: 35,
+  AI_WpnSearchInSight: 360,
 };

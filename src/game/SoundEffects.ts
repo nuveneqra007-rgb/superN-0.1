@@ -19,6 +19,10 @@ class SoundEngine {
     }
   }
 
+  public resumeAudio() {
+    this.initContext();
+  }
+
   public setMuted(muted: boolean) {
     this.isMuted = muted;
   }
@@ -245,6 +249,18 @@ class SoundEngine {
 
     osc.start(t);
     osc.stop(t + 0.65);
+  }
+
+  public playWeaponSound(soundType?: 'punch' | 'pistol' | 'shotgun' | 'magnum' | 'sniper' | 'explosion') {
+    if (this.isMuted) return;
+    this.initContext();
+    if (!soundType || soundType === 'punch') {
+      this.playPunch();
+    } else if (soundType === 'explosion') {
+      this.playExplosion();
+    } else {
+      this.playGunshot(soundType);
+    }
   }
 }
 

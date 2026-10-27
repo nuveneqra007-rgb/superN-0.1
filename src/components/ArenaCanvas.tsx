@@ -21,6 +21,8 @@ import {
   GrenadeConfig,
   GRENADE_DATABASE,
   GRENADE_MAX_CAPACITY,
+  GRENADE_INITIAL_COUNT,
+  ALL_GRENADE_TYPES,
   GrenadeInventory,
   createGrenadeInventory,
   getTotalGrenades,

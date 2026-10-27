@@ -133,7 +133,7 @@ export function getTotalGrenades(inv: GrenadeInventory): number {
 /**
  * Comprueba si el combatiente tiene espacio disponible para recoger más granadas.
  */
-export function canAddGrenade(inv: GrenadeInventory, _type: GrenadeType, amount: number = 1): boolean {
+export function canAddGrenade(inv: GrenadeInventory, _type?: GrenadeType, amount: number = 1): boolean {
   if (!inv) return false;
   return getTotalGrenades(inv) + amount <= inv.maxTotal;
 }
@@ -222,7 +222,8 @@ export function consumeGrenade(inv: GrenadeInventory): GrenadeType | null {
  */
 export interface GrenadePickupEntity {
   id: number;
-  grenadeType: GrenadeType;
+  type: GrenadeType;
+  grenadeType?: GrenadeType;
   amount: number;
   x: number;
   y: number;

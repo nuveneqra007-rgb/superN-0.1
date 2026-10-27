@@ -1,38 +1,38 @@
-# superN — 2D Platform Fighter
+# superN — 2D Platform Tactical Fighter
 
-Un clon de **Superfighters Deluxe** construido desde cero en **Godot 4 C#**.
+Un clon rápido y táctico de **Superfighters Deluxe** adaptado para la web con **React**, **TypeScript**, **HTML5 Canvas** y **Tailwind CSS**, corriendo con física determinista a 60 Hz.
 
-## 🎮 Fuentes de ingeniería inversa
+## 🎮 Características Portadas
 
-| Repo | Uso |
+- **Física canónica a 60 Hz**: Gravedad, fricción en suelo y aire, caída de plataformas unidireccionales (*one-way platforms*), saltos con coyote time.
+- **21 Estados de Luchador**: Idle, Carrera, Salto, Caída, Agacharse, Slide, Dodge Roll (esquiva que extingue fuego), Ataques Melee con combo de 3 golpes, Disparo, Lanzamiento de granadas, Hitstun, Knockdown, Levantamiento con invulnerabilidad y Muerte.
+- **Arsenal de 13 Armas**:
+  - *Melee*: Puños (combo 6/7/8 dmg), Machete, Hacha, Espada.
+  - *Armas de fuego*: Pistola 9mm, Magnum .44, Uzi, Rifle de asalto, Escopeta (4 perdigones por disparo), Francotirador con mira láser, Bazuca con daño radial y Lanzallamas.
+  - *Arrojadizas*: Granadas con temporizador y rebote, Cóctel Molotov con área incendiaria.
+- **Inteligencia Artificial de Bots**:
+  - Arquetipos fieles al ground truth de *BotExtended* (Matón, Punk, Motero, Gánster, Policía, MetroCop, Mutante, Zombi, Soldado, Agente, Asesino, Pistolero, Francotirador, Berserker, Tanque).
+  - Máquina de estados: *Chase*, *Strafe*, *Attack*, *Dodge* de proyectiles con roll/jump, *Flee* con poca salud, *Pickup* de armas del suelo y *Cover*.
+- **Bodega Industrial (Warehouse)**: Escenario 960x540 con plataformas elevadas, cajas, y reaparición periódica de armas cada 15 segundos.
+- **Efectos de Audio Procedimentales**: Síntesis de sonido con Web Audio API para puñetazos, detonaciones de armas de fuego, explosiones, saltos, rodadas y gongs de fin de ronda.
+
+## 🕹️ Controles
+
+| Tecla | Acción |
 |---|---|
-| [Odex64/SFR](https://github.com/Odex64/SFR) | Stats de armas, constantes de física |
-| [NearHuscarl/BotExtended](https://github.com/NearHuscarl/BotExtended) | Arquetipos de bots, facciones, modificadores |
-| `reference/as3/` (442 clases) | Ground truth del juego original Flash |
+| **A / D** ó **← / →** | Moverse / Correr |
+| **W** ó **↑** / **Espacio** | Saltar |
+| **S** ó **↓** | Agacharse / Dodge Roll (en carrera) |
+| **N** ó **J** | Ataque cuerpo a cuerpo (combo) |
+| **M** ó **K** | Disparar arma de fuego |
+| **G** | Lanzar granada / molotov |
+| **R** | Reiniciar ronda |
+| **ESC** | Volver al menú principal |
 
-## 📁 Estructura
+## 🚀 Ejecución en Desarrollo
 
+```bash
+npm install
+npm run dev
 ```
-superN-0.1/
-├── src/
-│   ├── Core/        # GameConstants.cs (toda la física y combate)
-│   ├── Player/      # PlayerState.cs, PlayerFSM.cs (21 estados)
-│   ├── Weapons/     # WeaponData.cs (13 armas canónicas)
-│   ├── Bots/        # BotData.cs, BotFSM.cs (8 estados IA)
-│   ├── World/       # Mapas, hazards, plataformas
-│   └── UI/          # HUD, menús
-├── scenes/          # Escenas Godot (.tscn)
-├── assets/          # Sprites, sonidos
-└── docs/            # Documentación
-```
-
-## 🔧 Requisitos
-
-- Godot 4.3+ con soporte C# (.NET 8)
-- .NET SDK 8.0
-
-## ▶️ Cómo abrir
-
-1. Instalar [Godot 4 .NET](https://godotengine.org/download/)
-2. Abrir Godot → Import → seleccionar `project.godot`
-3. `Build` → `F5` para ejecutar
+Dev server activo en `http://0.0.0.0:3000`.

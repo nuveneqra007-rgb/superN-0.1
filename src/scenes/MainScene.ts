@@ -28,6 +28,18 @@ export class MainScene extends Phaser.Scene {
       frameWidth: 170,
       frameHeight: 290,
     });
+    this.load.spritesheet('ninja_run', '/assets/sprites/player/ninja_run.png', {
+      frameWidth: 170,
+      frameHeight: 290,
+    });
+    this.load.spritesheet('ninja_roll', '/assets/sprites/player/ninja_roll.png', {
+      frameWidth: 200,
+      frameHeight: 290,
+    });
+    this.load.spritesheet('ninja_jump', '/assets/sprites/player/ninja_jump.png', {
+      frameWidth: 200,
+      frameHeight: 290,
+    });
     this.load.image('bot_sprite', '/assets/sprites/bot/thug.png');
     this.load.image('platform_block', '/assets/backgrounds/warehouse.jpg');
   }
@@ -52,6 +64,36 @@ export class MainScene extends Phaser.Scene {
         frames: this.anims.generateFrameNumbers('ninja_walk', { start: 0, end: 5 }),
         frameRate: 10,
         repeat: -1,
+      });
+    }
+
+    // Animación de carrera de 6 fotogramas para el Ninja
+    if (!this.anims.exists('ninja_run')) {
+      this.anims.create({
+        key: 'ninja_run',
+        frames: this.anims.generateFrameNumbers('ninja_run', { start: 0, end: 5 }),
+        frameRate: 14,
+        repeat: -1,
+      });
+    }
+
+    // Animación de rodada (roll) de 7 fotogramas para el Ninja (sin loop)
+    if (!this.anims.exists('ninja_roll')) {
+      this.anims.create({
+        key: 'ninja_roll',
+        frames: this.anims.generateFrameNumbers('ninja_roll', { start: 0, end: 6 }),
+        frameRate: 20,
+        repeat: 0,
+      });
+    }
+
+    // Animación de salto de 6 fotogramas en 2 filas x 3 columnas para el Ninja
+    if (!this.anims.exists('ninja_jump')) {
+      this.anims.create({
+        key: 'ninja_jump',
+        frames: this.anims.generateFrameNumbers('ninja_jump', { start: 0, end: 5 }),
+        frameRate: 10,
+        repeat: 0,
       });
     }
 

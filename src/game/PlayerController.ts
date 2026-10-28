@@ -8,9 +8,16 @@
  * Parámetros de configuración ajustables para calibrar el 'game feel'.
  */
 export const PLAYER_CONFIG = {
-  // Velocidades horizontales instantáneas (px/s)
-  WALK_SPEED: 180,
-  RUN_SPEED: 300,
+  // Velocidades horizontales con inercia progresiva estilo Superfighters (px/s)
+  INITIAL_WALK_SPEED: 125,     // Velocidad inicial al comenzar a caminar
+  WALK_SPEED: 160,             // Velocidad de caminata base
+  RUN_THRESHOLD: 200,          // Umbral de velocidad para cambio automático a animación Run
+  RUN_SPEED: 310,              // Velocidad máxima de carrera (Run)
+
+  // Inercia y aceleración progresiva (px/s²) estilo Superfighters
+  ACCELERATION: 420,           // Al mantener pulsada la dirección: gana velocidad progresivamente
+  DECELERATION: 460,           // Al soltar la tecla: frena gradualmente (inercia)
+  TURN_DECELERATION: 920,      // Frenado con derrape al invertir bruscamente la dirección
 
   // Salto y Gravedad asimétrica (caída más rápida que la subida)
   JUMP_FORCE: 560,             // Impulso vertical hacia arriba (vy = -JUMP_FORCE)
@@ -25,8 +32,8 @@ export const PLAYER_CONFIG = {
 
   // Rodar (Roll)
   ROLL_SPEED: 420,             // Impulso constante durante la rodada (px/s)
-  ROLL_DURATION: 0.38,         // Duración fija (~380 ms)
-  ROLL_COOLDOWN: 0.28,         // Cooldown posterior (~280 ms)
+  ROLL_DURATION: 0.35,         // Duración sincronizada de los 7 frames (~350 ms, 50ms por frame)
+  ROLL_COOLDOWN: 0.25,         // Cooldown posterior (~250 ms)
   ROLL_INVULNERABLE_DURATION: 0.24, // Ventana inicial de invulnerabilidad (~240 ms)
 
   // Dimensiones del collider (px)
@@ -163,8 +170,8 @@ export class PlayerController {
     const isRolling = this.handleRoll(clampedDt, input);
 
     if (!isRolling) {
-      // 3. Movimiento horizontal instantáneo (SIN inercia)
-      this.handleHorizontalMovement(input);
+      // 3. Movimiento horizontal progresivo con inercia estilo Superfighters
+      this.handleHorizontalMovement(input, clampedDt);
 
       // 4. Salto con Coyote time, Jump buffer y corte variable
       this.handleJump(input);
@@ -233,6 +240,19 @@ export class PlayerController {
         this.isInvulnerable = false;
         this.rollCooldownTimer = PLAYER_CONFIG.ROLL_COOLDOWN;
         this.setHitboxHeight(PLAYER_CONFIG.HITBOX_HEIGHT_STAND);
+
+        // Transición: si el jugador mantiene pulsada la dirección, continuar en carrera/caminata
+        if (input.moveDir !== 0) {
+          if (input.moveDir === this.rollDirection) {
+            this.vx = this.rollDirection * (PLAYER_CONFIG.RUN_THRESHOLD + 20);
+          } else {
+            this.vx = input.moveDir * PLAYER_CONFIG.INITIAL_WALK_SPEED;
+            this.facingRight = input.moveDir > 0;
+          }
+        } else {
+          // Si no presiona dirección, desacelerar gradualmente con inercia residual hacia idle
+          this.vx = this.rollDirection * (PLAYER_CONFIG.WALK_SPEED * 0.85);
+        }
       }
       return true;
     }
@@ -260,20 +280,51 @@ export class PlayerController {
   }
 
   /**
-   * Movimiento horizontal directo y seco (arcade, sin aceleración gradual).
+   * Movimiento horizontal con inercia progresiva estilo Superfighters (sin tecla extra).
+   * Al pulsar la dirección: arranca lento en Walk.
+   * Al mantenerla: acelera progresivamente hasta Run.
+   * Al soltar: frena gradualmente (inercia) de Run a Walk y a Idle.
    */
-  private handleHorizontalMovement(input: PlayerInput): void {
+  private handleHorizontalMovement(input: PlayerInput, dt: number): void {
     if (input.moveDir === 0) {
-      // Parada en seco inmediata: SIN inercia ni deslizamiento
-      this.vx = 0;
+      // Al soltar la tecla: frena gradualmente (inercia)
+      if (Math.abs(this.vx) > 0) {
+        const sign = Math.sign(this.vx);
+        const nextSpeed = Math.abs(this.vx) - PLAYER_CONFIG.DECELERATION * dt;
+        if (nextSpeed <= 10) {
+          this.vx = 0;
+        } else {
+          this.vx = sign * nextSpeed;
+        }
+      }
     } else {
-      // Caminar por defecto; correr solo si se mantiene 'run' Y hay dirección
-      const targetSpeed = input.run ? PLAYER_CONFIG.RUN_SPEED : PLAYER_CONFIG.WALK_SPEED;
-      this.vx = input.moveDir * targetSpeed;
+      // Tecla de dirección pulsada: orientar personaje (flip_h)
+      const targetDir = input.moveDir;
+      this.facingRight = targetDir > 0;
+      this.rollDirection = targetDir;
 
-      // Voltear el sprite según la última dirección (sin voltear si dir == 0)
-      this.facingRight = input.moveDir > 0;
-      this.rollDirection = input.moveDir;
+      // Si se mueve en sentido contrario al actual, derrape/frenado antes de acelerar
+      if (this.vx !== 0 && Math.sign(this.vx) !== targetDir) {
+        const speed = Math.abs(this.vx) - PLAYER_CONFIG.TURN_DECELERATION * dt;
+        if (speed <= 0) {
+          this.vx = targetDir * PLAYER_CONFIG.INITIAL_WALK_SPEED;
+        } else {
+          this.vx = Math.sign(this.vx) * speed;
+        }
+      } else {
+        // Mismo sentido o arranque desde parado:
+        // Si estaba detenido o a velocidad muy baja, arrancar a paso lento inicial (Walk)
+        if (Math.abs(this.vx) < PLAYER_CONFIG.INITIAL_WALK_SPEED) {
+          this.vx = targetDir * PLAYER_CONFIG.INITIAL_WALK_SPEED;
+        }
+        // Al mantener presionada la tecla: gana velocidad progresivamente hacia RUN_SPEED
+        const currentSpeed = Math.abs(this.vx);
+        const acceleratedSpeed = Math.min(
+          PLAYER_CONFIG.RUN_SPEED,
+          currentSpeed + PLAYER_CONFIG.ACCELERATION * dt
+        );
+        this.vx = targetDir * acceleratedSpeed;
+      }
     }
   }
 
@@ -443,6 +494,7 @@ export class PlayerController {
 
   /**
    * Actualiza el estado de la máquina de estados FSM según la física actual.
+   * Transición automática fluida entre Idle, Walk y Run basada en velocidad e inercia.
    */
   private updateState(input: PlayerInput): void {
     // Si está rodando, mantener estado Roll
@@ -457,10 +509,11 @@ export class PlayerController {
       return;
     }
 
-    // En el suelo
-    if (input.moveDir === 0 || this.vx === 0) {
+    // En el suelo: transición fluida entre Idle, Walk y Run con inercia
+    const currentSpeed = Math.abs(this.vx);
+    if (currentSpeed <= 10) {
       this.state = PlayerState.Idle;
-    } else if (input.run) {
+    } else if (currentSpeed >= PLAYER_CONFIG.RUN_THRESHOLD) {
       this.state = PlayerState.Run;
     } else {
       this.state = PlayerState.Walk;

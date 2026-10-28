@@ -11,9 +11,16 @@ import { PlatformCollider } from './PlayerController';
  * Calibrados para una respuesta ágil, precisa y táctica.
  */
 export const NINJA_CONFIG = {
-  // Velocidades en el suelo (px/s)
-  WALK_SPEED: 190,
-  RUN_SPEED: 320,
+  // Velocidades en el suelo con inercia progresiva (px/s)
+  INITIAL_WALK_SPEED: 130,     // Velocidad inicial al comenzar a caminar
+  WALK_SPEED: 170,             // Velocidad de caminata base
+  RUN_THRESHOLD: 200,          // Umbral de velocidad para cambio automático a Run
+  RUN_SPEED: 320,              // Velocidad máxima de carrera (Run)
+
+  // Inercia y aceleración progresiva (px/s²) estilo Superfighters
+  ACCELERATION: 420,           // Al mantener pulsada la dirección: gana velocidad progresivamente
+  DECELERATION: 480,           // Al soltar la tecla: frena gradualmente (inercia)
+  TURN_DECELERATION: 920,      // Frenado con derrape al invertir dirección
 
   // Salto Ninja y Gravedad reactiva (subida controlada, caída rápida)
   JUMP_FORCE: 580,             // Impulso vertical hacia arriba

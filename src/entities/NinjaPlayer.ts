@@ -98,11 +98,16 @@ export class NinjaPlayer extends Phaser.Physics.Arcade.Sprite {
       this.jumpBufferTimer = 100; // ms
     }
 
-    // Lógica exclusiva de Rodada / Evasión Ninja
+    // Lógica exclusiva de Rodada / Evasión Ninja (7 frames sin loop)
     if (this.state === NinjaState.Roll) {
       this.rollTimer -= delta;
       this.isInvulnerable = (NINJA_CONFIG.ROLL_DURATION * 1000 - this.rollTimer) <= (NINJA_CONFIG.ROLL_INVULNERABLE_DURATION * 1000);
       this.setVelocityX(this.rollDirection * NINJA_CONFIG.ROLL_SPEED * this.speedMultiplier);
+
+      // Reproducir animación 'ninja_roll' de 7 fotogramas una sola vez
+      if (this.anims?.animationManager?.exists('ninja_roll') && this.anims.currentAnim?.key !== 'ninja_roll') {
+        this.anims.play('ninja_roll', true);
+      }
 
       if (this.rollTimer <= 0) {
         this.rollTimer = 0;
@@ -111,7 +116,28 @@ export class NinjaPlayer extends Phaser.Physics.Arcade.Sprite {
           this.body.setSize(NINJA_CONFIG.HITBOX_WIDTH, NINJA_CONFIG.HITBOX_HEIGHT_STAND);
         }
         this.rollCooldownTimer = NINJA_CONFIG.ROLL_COOLDOWN * 1000;
-        this.state = onFloor ? NinjaState.Idle : NinjaState.Fall;
+
+        // Transición: al terminar la rodada, vuelve a idle o walk/run según las teclas que mantenga
+        const moveDir = input.left && !input.right ? -1 : input.right && !input.left ? 1 : 0;
+        if (moveDir !== 0 && onFloor) {
+          if (moveDir === this.rollDirection) {
+            this.setVelocityX(this.rollDirection * (NINJA_CONFIG.RUN_THRESHOLD + 20) * this.speedMultiplier);
+            this.state = NinjaState.Run;
+            if (this.anims?.animationManager?.exists('ninja_run')) {
+              this.anims.play('ninja_run', true);
+            }
+          } else {
+            this.setVelocityX(moveDir * NINJA_CONFIG.INITIAL_WALK_SPEED * this.speedMultiplier);
+            this.state = NinjaState.Walk;
+            if (this.anims?.animationManager?.exists('ninja_walk')) {
+              this.anims.play('ninja_walk', true);
+            }
+          }
+        } else {
+          this.state = onFloor ? NinjaState.Idle : NinjaState.Fall;
+          this.anims?.stop();
+          this.setTexture('ninja_sprite');
+        }
       }
     } else {
       // Iniciar rodada
@@ -127,20 +153,48 @@ export class NinjaPlayer extends Phaser.Physics.Arcade.Sprite {
           this.body.setSize(NINJA_CONFIG.HITBOX_WIDTH, NINJA_CONFIG.HITBOX_HEIGHT_ROLL);
         }
         this.setVelocityX(this.rollDirection * NINJA_CONFIG.ROLL_SPEED * this.speedMultiplier);
+        if (this.anims?.animationManager?.exists('ninja_roll')) {
+          this.anims.play('ninja_roll', true);
+        }
       } else {
-        // Movimiento horizontal autónomo del Ninja
-        if (input.left && !input.right) {
-          const speed = (input.run ? NINJA_CONFIG.RUN_SPEED : NINJA_CONFIG.WALK_SPEED) * this.speedMultiplier;
-          this.setVelocityX(-speed);
-          this.facing = 'left';
-          this.setFlipX(true);
-        } else if (input.right && !input.left) {
-          const speed = (input.run ? NINJA_CONFIG.RUN_SPEED : NINJA_CONFIG.WALK_SPEED) * this.speedMultiplier;
-          this.setVelocityX(speed);
-          this.facing = 'right';
-          this.setFlipX(false);
+        // Movimiento horizontal autónomo del Ninja con inercia progresiva estilo Superfighters
+        const dt = delta / 1000;
+        const currentVx = this.body?.velocity.x ?? 0;
+        const moveDir = input.left && !input.right ? -1 : input.right && !input.left ? 1 : 0;
+
+        if (moveDir === 0) {
+          // Al soltar las teclas: frena gradualmente con inercia
+          if (Math.abs(currentVx) > 0) {
+            const sign = Math.sign(currentVx);
+            const nextSpeed = Math.abs(currentVx) - NINJA_CONFIG.DECELERATION * dt;
+            if (nextSpeed <= 10) {
+              this.setVelocityX(0);
+            } else {
+              this.setVelocityX(sign * nextSpeed);
+            }
+          }
         } else {
-          this.setVelocityX(0);
+          // Tecla de dirección pulsada: orientar personaje (flip_h)
+          this.facing = moveDir > 0 ? 'right' : 'left';
+
+          if (currentVx !== 0 && Math.sign(currentVx) !== moveDir) {
+            // Derrape al invertir bruscamente de sentido
+            const speed = Math.abs(currentVx) - NINJA_CONFIG.TURN_DECELERATION * dt;
+            if (speed <= 0) {
+              this.setVelocityX(moveDir * NINJA_CONFIG.INITIAL_WALK_SPEED * this.speedMultiplier);
+            } else {
+              this.setVelocityX(Math.sign(currentVx) * speed);
+            }
+          } else {
+            // Arrancar a paso lento inicial y acelerar progresivamente
+            if (Math.abs(currentVx) < NINJA_CONFIG.INITIAL_WALK_SPEED * this.speedMultiplier) {
+              this.setVelocityX(moveDir * NINJA_CONFIG.INITIAL_WALK_SPEED * this.speedMultiplier);
+            }
+            const currentSpeed = Math.abs(this.body?.velocity.x ?? 0);
+            const targetSpeed = NINJA_CONFIG.RUN_SPEED * this.speedMultiplier;
+            const nextSpeed = Math.min(targetSpeed, currentSpeed + NINJA_CONFIG.ACCELERATION * dt);
+            this.setVelocityX(moveDir * nextSpeed);
+          }
         }
       }
     }
@@ -156,20 +210,47 @@ export class NinjaPlayer extends Phaser.Physics.Arcade.Sprite {
       }
     }
 
-    // Estado visual, animación de caminar de 6 frames y caída
+    // Estado visual, animaciones sincronizadas de caminar y correr (6 frames) y caída
     if (this.state !== NinjaState.Roll) {
+      const currentSpeed = Math.abs(this.body?.velocity.x ?? 0);
+      const runThreshold = NINJA_CONFIG.RUN_THRESHOLD * this.speedMultiplier;
+
       if (!onFloor) {
-        this.state = (this.body?.velocity.y ?? 0) < 0 ? NinjaState.Jump : NinjaState.Fall;
-        this.anims?.stop();
-        this.setTexture('ninja_sprite');
-      } else if (Math.abs(this.body?.velocity.x ?? 0) > 10) {
-        this.state = input.run ? NinjaState.Run : NinjaState.Walk;
-        // Reproducir animación 'ninja_walk' cortando los 6 frames en horizontal
-        if (this.anims?.animationManager?.exists('ninja_walk')) {
-          this.anims.play('ninja_walk', true);
+        const vy = this.body?.velocity.y ?? 0;
+        this.state = vy < 0 ? NinjaState.Jump : NinjaState.Fall;
+
+        // Reproducir animación 'ninja_jump' de 6 fotogramas (pausando en el frame de caída si sigue en el aire)
+        if (this.anims?.animationManager?.exists('ninja_jump')) {
+          if (vy < 320) {
+            if (this.anims.currentAnim?.key !== 'ninja_jump' || !this.anims.isPlaying) {
+              this.anims.play('ninja_jump', true);
+            }
+          } else {
+            // Mantener el frame 4 (caída libre) mientras continúe en el aire
+            if (this.anims.currentAnim?.key === 'ninja_jump') {
+              this.anims.pause();
+              this.setFrame(4);
+            }
+          }
+        }
+      } else if (currentSpeed > 10) {
+        if (currentSpeed >= runThreshold) {
+          this.state = NinjaState.Run;
+          // Reproducir animación 'ninja_run' de 6 fotogramas
+          if (this.anims?.animationManager?.exists('ninja_run')) {
+            this.anims.play('ninja_run', true);
+          } else if (this.anims?.animationManager?.exists('ninja_walk')) {
+            this.anims.play('ninja_walk', true);
+          }
+        } else {
+          this.state = NinjaState.Walk;
+          // Reproducir animación 'ninja_walk' de 6 fotogramas
+          if (this.anims?.animationManager?.exists('ninja_walk')) {
+            this.anims.play('ninja_walk', true);
+          }
         }
       } else {
-        // Al soltar el teclado o detenerse, detener animación y volver a idle
+        // Al soltar el teclado o frenar por completo, detener animación y volver a idle
         this.state = NinjaState.Idle;
         this.anims?.stop();
         this.setTexture('ninja_sprite');

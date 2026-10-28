@@ -52,24 +52,57 @@ interface ArenaCanvasProps {
  */
 export interface SpritesheetDef {
   walkSheetUrl?: string;
+  runSheetUrl?: string;
+  rollSheetUrl?: string;
+  jumpSheetUrl?: string;
   idleUrl: string;
   cols?: number;
   rows?: number;
   totalFrames?: number;
   hasWalkSheet: boolean;
+  hasRunSheet?: boolean;
+  hasRollSheet?: boolean;
+  hasJumpSheet?: boolean;
+  runCols?: number;
+  runRows?: number;
+  runTotalFrames?: number;
+  rollCols?: number;
+  rollRows?: number;
+  rollTotalFrames?: number;
+  jumpCols?: number;
+  jumpRows?: number;
+  jumpTotalFrames?: number;
 }
 
 export const CHARACTER_SPRITESHEETS: Record<string, SpritesheetDef> = {
   // ── 0. NINJA (PROTAGONISTA ÚNICO) ──
   // Pixel art de cuerpo negro con detalles naranja.
   // Animación de caminata horizontal de 6 frames (/assets/sprites/player/ninja_walk.png).
+  // Animación de carrera horizontal de 6 frames con inercia (/assets/sprites/player/ninja_run.png).
+  // Animación de rodar (roll) de 7 frames sin loop (/assets/sprites/player/ninja_roll.png).
+  // Animación de salto (jump) de 6 frames en 2 filas x 3 columnas (/assets/sprites/player/ninja_jump.png).
   [BotFaction.Ninja]: {
     idleUrl: '/assets/sprites/player/ninja.png',
     walkSheetUrl: '/assets/sprites/player/ninja_walk.png',
+    runSheetUrl: '/assets/sprites/player/ninja_run.png',
+    rollSheetUrl: '/assets/sprites/player/ninja_roll.png',
+    jumpSheetUrl: '/assets/sprites/player/ninja_jump.png',
     cols: 6,
     rows: 1,
     totalFrames: 6,
     hasWalkSheet: true,
+    hasRunSheet: true,
+    hasRollSheet: true,
+    hasJumpSheet: true,
+    runCols: 6,
+    runRows: 1,
+    runTotalFrames: 6,
+    rollCols: 7,
+    rollRows: 1,
+    rollTotalFrames: 7,
+    jumpCols: 3,
+    jumpRows: 2,
+    jumpTotalFrames: 6,
   },
   // ── 1. ASESINO (ASSASSIN) ──
   // Utiliza la imagen oficial prevista (/assets/sprites/player/Assassin_2.png)
@@ -380,9 +413,15 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     p1Sprite: HTMLImageElement | null;
     botSprite: HTMLImageElement | null;
     p1WalkSheet: HTMLImageElement | null;
+    p1RunSheet: HTMLImageElement | null;
+    p1RollSheet: HTMLImageElement | null;
+    p1JumpSheet: HTMLImageElement | null;
     p1IdleSprite: HTMLImageElement | null;
     p1SheetConfig: SpritesheetDef;
     botWalkSheet: HTMLImageElement | null;
+    botRunSheet: HTMLImageElement | null;
+    botRollSheet: HTMLImageElement | null;
+    botJumpSheet: HTMLImageElement | null;
     botIdleSprite: HTMLImageElement | null;
     botSheetConfig: SpritesheetDef;
     weaponImages: Record<string, HTMLImageElement>;
@@ -680,6 +719,24 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       p1WalkSheet.src = p1Cfg.walkSheetUrl;
     }
 
+    let p1RunSheet: HTMLImageElement | null = null;
+    if (p1Cfg.hasRunSheet && p1Cfg.runSheetUrl) {
+      p1RunSheet = new Image();
+      p1RunSheet.src = p1Cfg.runSheetUrl;
+    }
+
+    let p1RollSheet: HTMLImageElement | null = null;
+    if (p1Cfg.hasRollSheet && p1Cfg.rollSheetUrl) {
+      p1RollSheet = new Image();
+      p1RollSheet.src = p1Cfg.rollSheetUrl;
+    }
+
+    let p1JumpSheet: HTMLImageElement | null = null;
+    if (p1Cfg.hasJumpSheet && p1Cfg.jumpSheetUrl) {
+      p1JumpSheet = new Image();
+      p1JumpSheet.src = p1Cfg.jumpSheetUrl;
+    }
+
     const p1IdleSprite = new Image();
     p1IdleSprite.src = p1Cfg.idleUrl || pArch.spriteUrl || '/assets/sprites/player/Assassin_2.png';
 
@@ -687,6 +744,24 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     if (botCfg.hasWalkSheet && botCfg.walkSheetUrl) {
       botWalkSheet = new Image();
       botWalkSheet.src = botCfg.walkSheetUrl;
+    }
+
+    let botRunSheet: HTMLImageElement | null = null;
+    if (botCfg.hasRunSheet && botCfg.runSheetUrl) {
+      botRunSheet = new Image();
+      botRunSheet.src = botCfg.runSheetUrl;
+    }
+
+    let botRollSheet: HTMLImageElement | null = null;
+    if (botCfg.hasRollSheet && botCfg.rollSheetUrl) {
+      botRollSheet = new Image();
+      botRollSheet.src = botCfg.rollSheetUrl;
+    }
+
+    let botJumpSheet: HTMLImageElement | null = null;
+    if (botCfg.hasJumpSheet && botCfg.jumpSheetUrl) {
+      botJumpSheet = new Image();
+      botJumpSheet.src = botCfg.jumpSheetUrl;
     }
 
     const botIdleSprite = new Image();
@@ -776,9 +851,15 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       p1Sprite: p1IdleSprite,
       botSprite: botIdleSprite,
       p1WalkSheet,
+      p1RunSheet,
+      p1RollSheet,
+      p1JumpSheet,
       p1IdleSprite,
       p1SheetConfig: p1Cfg,
       botWalkSheet,
+      botRunSheet,
+      botRollSheet,
+      botJumpSheet,
       botIdleSprite,
       botSheetConfig: botCfg,
       weaponImages,
@@ -1236,8 +1317,8 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           ? !!keys['arrowup']
           : !!(keys['w'] || keys['arrowup'] || keys[' ']);
         const rollPressed = is1v1
-          ? !!s.keysJustPressed['arrowdown']
-          : !!(s.keysJustPressed['s'] || s.keysJustPressed['arrowdown'] || s.keysJustPressed['c']);
+          ? !!(s.keysJustPressed['arrowdown'] || s.keysJustPressed['c'] || s.keysJustPressed['shift'])
+          : !!(s.keysJustPressed['s'] || s.keysJustPressed['arrowdown'] || s.keysJustPressed['c'] || s.keysJustPressed['shift']);
         const crouchHeld = is1v1 ? !!keys['arrowdown'] : !!(keys['s'] || keys['arrowdown']);
         const dropThrough = crouchHeld && jumpJustPressed;
 
@@ -1798,7 +1879,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           const runHeld = !!keys['q'];
           const jumpJustPressed = !!s.keysJustPressed['w'];
           const jumpHeld = !!keys['w'];
-          const rollPressed = !!s.keysJustPressed['s'];
+          const rollPressed = !!(s.keysJustPressed['s'] || s.keysJustPressed['c'] || s.keysJustPressed['shift']);
           const crouchHeld = !!keys['s'];
           const dropThrough = crouchHeld && jumpJustPressed;
 
@@ -2869,17 +2950,12 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       // ─────────────────────────────────────────────────────────
       // GESTIÓN DE ESTADOS Y ANIMACIÓN SINCRONIZADA CON SPRITESHEET
       // ─────────────────────────────────────────────────────────
-      // 1. P1: Detección de teclas de movimiento horizontal (Flechas o A/D según modo)
+      // 1. P1: Animación fluida de movimiento con inercia (Walk / Run)
       const is1v1Mode = gameMode === 'local1v1';
-      const p1LeftPressed = is1v1Mode ? !!keys['arrowleft'] : !!(keys['a'] || keys['arrowleft']);
-      const p1RightPressed = is1v1Mode ? !!keys['arrowright'] : !!(keys['d'] || keys['arrowright']);
-      const p1HorizontalKeyPressed = (p1LeftPressed || p1RightPressed) && !(p1LeftPressed && p1RightPressed);
-
       const p1Speed = Math.abs(p1.velocityX);
-      const p1IsWalkingState =
+      const p1IsMovingState =
         p1.isAlive &&
         p1.onGround &&
-        p1HorizontalKeyPressed &&
         p1Speed > 8 &&
         p1.fsm !== PlayerFSMState.Roll &&
         p1.fsm !== PlayerFSMState.KnockedDown &&
@@ -2887,45 +2963,43 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         p1.fsm !== PlayerFSMState.Hitstun &&
         p1.fsm !== PlayerFSMState.Dead;
 
-      p1.isMovingHorizontally = p1IsWalkingState;
+      p1.isMovingHorizontally = p1IsMovingState;
 
-      if (p1IsWalkingState) {
-        // Sincronización exacta de velocidad y fotogramas (elimina deslizamiento y flotación):
-        // animationSpeed escala directamente con la velocidad actual respecto a la velocidad base (160 px/s)
-        const baseSpeed = 160;
-        p1.animSpeed = Math.max(0.4, p1Speed / baseSpeed);
+      if (p1IsMovingState) {
+        // Al sobrepasar el umbral de velocidad (200 px/s), activar carrera
+        const isRunning = p1Speed >= PLAYER_CONFIG.RUN_THRESHOLD;
+        const totalFrames = isRunning
+          ? (s.p1SheetConfig?.runTotalFrames || 6)
+          : (s.p1SheetConfig?.totalFrames || 6);
 
-        // Distancia en píxeles que recorre el personaje durante 1 ciclo completo de 14 frames (54 px)
-        const strideDistancePx = 54;
-        const totalWalkFrames = s.p1SheetConfig?.totalFrames || 14;
+        // Distancia de zancada adaptada (más amplia en carrera rápida)
+        const strideDistancePx = isRunning ? 64 : 46;
         const distanceThisFrame = p1Speed * (1 / 60);
-        const framesToAdvance = (distanceThisFrame / strideDistancePx) * totalWalkFrames;
+        const framesToAdvance = (distanceThisFrame / strideDistancePx) * totalFrames;
 
         p1.animFrameTimer += framesToAdvance;
         if (p1.animFrameTimer >= 1) {
           const step = Math.floor(p1.animFrameTimer);
-          p1.animFrame = (p1.animFrame + step) % totalWalkFrames;
+          p1.animFrame = (p1.animFrame + step) % totalFrames;
           p1.animFrameTimer -= step;
         }
+
+        // Mantener orientación según el vector de movimiento (inercia)
+        if (Math.abs(p1.velocityX) > 2) {
+          p1.facingRight = p1.velocityX > 0;
+        }
       } else {
-        // Al soltar las teclas o detenerse, volver inmediatamente al fotograma estático (idle / frame 0)
+        // Al frenar por completo, volver a frame 0 (idle)
         p1.animFrame = 0;
         p1.animFrameTimer = 0;
         p1.animSpeed = 1.0;
       }
 
       // 2. BOT / J2: Detección de movimiento horizontal y animación sincronizada
-      const botLeftPressed = is1v1Mode ? !!keys['a'] : false;
-      const botRightPressed = is1v1Mode ? !!keys['d'] : false;
-      const botHorizontalKeyPressed = is1v1Mode
-        ? ((botLeftPressed || botRightPressed) && !(botLeftPressed && botRightPressed))
-        : (Math.abs(bot.velocityX) > 12);
-
       const botSpeed = Math.abs(bot.velocityX);
-      const botIsWalkingState =
+      const botIsMovingState =
         bot.isAlive &&
         bot.onGround &&
-        botHorizontalKeyPressed &&
         botSpeed > 8 &&
         bot.fsm !== PlayerFSMState.Roll &&
         bot.fsm !== PlayerFSMState.KnockedDown &&
@@ -2933,21 +3007,27 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         bot.fsm !== PlayerFSMState.Hitstun &&
         bot.fsm !== PlayerFSMState.Dead;
 
-      bot.isMovingHorizontally = botIsWalkingState;
+      bot.isMovingHorizontally = botIsMovingState;
 
-      if (botIsWalkingState) {
-        const baseSpeed = 160;
-        bot.animSpeed = Math.max(0.4, botSpeed / baseSpeed);
-        const strideDistancePx = 54;
-        const totalWalkFrames = s.botSheetConfig?.totalFrames || 14;
+      if (botIsMovingState) {
+        const isRunning = botSpeed >= PLAYER_CONFIG.RUN_THRESHOLD && !!s.botSheetConfig?.hasRunSheet;
+        const totalFrames = isRunning
+          ? (s.botSheetConfig?.runTotalFrames || 6)
+          : (s.botSheetConfig?.totalFrames || 14);
+
+        const strideDistancePx = isRunning ? 64 : 54;
         const distanceThisFrame = botSpeed * (1 / 60);
-        const framesToAdvance = (distanceThisFrame / strideDistancePx) * totalWalkFrames;
+        const framesToAdvance = (distanceThisFrame / strideDistancePx) * totalFrames;
 
         bot.animFrameTimer += framesToAdvance;
         if (bot.animFrameTimer >= 1) {
           const step = Math.floor(bot.animFrameTimer);
-          bot.animFrame = (bot.animFrame + step) % totalWalkFrames;
+          bot.animFrame = (bot.animFrame + step) % totalFrames;
           bot.animFrameTimer -= step;
+        }
+
+        if (is1v1Mode && Math.abs(bot.velocityX) > 2) {
+          bot.facingRight = bot.velocityX > 0;
         }
       } else {
         bot.animFrame = 0;
@@ -4173,8 +4253,12 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         const drawX = -charW / 2;
         const drawY = -charH / 2;
         const sheet = isHuman ? s.p1WalkSheet : s.botWalkSheet;
+        const runSheet = isHuman ? s.p1RunSheet : s.botRunSheet;
+        const rollSheet = isHuman ? s.p1RollSheet : s.botRollSheet;
+        const jumpSheet = isHuman ? s.p1JumpSheet : s.botJumpSheet;
         const idleImg = isHuman ? s.p1IdleSprite : s.botIdleSprite;
         const cfg = isHuman ? s.p1SheetConfig : s.botSheetConfig;
+        const is1v1 = gameMode === 'local1v1';
 
         if (!p.isAlive) {
           ctx.save();
@@ -4197,7 +4281,8 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
         const isRolling =
           p.fsm === PlayerFSMState.Roll ||
-          (isHuman && s.p1Controller.state === ControllerState.Roll);
+          (isHuman && s.p1Controller.state === ControllerState.Roll) ||
+          (!isHuman && is1v1 && s.p2Controller.state === ControllerState.Roll);
 
         if (p.invulnerabilityTicks > 0 && Math.floor(p.invulnerabilityTicks / 4) % 2 === 0) {
           ctx.globalAlpha = 0.5;
@@ -4250,9 +4335,78 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           isBlade &&
           (p.fsm === PlayerFSMState.MeleeAttack || p.isSliding || p.isChargingHeavy);
 
-        // Si el personaje está blandiendo un arma de filo (cuchillos, katanas, machetes, espadas, hachas):
-        // Se ejecuta la coreografía marcial de la hoja del spritesheet de 16 fotogramas con arcos de corte y estelas.
+        // 1. Animación exclusiva de Salto (Jump de 6 frames en 2 filas x 3 columnas)
         if (
+          !p.onGround &&
+          !isRolling &&
+          cfg?.hasJumpSheet &&
+          jumpSheet &&
+          jumpSheet.complete &&
+          jumpSheet.naturalWidth > 0
+        ) {
+          const jumpCols = cfg.jumpCols || 3;
+          const jumpRows = cfg.jumpRows || 2;
+          const totalJumpFrames = cfg.jumpTotalFrames || 6;
+
+          const jumpFrameW = jumpSheet.naturalWidth / jumpCols;
+          const jumpFrameH = jumpSheet.naturalHeight / jumpRows;
+
+          // Sincronización precisa con el arco de física vertical:
+          // Frame 0: Impulso inicial / despegue (vy < -350)
+          // Frame 1: Ascenso veloz (vy entre -350 y -100)
+          // Frame 2: Ápice / cúspide del salto (vy entre -100 y +120)
+          // Frame 3: Comienzo del descenso (vy entre +120 y +320)
+          // Frame 4: Caída libre en el aire (se mantiene aquí mientras siga cayendo en el aire)
+          let jumpFrame = 0;
+          if (p.velocityY < -350) {
+            jumpFrame = 0;
+          } else if (p.velocityY < -100) {
+            jumpFrame = 1;
+          } else if (p.velocityY < 120) {
+            jumpFrame = 2;
+          } else if (p.velocityY < 320) {
+            jumpFrame = 3;
+          } else {
+            jumpFrame = 4; // Pausa y se mantiene en el frame de caída si sigue en el aire
+          }
+
+          const safeFrame = Math.min(totalJumpFrames - 1, Math.max(0, jumpFrame));
+          const col = safeFrame % jumpCols;
+          const row = Math.floor(safeFrame / jumpCols);
+          const sx = col * jumpFrameW;
+          const sy = row * jumpFrameH;
+
+          ctx.drawImage(jumpSheet, sx, sy, jumpFrameW, jumpFrameH, drawX, drawY, charW, charH);
+        } else if (
+          isRolling &&
+          cfg?.hasRollSheet &&
+          rollSheet &&
+          rollSheet.complete &&
+          rollSheet.naturalWidth > 0
+        ) {
+          const rollCols = cfg.rollCols || 7;
+          const rollRows = cfg.rollRows || 1;
+          const totalRollFrames = cfg.rollTotalFrames || 7;
+
+          const rollFrameW = rollSheet.naturalWidth / rollCols;
+          const rollFrameH = rollSheet.naturalHeight / rollRows;
+
+          // Progreso continuo de 0 a 1 durante la rodada (ejecuta los 7 frames una sola vez sin loop)
+          const rollProgress = isHuman
+            ? s.p1Controller.rollProgress
+            : is1v1
+            ? s.p2Controller.rollProgress
+            : Math.min(1, Math.max(0, 1 - (p.rollTicks / (GameConstants.RollDurationTicks || 21))));
+
+          const safeFrame = Math.min(totalRollFrames - 1, Math.max(0, Math.floor(rollProgress * totalRollFrames)));
+          const col = safeFrame % rollCols;
+          const row = Math.floor(safeFrame / rollCols);
+          const sx = col * rollFrameW;
+          const sy = row * rollFrameH;
+
+          // Dibujar el fotograma correspondiente de la animación de 7 cuadros
+          ctx.drawImage(rollSheet, sx, sy, rollFrameW, rollFrameH, drawX, drawY, charW, charH);
+        } else if (
           isBladeAttacking &&
           s.swordComboSheet &&
           s.swordComboSheet.complete &&
@@ -4303,13 +4457,19 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           }
           ctx.stroke();
           ctx.restore();
-        } else if (isWalking && cfg?.hasWalkSheet && sheet && sheet.complete && sheet.naturalWidth > 0 && sheet.naturalHeight > 0) {
-          const cols = cfg.cols || 4;
-          const rows = cfg.rows || 4;
-          const totalFrames = cfg.totalFrames || 14;
+        } else if (
+          isWalking &&
+          ((cfg?.hasRunSheet && Math.abs(p.velocityX) >= PLAYER_CONFIG.RUN_THRESHOLD && runSheet && runSheet.complete && runSheet.naturalWidth > 0) ||
+           (cfg?.hasWalkSheet && sheet && sheet.complete && sheet.naturalWidth > 0))
+        ) {
+          const isRunning = Math.abs(p.velocityX) >= PLAYER_CONFIG.RUN_THRESHOLD && cfg?.hasRunSheet && runSheet && runSheet.complete && runSheet.naturalWidth > 0;
+          const activeSheet = isRunning ? runSheet! : sheet!;
+          const cols = isRunning ? (cfg.runCols || 6) : (cfg.cols || 6);
+          const rows = isRunning ? (cfg.runRows || 1) : (cfg.rows || 1);
+          const totalFrames = isRunning ? (cfg.runTotalFrames || 6) : (cfg.totalFrames || 6);
 
-          const frameW = sheet.naturalWidth / cols;
-          const frameH = sheet.naturalHeight / rows;
+          const frameW = activeSheet.naturalWidth / cols;
+          const frameH = activeSheet.naturalHeight / rows;
 
           const currentFrame = p.animFrame;
           const safeFrame = Math.max(0, Math.min(currentFrame, totalFrames - 1));
@@ -4318,7 +4478,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           const sx = col * frameW;
           const sy = row * frameH;
 
-          ctx.drawImage(sheet, sx, sy, frameW, frameH, drawX, drawY, charW, charH);
+          ctx.drawImage(activeSheet, sx, sy, frameW, frameH, drawX, drawY, charW, charH);
         } else if (idleImg && idleImg.complete && idleImg.naturalWidth > 0) {
           // 2. Facción con su imagen oficial prevista (ej. Assassin_2.png, Agent_2.png, etc.):
           // Se mantiene SIEMPRE la imagen correcta en todos los estados sin perderla ni deformarla.

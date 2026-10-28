@@ -60,6 +60,10 @@ export class MainScene extends Phaser.Scene {
       frameWidth: 256,
       frameHeight: 290,
     });
+    this.load.spritesheet('throw_up', '/assets/sprites/player/throw_up.png', {
+      frameWidth: 256,
+      frameHeight: 290,
+    });
     this.load.image('bot_sprite', '/assets/sprites/bot/thug.png');
     this.load.image('platform_block', '/assets/backgrounds/warehouse.jpg');
   }
@@ -184,6 +188,16 @@ export class MainScene extends Phaser.Scene {
         key: 'rifle_shoot',
         frames: this.anims.generateFrameNumbers('rifle_shoot', { start: 0, end: 3 }),
         frameRate: 12,
+        repeat: 0,
+      });
+    }
+
+    // Animación de Lanzamiento (throw_up) de 5 fotogramas (Frame 3: soltar objeto)
+    if (!this.anims.exists('throw_up')) {
+      this.anims.create({
+        key: 'throw_up',
+        frames: this.anims.generateFrameNumbers('throw_up', { start: 0, end: 4 }),
+        frameRate: 14,
         repeat: 0,
       });
     }

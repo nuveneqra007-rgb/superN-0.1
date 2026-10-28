@@ -1159,3 +1159,22 @@ export const RIFLE_WEAPONS: ReadonlySet<string> = new Set([
 export function isRifleWeapon(type: string | WeaponType): boolean {
   return RIFLE_WEAPONS.has(type as string);
 }
+
+/**
+ * Armas de la categoría "Arrojadizas / Lanzamiento hacia arriba" (throw_up):
+ * Grenade, Molotov, C4, Baseball, Mine.
+ * Utilizan el set oficial de animación 'throw_up' (5 frames, One Shot),
+ * soltando el proyectil exactamente en el Frame 3 (cuando el brazo se extiende hacia adelante).
+ */
+export const THROWABLE_WEAPONS: ReadonlySet<WeaponType> = new Set([
+  WeaponType.Grenade,
+  WeaponType.Molotov,
+  WeaponType.C4,
+  WeaponType.Baseball,
+  WeaponType.Mine,
+]);
+
+export function isThrowableWeapon(type: string | WeaponType): boolean {
+  return THROWABLE_WEAPONS.has(type as WeaponType);
+}
+

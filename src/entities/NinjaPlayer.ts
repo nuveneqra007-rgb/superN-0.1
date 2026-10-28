@@ -6,7 +6,7 @@
 import Phaser from 'phaser';
 import { NINJA_CONFIG, NinjaState } from '../game/NinjaController';
 import { PlayerInput } from './Player';
-import { isOneHandWeapon, isPistolWeapon, isRifleWeapon, isTwoHandWeapon, WeaponType } from '../game/WeaponData';
+import { isOneHandWeapon, isPistolWeapon, isRifleWeapon, isThrowableWeapon, isTwoHandWeapon, WeaponType } from '../game/WeaponData';
 
 export interface NinjaPlayerOptions {
   textureKey?: string;
@@ -27,6 +27,7 @@ export class NinjaPlayer extends Phaser.Physics.Arcade.Sprite {
   public isInvulnerable: boolean = false;
   public isPistolShooting: boolean = false;
   public isRifleShooting: boolean = false;
+  public isThrowing: boolean = false;
   public hasHeavyRifleEquipped: boolean = false;
   public state: NinjaState = NinjaState.Idle;
   public characterState: string = 'desarmado';
@@ -45,6 +46,8 @@ export class NinjaPlayer extends Phaser.Physics.Arcade.Sprite {
   private shootCooldownTimer: number = 0;
   private pistolShootTimer: number = 0;
   private rifleShootTimer: number = 0;
+  private throwTimer: number = 0;
+  private throwHasReleased: boolean = false;
 
   // Combo melee Ninja (3 Filas: Puñetazo, Patada, Uppercut)
   private attackTimer: number = 0;
@@ -202,6 +205,31 @@ export class NinjaPlayer extends Phaser.Physics.Arcade.Sprite {
       return;
     }
 
+    // Lógica de lanzamiento de objetos arrojadizos (throw_up - 5 frames, suelta en frame 3)
+    // Movimiento: El personaje se detiene mientras ejecuta el lanzamiento
+    if (this.isThrowing) {
+      this.throwTimer -= delta;
+      this.setVelocityX(0);
+
+      const moveDir = input.left && !input.right ? -1 : input.right && !input.left ? 1 : 0;
+      if (moveDir !== 0) {
+        this.facing = moveDir > 0 ? 'right' : 'left';
+      }
+      this.setFlipX(this.facing === 'left');
+
+      if (this.anims?.animationManager?.exists('throw_up') && this.anims.currentAnim?.key !== 'throw_up') {
+        this.anims.play('throw_up', true);
+      }
+
+      if (this.throwTimer <= 0) {
+        this.isThrowing = false;
+        this.state = onFloor ? NinjaState.Idle : NinjaState.Fall;
+        this.anims?.stop();
+        this.setTexture('ninja_sprite');
+      }
+      return;
+    }
+
     // Lógica de ataque melee / arma a una mano / arma a dos manos Ninja (One-Shot, bloqueo de movimiento)
     if (this.state === NinjaState.Attack) {
       this.setVelocityX(0);
@@ -249,15 +277,36 @@ export class NinjaPlayer extends Phaser.Physics.Arcade.Sprite {
       return;
     }
 
-    // Iniciar ataque Ninja si se presiona la tecla de ataque (N) en el suelo
-    if (input.meleePressed && onFloor && this.state !== NinjaState.Roll) {
-      const isTwoHand = this.currentWeapon && isTwoHandWeapon(this.currentWeapon as WeaponType);
+    // ─────────────────────────────────────────────────────────
+    // ⚠️ REGLA DE ORO - TECLAS SEPARADAS (NO MEZCLAR)
+    // 1. Tecla "," (coma) o "L": EXCLUSIVA para lanzar bombas/granadas (throw_up)
+    // 2. Tecla "M": EXCLUSIVA para disparar armas de fuego (pistolas, rifles, escopetas)
+    // 3. Tecla "N": EXCLUSIVA para golpes cuerpo a cuerpo (puños, espadas, hachas)
+    // ─────────────────────────────────────────────────────────
+
+    // 1. LANZAR BOMBAS / GRANADAS (Tecla ',' / 'L' / 'G')
+    if (input.grenadePressed && onFloor && this.state !== NinjaState.Roll && !this.isThrowing) {
+      this.isThrowing = true;
+      this.throwTimer = 340;
+      this.throwHasReleased = false;
+      this.setVelocityX(0); // El personaje se detiene mientras ejecuta el lanzamiento
+      const moveDir = input.left && !input.right ? -1 : input.right && !input.left ? 1 : 0;
+      if (moveDir !== 0) {
+        this.facing = moveDir > 0 ? 'right' : 'left';
+      }
+      this.setFlipX(this.facing === 'left');
+      if (this.anims?.animationManager?.exists('throw_up')) {
+        this.anims.play('throw_up', true);
+      }
+      return;
+    }
+
+    // 2. DISPARAR ARMAS DE FUEGO (Tecla 'M' / 'K')
+    if (input.shootPressed && onFloor && this.state !== NinjaState.Roll && !this.isThrowing) {
       const isRifle = this.currentWeapon && isRifleWeapon(this.currentWeapon as WeaponType);
       const isPistol = this.currentWeapon && isPistolWeapon(this.currentWeapon as WeaponType);
-      const isOneHand = this.currentWeapon && isOneHandWeapon(this.currentWeapon as WeaponType);
 
-      if (isRifle) {
-        // Ataque a dos manos (Rifles/Escopetas): animación rifle_shoot de 4 frames
+      if (isRifle && !this.isRifleShooting) {
         this.isRifleShooting = true;
         this.rifleShootTimer = 340;
         const moveDir = input.left && !input.right ? -1 : input.right && !input.left ? 1 : 0;
@@ -272,8 +321,7 @@ export class NinjaPlayer extends Phaser.Physics.Arcade.Sprite {
         return;
       }
 
-      if (isPistol) {
-        // Ataque a una mano (Pistolas): animación pistol_shoot de 4 frames
+      if (isPistol && !this.isPistolShooting) {
         this.isPistolShooting = true;
         this.pistolShootTimer = 330;
         const moveDir = input.left && !input.right ? -1 : input.right && !input.left ? 1 : 0;
@@ -287,6 +335,12 @@ export class NinjaPlayer extends Phaser.Physics.Arcade.Sprite {
         }
         return;
       }
+    }
+
+    // 3. GOLPES CUERPO A CUERPO (Tecla 'N' / 'J')
+    if (input.meleePressed && onFloor && this.state !== NinjaState.Roll && !this.isThrowing) {
+      const isTwoHand = this.currentWeapon && isTwoHandWeapon(this.currentWeapon as WeaponType);
+      const isOneHand = this.currentWeapon && isOneHandWeapon(this.currentWeapon as WeaponType);
 
       this.state = NinjaState.Attack;
 
@@ -309,12 +363,11 @@ export class NinjaPlayer extends Phaser.Physics.Arcade.Sprite {
           this.anims.play('one_hand_attack', true);
         }
       } else {
-        const targetStep = (this.comboWindowTimer > 0 && this.comboStep > 0 && this.comboStep <= 2) ? this.comboStep : 0;
-        this.comboStep = targetStep;
+        // Combo Melee desarmado / puñetazo
         this.attackTimer = 330;
         this.comboBuffered = false;
         this.setVelocityX(0);
-        const animKey = targetStep === 0 ? 'ninja_punch' : targetStep === 1 ? 'ninja_kick' : 'ninja_uppercut';
+        const animKey = this.comboStep === 0 ? 'ninja_punch' : this.comboStep === 1 ? 'ninja_kick' : 'ninja_uppercut';
         if (this.anims?.animationManager?.exists(animKey)) {
           this.anims.play(animKey, true);
         }

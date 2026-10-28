@@ -11,7 +11,7 @@ import { GameConstants } from '../game/GameConstants';
 import { PhysicsRect, PhysicsStep } from '../game/PhysicsStep';
 import { PlayerFSM } from '../game/PlayerFSM';
 import { createPlayerState, PlayerFSMState, PlayerState } from '../game/PlayerState';
-import { getWeapon, isBladeWeapon, isOneHandWeapon, isPistolWeapon, isRifleWeapon, isTwoHandWeapon, SpawnableWeaponsList, WeaponCategory, WeaponDatabase, WeaponType } from '../game/WeaponData';
+import { getWeapon, isBladeWeapon, isOneHandWeapon, isPistolWeapon, isRifleWeapon, isThrowableWeapon, isTwoHandWeapon, SpawnableWeaponsList, WeaponCategory, WeaponDatabase, WeaponType } from '../game/WeaponData';
 import { PlayerController, PlayerInput, PlayerState as ControllerState, PLAYER_CONFIG } from '../game/PlayerController';
 import { sounds } from '../game/SoundEffects';
 import { getWorldConfig, WorldConfig, HazardCfg, PlatformRect } from '../game/WorldData';
@@ -97,6 +97,11 @@ export interface SpritesheetDef {
   rifleCols?: number;
   rifleRows?: number;
   rifleTotalFrames?: number;
+  hasThrowUpSheet?: boolean;
+  throwUpSheetUrl?: string;
+  throwUpCols?: number;
+  throwUpRows?: number;
+  throwUpTotalFrames?: number;
 }
 
 export const CHARACTER_SPRITESHEETS: Record<string, SpritesheetDef> = {
@@ -123,6 +128,7 @@ export const CHARACTER_SPRITESHEETS: Record<string, SpritesheetDef> = {
     twoHandAttackSheetUrl: '/assets/sprites/player/two_hand_attack.png',
     pistolShootSheetUrl: '/assets/sprites/player/pistol_shoot.png',
     rifleShootSheetUrl: '/assets/sprites/player/rifle_shoot.png',
+    throwUpSheetUrl: '/assets/sprites/player/throw_up.png',
     cols: 6,
     rows: 1,
     totalFrames: 6,
@@ -135,6 +141,7 @@ export const CHARACTER_SPRITESHEETS: Record<string, SpritesheetDef> = {
     hasTwoHandAttackSheet: true,
     hasPistolShootSheet: true,
     hasRifleShootSheet: true,
+    hasThrowUpSheet: true,
     runCols: 6,
     runRows: 1,
     runTotalFrames: 6,
@@ -159,6 +166,9 @@ export const CHARACTER_SPRITESHEETS: Record<string, SpritesheetDef> = {
     rifleCols: 4,
     rifleRows: 1,
     rifleTotalFrames: 4,
+    throwUpCols: 5,
+    throwUpRows: 1,
+    throwUpTotalFrames: 5,
   },
   // ── 1. ASESINO (ASSASSIN) ──
   // Utiliza la imagen oficial prevista (/assets/sprites/player/Assassin_2.png)
@@ -255,6 +265,7 @@ interface ProjectileEntity {
   maxLifeTicks: number;
   isGrenade?: boolean;
   isMolotov?: boolean;
+  isThrowable?: boolean;
   grenadeType?: GrenadeType;
   rotation?: number;
   rotationSpeed?: number;
@@ -477,12 +488,19 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     p1TwoHandSheet: HTMLImageElement | null;
     p1PistolSheet: HTMLImageElement | null;
     p1RifleSheet: HTMLImageElement | null;
+    p1ThrowUpSheet: HTMLImageElement | null;
     p1IdleSprite: HTMLImageElement | null;
     p1SheetConfig: SpritesheetDef;
     botWalkSheet: HTMLImageElement | null;
     botRunSheet: HTMLImageElement | null;
     botRollSheet: HTMLImageElement | null;
     botJumpSheet: HTMLImageElement | null;
+    botMeleeSheet: HTMLImageElement | null;
+    botOneHandSheet: HTMLImageElement | null;
+    botTwoHandSheet: HTMLImageElement | null;
+    botPistolSheet: HTMLImageElement | null;
+    botRifleSheet: HTMLImageElement | null;
+    botThrowUpSheet: HTMLImageElement | null;
     botIdleSprite: HTMLImageElement | null;
     botSheetConfig: SpritesheetDef;
     weaponImages: Record<string, HTMLImageElement>;
@@ -843,6 +861,15 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       p1RifleSheet.src = '/assets/sprites/player/rifle_shoot.png';
     }
 
+    let p1ThrowUpSheet: HTMLImageElement | null = null;
+    if (p1Cfg.hasThrowUpSheet && p1Cfg.throwUpSheetUrl) {
+      p1ThrowUpSheet = new Image();
+      p1ThrowUpSheet.src = p1Cfg.throwUpSheetUrl;
+    } else if (effectiveP1Faction === BotFaction.Ninja) {
+      p1ThrowUpSheet = new Image();
+      p1ThrowUpSheet.src = '/assets/sprites/player/throw_up.png';
+    }
+
     const p1IdleSprite = new Image();
     p1IdleSprite.src = p1Cfg.idleUrl || pArch.spriteUrl || '/assets/sprites/player/Assassin_2.png';
 
@@ -868,6 +895,22 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     if (botCfg.hasJumpSheet && botCfg.jumpSheetUrl) {
       botJumpSheet = new Image();
       botJumpSheet.src = botCfg.jumpSheetUrl;
+    }
+
+    let botMeleeSheet: HTMLImageElement | null = null;
+    let botOneHandSheet: HTMLImageElement | null = null;
+    let botTwoHandSheet: HTMLImageElement | null = null;
+    let botPistolSheet: HTMLImageElement | null = null;
+    let botRifleSheet: HTMLImageElement | null = null;
+    let botThrowUpSheet: HTMLImageElement | null = null;
+
+    if (gameMode === 'local1v1' || effectiveP2Faction === BotFaction.Ninja) {
+      botMeleeSheet = p1MeleeSheet;
+      botOneHandSheet = p1OneHandSheet;
+      botTwoHandSheet = p1TwoHandSheet;
+      botPistolSheet = p1PistolSheet;
+      botRifleSheet = p1RifleSheet;
+      botThrowUpSheet = p1ThrowUpSheet;
     }
 
     const botIdleSprite = new Image();
@@ -965,12 +1008,19 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       p1TwoHandSheet,
       p1PistolSheet,
       p1RifleSheet,
+      p1ThrowUpSheet,
       p1IdleSprite,
       p1SheetConfig: p1Cfg,
       botWalkSheet,
       botRunSheet,
       botRollSheet,
       botJumpSheet,
+      botMeleeSheet,
+      botOneHandSheet,
+      botTwoHandSheet,
+      botPistolSheet,
+      botRifleSheet,
+      botThrowUpSheet,
       botIdleSprite,
       botSheetConfig: botCfg,
       weaponImages,
@@ -1040,11 +1090,16 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     s.p1.rifleAnimFrame = 0;
     s.p1.rifleAnimTimer = 0;
     s.p1.rifleHasFired = false;
+    s.p1.isThrowing = false;
+    s.p1.throwAnimFrame = 0;
+    s.p1.throwAnimTimer = 0;
+    s.p1.throwHasReleased = false;
     if (s.p1Controller) {
       s.p1Controller.setPosition(spawnP1.x, spawnP1.y);
       s.p1Controller.facingRight = true;
       s.p1Controller.isShootingPistol = false;
       s.p1Controller.isShootingRifle = false;
+      s.p1Controller.isThrowing = false;
       s.p1Controller.hasHeavyRifleEquipped = false;
     }
 
@@ -1252,6 +1307,27 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     s: NonNullable<typeof stateRef.current>,
     pr: ProjectileEntity
   ) => {
+    if (pr.weaponType === WeaponType.C4) {
+      createExplosion(pr.x, pr.y, 85, pr.damage || 60, false);
+      addSparks(pr.x, pr.y, '#ef4444', 35);
+      addSparks(pr.x, pr.y, '#f97316', 25);
+      s.screenShake = 22;
+      sounds.playExplosion();
+      return;
+    }
+
+    if (pr.weaponType === WeaponType.Mine) {
+      createExplosion(pr.x, pr.y, 60, pr.damage || 45, false);
+      addSparks(pr.x, pr.y, '#f59e0b', 28);
+      s.screenShake = 14;
+      sounds.playExplosion();
+      return;
+    }
+
+    if (pr.weaponType === WeaponType.Baseball) {
+      return;
+    }
+
     const gType = pr.grenadeType || GrenadeType.Frag;
     const gCfg = GRENADE_DATABASE[gType];
 
@@ -1596,14 +1672,24 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           }
         }
 
-        const meleePressed = is1v1 ? !!keys['n'] : !!(keys['n'] || keys['j']);
-        const firePressed = is1v1 ? !!keys['m'] : !!(keys['m'] || keys['k']);
-        const throwPressed = is1v1 ? !!(keys[','] || keys['comma']) : !!(keys['g'] || keys['comma'] || keys[','] || keys['l']);
+        const meleePressed = is1v1 ? !!(keys['n'] || keys['N']) : !!(keys['n'] || keys['N'] || keys['j'] || keys['J']);
+        const firePressed = is1v1 ? !!(keys['m'] || keys['M']) : !!(keys['m'] || keys['M'] || keys['k'] || keys['K']);
+        const throwPressed = is1v1 ? !!(keys[','] || keys['comma'] || keys['.']) : !!(keys['g'] || keys['G'] || keys['comma'] || keys[','] || keys['l'] || keys['L']);
 
         // Melee Attack P1 - Advanced Melee System
         const p1FacingDir = p1.facingRight ? 1 : -1;
-        const meleeHeld = is1v1 ? !!keys['n'] : !!(keys['n'] || keys['j']);
-        const meleeJustPressed = is1v1 ? !!s.keysJustPressed['n'] : !!(s.keysJustPressed['n'] || s.keysJustPressed['j']);
+        const meleeHeld = meleePressed;
+        const meleeJustPressed = is1v1
+          ? (!!s.keysJustPressed['n'] || !!s.keysJustPressed['N'])
+          : (!!s.keysJustPressed['n'] || !!s.keysJustPressed['N'] || !!s.keysJustPressed['j'] || !!s.keysJustPressed['J']);
+
+        const fireJustPressed = is1v1
+          ? (!!s.keysJustPressed['m'] || !!s.keysJustPressed['M'])
+          : (!!s.keysJustPressed['m'] || !!s.keysJustPressed['M'] || !!s.keysJustPressed['k'] || !!s.keysJustPressed['K']);
+
+        const throwJustPressed = is1v1
+          ? (!!s.keysJustPressed[','] || !!s.keysJustPressed['comma'] || !!s.keysJustPressed['.'])
+          : (!!s.keysJustPressed[','] || !!s.keysJustPressed['comma'] || !!s.keysJustPressed['l'] || !!s.keysJustPressed['L'] || !!s.keysJustPressed['g'] || !!s.keysJustPressed['G']);
 
         if (p1.isGrappling && p1.grabbedTargetId === bot.id) {
           p1.grappleTicks++;
@@ -1759,35 +1845,133 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         }
 
         // ─────────────────────────────────────────────────────────
-        // SISTEMA DE ATAQUE (TECLA ÚNICA "N")
-        // - Si porta arma "Pistolas" (Pistol, Pistol45, Revolver, Magnum, SilencedPistol, MachinePistol, Uzi, SilencedUzi, FlareGun):
-        //   Reproduce el set de animación 'pistol_shoot' de 4 frames (Frame 3: retroceso/recarga).
-        //   Dispara siempre hacia la dirección en la que está mirando (flip_h). Si está quieto, mantiene la última dirección.
-        //   Permite moverse a velocidad de caminar mientras dispara (no puede correr).
-        // - Si porta arma "Dos manos" (Hacha, Bat, LeadPipe, Hammer, Chair, Pipe, Bottle, Teapot, Pillow):
-        //   Reproduce la animación 'two_hand_attack' de 6 frames.
-        // - Si porta arma "Una mano" (Katana, Machete, Cuchillo, Baton, ShockBaton, Whip, CueStick):
-        //   Reproduce la animación 'one_hand_attack' de 5 frames (One Shot, veloz, bloqueo de movimiento).
-        // - Si está desarmado o con puños:
-        //   Reproduce el combo melee de 3 filas (1: Puñetazo | 2: Patada | 3: Uppercut).
         // ─────────────────────────────────────────────────────────
-        const nJustPressed = !!s.keysJustPressed['n'] || !!s.keysJustPressed['N'];
+        // ⚠️ REGLA DE ORO - TECLAS SEPARADAS (NO MEZCLAR)
+        // 1. Tecla "N": EXCLUSIVA para golpes cuerpo a cuerpo (puños, espadas, hachas).
+        // 2. Tecla "M": EXCLUSIVA para disparar armas de fuego (pistolas, rifles, escopetas).
+        // 3. Tecla "," (coma) o "L": EXCLUSIVA para lanzar bombas/granadas (Grenade, Molotov, C4, Baseball, Mine).
+        // ─────────────────────────────────────────────────────────
         const isPistol = isPistolWeapon(p1.equippedWeapon);
         const isRifle = isRifleWeapon(p1.equippedWeapon);
+        const isThrowable = isThrowableWeapon(p1.equippedWeapon);
+        const isFirearm = isRifle || isPistol || (p1.equippedWeapon !== WeaponType.Fists && getWeapon(p1.equippedWeapon).category === 'Firearm');
 
+        // ═════════════════════════════════════════════════════════
+        // 1. TECLA "N": EXCLUSIVA PARA GOLPES CUERPO A CUERPO
+        // ═════════════════════════════════════════════════════════
         if (
-          (nJustPressed || (firePressed && (isPistol || isRifle))) &&
+          meleeJustPressed &&
           p1.isAlive &&
           s.roundActive &&
           p1.fsm !== PlayerFSMState.KnockedDown &&
           p1.fsm !== PlayerFSMState.GetUp &&
           p1.fsm !== PlayerFSMState.Hitstun &&
           p1.fsm !== PlayerFSMState.Roll &&
-          !p1.isGrappling
+          !p1.isGrappling &&
+          !p1.isThrowing
+        ) {
+          if (isTwoHandWeapon(p1.equippedWeapon)) {
+            // Ataque a dos manos (Golpe pesado): animación One Shot de 6 frames, más lenta y pesada
+            if (!p1.isTwoHandAttacking) {
+              p1.isTwoHandAttacking = true;
+              p1.twoHandAnimFrame = 0;
+              p1.twoHandAnimTimer = 0;
+              p1.twoHandHasHit = false;
+
+              p1.velocityX = 0;
+              s.p1Controller.vx = 0;
+              s.p1Controller.state = ControllerState.Idle;
+              PlayerFSM.tryTransition(p1, PlayerFSMState.MeleeAttack);
+
+              if (isBladeWeapon(p1.equippedWeapon)) {
+                sounds.playSwordSwing();
+              } else {
+                sounds.playPunch();
+              }
+            }
+          } else if (isOneHandWeapon(p1.equippedWeapon)) {
+            // Ataque a una mano: animación One Shot de 5 frames rápida
+            if (!p1.isOneHandAttacking) {
+              p1.isOneHandAttacking = true;
+              p1.oneHandAnimFrame = 0;
+              p1.oneHandAnimTimer = 0;
+              p1.oneHandHasHit = false;
+
+              p1.velocityX = 0;
+              s.p1Controller.vx = 0;
+              s.p1Controller.state = ControllerState.Idle;
+              PlayerFSM.tryTransition(p1, PlayerFSMState.MeleeAttack);
+
+              if (isBladeWeapon(p1.equippedWeapon)) {
+                sounds.playSwordSwing();
+              } else {
+                sounds.playPunch();
+              }
+            }
+          } else {
+            // Sistema de combo melee desarmado (Puños / Golpes cuerpo a cuerpo)
+            // Funciona desarmado o si porta arma de fuego/bomba pero presiona tecla de golpe melee (N)
+            if (p1.isMeleeComboAttacking) {
+              if (p1.meleeComboStep < 2) {
+                p1.comboBuffered = true;
+                p1.comboWindowTicks = 34;
+
+                if (p1.meleeAnimFrame >= 3) {
+                  p1.meleeComboStep++;
+                  p1.comboStep = p1.meleeComboStep;
+                  p1.meleeAnimFrame = 0;
+                  p1.meleeAnimTimer = 0;
+                  p1.meleeHasHit = false;
+                  p1.comboBuffered = false;
+                  p1.comboWindowTicks = 34;
+                  sounds.playPunch();
+                }
+              }
+            } else {
+              let nextStep = 0;
+              if (p1.comboWindowTicks > 0 && p1.comboStep > 0 && p1.comboStep <= 2) {
+                nextStep = p1.comboStep;
+              } else {
+                nextStep = 0;
+              }
+
+              p1.isMeleeComboAttacking = true;
+              p1.meleeComboStep = nextStep;
+              p1.comboStep = nextStep;
+              p1.meleeAnimFrame = 0;
+              p1.meleeAnimTimer = 0;
+              p1.meleeHasHit = false;
+              p1.comboBuffered = false;
+              p1.comboWindowTicks = 34;
+
+              p1.velocityX = 0;
+              s.p1Controller.vx = 0;
+              s.p1Controller.state = ControllerState.Idle;
+              PlayerFSM.tryTransition(p1, PlayerFSMState.MeleeAttack);
+
+              sounds.playPunch();
+            }
+          }
+        }
+
+        // ═════════════════════════════════════════════════════════
+        // 2. TECLA "M": EXCLUSIVA PARA DISPARAR ARMAS DE FUEGO
+        // ═════════════════════════════════════════════════════════
+        if (
+          (fireJustPressed || (firePressed && (p1.isRifleShooting || p1.isPistolShooting))) &&
+          isFirearm &&
+          p1.isAlive &&
+          s.roundActive &&
+          p1.fsm !== PlayerFSMState.KnockedDown &&
+          p1.fsm !== PlayerFSMState.GetUp &&
+          p1.fsm !== PlayerFSMState.Hitstun &&
+          p1.fsm !== PlayerFSMState.Roll &&
+          !p1.isGrappling &&
+          !p1.isThrowing
         ) {
           if (isRifle) {
             // Disparo de rifles/escopetas a dos manos (rifle_shoot - 4 frames con retroceso en frame 3)
-            if (p1.attackCooldown <= 0) {
+            if (p1.attackCooldown <= 0 && !p1.isRifleShooting) {
               if (p1.ammo > 0) {
                 const wpn = getWeapon(p1.equippedWeapon);
                 p1.isRifleShooting = true;
@@ -1805,7 +1989,6 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                 const muzzleX = p1.x + dir * 32;
                 const muzzleY = p1.y - 7;
 
-                // Destellos y chispas de retroceso potente
                 addSparks(muzzleX, muzzleY, '#fde047', 12);
                 addSparks(muzzleX, muzzleY, '#ffffff', 6);
                 s.screenShake = Math.min(14, Math.max(5, (wpn.damage || 25) / 3));
@@ -1838,7 +2021,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             }
           } else if (isPistol) {
             // Disparo de pistolas a una mano (pistol_shoot - 4 frames)
-            if (p1.attackCooldown <= 0) {
+            if (p1.attackCooldown <= 0 && !p1.isPistolShooting) {
               if (p1.ammo > 0) {
                 const wpn = getWeapon(p1.equippedWeapon);
                 p1.isPistolShooting = true;
@@ -1885,91 +2068,65 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                 sounds.playDryFire();
               }
             }
-          } else if (isTwoHandWeapon(p1.equippedWeapon)) {
-            // Ataque a dos manos (Golpe pesado): animación One Shot de 6 frames, más lenta y pesada
-            if (!p1.isTwoHandAttacking) {
-              p1.isTwoHandAttacking = true;
-              p1.twoHandAnimFrame = 0;
-              p1.twoHandAnimTimer = 0;
-              p1.twoHandHasHit = false;
+          }
+        }
 
-              // Bloqueo estricto de movimiento: no caminar, correr ni saltar
+        // ═════════════════════════════════════════════════════════
+        // 3. TECLA "," (coma) O "L": EXCLUSIVA PARA LANZAR BOMBAS/GRANADAS
+        // Lista de Objetos: Grenade, Molotov, C4, Baseball, Mine (o inventario de granadas)
+        // ═════════════════════════════════════════════════════════
+        if (
+          throwJustPressed &&
+          p1.isAlive &&
+          s.roundActive &&
+          p1.fsm !== PlayerFSMState.KnockedDown &&
+          p1.fsm !== PlayerFSMState.GetUp &&
+          p1.fsm !== PlayerFSMState.Hitstun &&
+          p1.fsm !== PlayerFSMState.Roll &&
+          !p1.isGrappling &&
+          !p1.isThrowing
+        ) {
+          const hasGrenadesInInventory = getTotalGrenades(s.p1Grenades) > 0;
+          if (p1.attackCooldown <= 0) {
+            if (isThrowable && p1.ammo > 0) {
+              p1.isThrowing = true;
+              p1.throwAnimFrame = 0;
+              p1.throwAnimTimer = 0;
+              p1.throwHasReleased = false;
+              // Guardar la inercia previa del movimiento antes de detener al personaje
+              p1.throwInitialInertia = p1.velocityX * 0.45;
+              // Movimiento: El personaje se detiene mientras ejecuta el lanzamiento
               p1.velocityX = 0;
               s.p1Controller.vx = 0;
               s.p1Controller.state = ControllerState.Idle;
+              s.p1Controller.isThrowing = true;
+              p1.attackCooldown = 25;
               PlayerFSM.tryTransition(p1, PlayerFSMState.MeleeAttack);
-
-              if (isBladeWeapon(p1.equippedWeapon)) {
-                sounds.playSwordSwing();
-              } else {
-                sounds.playPunch();
-              }
-            }
-          } else if (isOneHandWeapon(p1.equippedWeapon)) {
-            // Ataque a una mano: animación One Shot de 5 frames rápida
-            if (!p1.isOneHandAttacking) {
-              p1.isOneHandAttacking = true;
-              p1.oneHandAnimFrame = 0;
-              p1.oneHandAnimTimer = 0;
-              p1.oneHandHasHit = false;
-
-              // Bloqueo estricto de movimiento: no caminar, correr ni saltar
+              sounds.playSwordSwing();
+            } else if (hasGrenadesInInventory) {
+              p1.isThrowing = true;
+              p1.throwAnimFrame = 0;
+              p1.throwAnimTimer = 0;
+              p1.throwHasReleased = false;
+              p1.throwInitialInertia = p1.velocityX * 0.45;
               p1.velocityX = 0;
               s.p1Controller.vx = 0;
               s.p1Controller.state = ControllerState.Idle;
+              s.p1Controller.isThrowing = true;
+              p1.attackCooldown = 25;
               PlayerFSM.tryTransition(p1, PlayerFSMState.MeleeAttack);
-
-              if (isBladeWeapon(p1.equippedWeapon)) {
-                sounds.playSwordSwing();
-              } else {
-                sounds.playPunch();
-              }
-            }
-          } else {
-            // Sistema de combo melee desarmado (Puños)
-            if (p1.isMeleeComboAttacking) {
-              // 2do o 3er toque durante la ventana de tiempo antes de que termine el golpe anterior
-              if (p1.meleeComboStep < 2) {
-                p1.comboBuffered = true;
-                p1.comboWindowTicks = 34;
-
-                // Si ya superó el frame de impacto (frames 3, 4 o 5), cancela de inmediato la recuperación e inicia el siguiente golpe
-                if (p1.meleeAnimFrame >= 3) {
-                  p1.meleeComboStep++;
-                  p1.comboStep = p1.meleeComboStep;
-                  p1.meleeAnimFrame = 0;
-                  p1.meleeAnimTimer = 0;
-                  p1.meleeHasHit = false;
-                  p1.comboBuffered = false;
-                  p1.comboWindowTicks = 34;
-                  sounds.playPunch();
-                }
-              }
+              sounds.playSwordSwing();
             } else {
-              // Nuevo golpe (1er toque, o continuación si la ventana sigue abierta)
-              let nextStep = 0;
-              if (p1.comboWindowTicks > 0 && p1.comboStep > 0 && p1.comboStep <= 2) {
-                nextStep = p1.comboStep;
-              } else {
-                nextStep = 0;
-              }
-
-              p1.isMeleeComboAttacking = true;
-              p1.meleeComboStep = nextStep;
-              p1.comboStep = nextStep;
-              p1.meleeAnimFrame = 0;
-              p1.meleeAnimTimer = 0;
-              p1.meleeHasHit = false;
-              p1.comboBuffered = false;
-              p1.comboWindowTicks = 34;
-
-              // Bloqueo de movimiento inmediato
-              p1.velocityX = 0;
-              s.p1Controller.vx = 0;
-              s.p1Controller.state = ControllerState.Idle;
-              PlayerFSM.tryTransition(p1, PlayerFSMState.MeleeAttack);
-
-              sounds.playPunch();
+              p1.attackCooldown = 15;
+              sounds.playDryFire();
+              s.floatingTexts.push({
+                id: s.nextEntityId++,
+                text: '¡SIN BOMBAS / GRANADAS!',
+                x: p1.x,
+                y: p1.y - 30,
+                color: '#ef4444',
+                life: 25,
+              });
             }
           }
         }
@@ -2349,6 +2506,257 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           s.p1Controller.isShootingRifle = false;
         }
 
+        // ─────────────────────────────────────────────────────────
+        // LÓGICA DE AVANCE Y LANZAMIENTO (throw_up - 5 Frames, One Shot)
+        // Requisitos de la mecánica:
+        // - Frame 0 (1): Brazo recogido hacia atrás
+        // - Frame 1 (2): Elevación del brazo
+        // - Frame 2 (3): Brazo extendido hacia adelante -> EXACTAMENTE AQUÍ SE SUELTA EL OBJETO
+        // - Frame 3 (4): Descenso y seguimiento del brazo
+        // - Frame 4 (5): Conclusión del lanzamiento y retorno a guardia
+        // - Movimiento: El personaje se detiene o se mueve a velocidad de caminar mientras ejecuta el lanzamiento.
+        // - Lógica de apuntado (Superfighters): Sale hacia donde mira (flip_h) y hereda inercia de movimiento.
+        // ─────────────────────────────────────────────────────────
+        if (p1.isThrowing) {
+          if (p1.fsm === PlayerFSMState.KnockedDown || p1.fsm === PlayerFSMState.Hitstun || !p1.isAlive) {
+            p1.isThrowing = false;
+            p1.throwAnimFrame = 0;
+            p1.throwAnimTimer = 0;
+            p1.throwHasReleased = false;
+            s.p1Controller.isThrowing = false;
+          } else {
+            s.p1Controller.isThrowing = true;
+            // Movimiento: El personaje se detiene mientras ejecuta el lanzamiento
+            p1.velocityX = 0;
+            s.p1Controller.vx = 0;
+            s.p1Controller.state = ControllerState.Idle;
+
+            // Orientación según la dirección hacia la que mira (flip_h):
+            // Si pulsa izquierda/derecha actualiza la orientación; si no, mantiene la última dirección
+            const moveDir = (keys['arrowleft'] || (gameMode === 'vsBot' && keys['a']))
+              ? -1
+              : (keys['arrowright'] || (gameMode === 'vsBot' && keys['d']))
+              ? 1
+              : 0;
+
+            if (moveDir !== 0) {
+              p1.facingRight = moveDir > 0;
+              s.p1Controller.facingRight = p1.facingRight;
+            }
+
+            // Ejecución del lanzamiento exactamente en el Frame 3 (índice 2: brazo extendido hacia adelante)
+            if (p1.throwAnimFrame === 2 && !p1.throwHasReleased) {
+              p1.throwHasReleased = true;
+
+              const dir = p1.facingRight ? 1 : -1;
+              const launchX = p1.x + dir * 26;
+              const launchY = p1.y - 14;
+
+              // El objeto hereda la inercia previa del movimiento
+              const inheritedInertia = p1.throwInitialInertia || 0;
+              const wType = p1.equippedWeapon;
+              const isThrowable = isThrowableWeapon(wType);
+
+              if (isThrowable) {
+                p1.ammo--;
+                const wpn = getWeapon(wType);
+
+                if (wType === WeaponType.Grenade) {
+                  const gCfg = GRENADE_DATABASE[GrenadeType.Frag];
+                  sounds.playGunshot('grenade');
+                  s.projectiles.push({
+                    id: s.nextEntityId++,
+                    x: launchX,
+                    y: launchY,
+                    vx: dir * 440 + inheritedInertia,
+                    vy: -300,
+                    damage: gCfg.damage * p1.damageDealtModifier,
+                    onFireDuration: 0,
+                    explosionRadius: gCfg.explosionRadius,
+                    shooterId: p1.id,
+                    weaponType: WeaponType.Grenade,
+                    pelletCount: 1,
+                    lifeTicks: 0,
+                    maxLifeTicks: gCfg.fuseTicks || 85,
+                    isGrenade: true,
+                    isThrowable: true,
+                    grenadeType: GrenadeType.Frag,
+                    rotation: 0,
+                    rotationSpeed: dir * 0.25,
+                    color: gCfg.color,
+                  });
+                } else if (wType === WeaponType.Molotov) {
+                  const gCfg = GRENADE_DATABASE[GrenadeType.Molotov];
+                  sounds.playGunshot('grenade');
+                  s.projectiles.push({
+                    id: s.nextEntityId++,
+                    x: launchX,
+                    y: launchY,
+                    vx: dir * 390 + inheritedInertia,
+                    vy: -270,
+                    damage: gCfg.damage * p1.damageDealtModifier,
+                    onFireDuration: gCfg.burnDurationTicks || 240,
+                    explosionRadius: gCfg.explosionRadius,
+                    shooterId: p1.id,
+                    weaponType: WeaponType.Molotov,
+                    pelletCount: 1,
+                    lifeTicks: 0,
+                    maxLifeTicks: 70,
+                    isGrenade: true,
+                    isMolotov: true,
+                    isThrowable: true,
+                    grenadeType: GrenadeType.Molotov,
+                    rotation: 0,
+                    rotationSpeed: dir * 0.28,
+                    color: gCfg.color,
+                  });
+                } else if (wType === WeaponType.C4) {
+                  sounds.playGunshot('grenade');
+                  s.projectiles.push({
+                    id: s.nextEntityId++,
+                    x: launchX,
+                    y: launchY,
+                    vx: dir * 350 + inheritedInertia,
+                    vy: -240,
+                    damage: (wpn.damage || 60) * p1.damageDealtModifier,
+                    onFireDuration: 0,
+                    explosionRadius: wpn.explosionRadius || 85,
+                    shooterId: p1.id,
+                    weaponType: WeaponType.C4,
+                    pelletCount: 1,
+                    lifeTicks: 0,
+                    maxLifeTicks: 80,
+                    isGrenade: true,
+                    isThrowable: true,
+                    rotation: 0,
+                    rotationSpeed: dir * 0.18,
+                    color: '#ef4444',
+                  });
+                } else if (wType === WeaponType.Mine) {
+                  sounds.playPickup();
+                  s.projectiles.push({
+                    id: s.nextEntityId++,
+                    x: launchX,
+                    y: launchY,
+                    vx: dir * 280 + inheritedInertia,
+                    vy: -180,
+                    damage: (wpn.damage || 45) * p1.damageDealtModifier,
+                    onFireDuration: 0,
+                    explosionRadius: wpn.explosionRadius || 60,
+                    shooterId: p1.id,
+                    weaponType: WeaponType.Mine,
+                    pelletCount: 1,
+                    lifeTicks: 0,
+                    maxLifeTicks: 250,
+                    isGrenade: true,
+                    isThrowable: true,
+                    rotation: 0,
+                    rotationSpeed: dir * 0.12,
+                    color: '#f59e0b',
+                  });
+                } else if (wType === WeaponType.Baseball) {
+                  sounds.playPunch();
+                  s.projectiles.push({
+                    id: s.nextEntityId++,
+                    x: launchX,
+                    y: launchY,
+                    vx: dir * 650 + inheritedInertia,
+                    vy: -140,
+                    damage: (wpn.damage || 14) * p1.damageDealtModifier,
+                    onFireDuration: 0,
+                    explosionRadius: 0,
+                    shooterId: p1.id,
+                    weaponType: WeaponType.Baseball,
+                    pelletCount: 1,
+                    lifeTicks: 0,
+                    maxLifeTicks: 90,
+                    isGrenade: true,
+                    isThrowable: true,
+                    rotation: 0,
+                    rotationSpeed: dir * 0.45,
+                    color: '#f8fafc',
+                  });
+                }
+
+                s.floatingTexts.push({
+                  id: s.nextEntityId++,
+                  text: `¡${wpn.name}! (${p1.ammo} rest.)`,
+                  x: p1.x,
+                  y: p1.y - 32,
+                  color: wpn.color || '#38bdf8',
+                  life: 30,
+                });
+              } else {
+                // Lanzamiento desde inventario de granadas (Tecla ',' o 'L')
+                const thrownType = consumeGrenade(s.p1Grenades);
+                if (thrownType) {
+                  sounds.playGunshot('grenade');
+                  const gCfg = GRENADE_DATABASE[thrownType];
+                  s.projectiles.push({
+                    id: s.nextEntityId++,
+                    x: launchX,
+                    y: launchY,
+                    vx: dir * 420 + inheritedInertia,
+                    vy: -310,
+                    damage: gCfg.damage * p1.damageDealtModifier,
+                    onFireDuration: gCfg.burnDurationTicks || 0,
+                    explosionRadius: gCfg.explosionRadius,
+                    shooterId: p1.id,
+                    weaponType: WeaponType.Grenade,
+                    pelletCount: 1,
+                    lifeTicks: 0,
+                    maxLifeTicks: gCfg.fuseTicks || 85,
+                    isGrenade: true,
+                    isMolotov: thrownType === GrenadeType.Molotov,
+                    isThrowable: true,
+                    grenadeType: thrownType,
+                    rotation: 0,
+                    rotationSpeed: dir * 0.24,
+                    color: gCfg.color,
+                  });
+
+                  s.floatingTexts.push({
+                    id: s.nextEntityId++,
+                    text: `¡${gCfg.shortName}! (${s.p1Grenades.ammo[thrownType]} rest.)`,
+                    x: p1.x,
+                    y: p1.y - 32,
+                    color: gCfg.color,
+                    life: 30,
+                  });
+                }
+              }
+            }
+
+            p1.throwAnimTimer = (p1.throwAnimTimer || 0) + 1;
+            // 4 ticks por fotograma (~66ms por frame para 5 frames en ~330ms)
+            if (p1.throwAnimTimer >= 4) {
+              p1.throwAnimTimer = 0;
+              p1.throwAnimFrame = (p1.throwAnimFrame || 0) + 1;
+
+              if (p1.throwAnimFrame >= 5) {
+                // Fin de la animación One Shot
+                p1.isThrowing = false;
+                p1.throwAnimFrame = 0;
+                p1.throwAnimTimer = 0;
+                p1.throwHasReleased = false;
+                s.p1Controller.isThrowing = false;
+
+                if (isThrowableWeapon(p1.equippedWeapon) && p1.ammo <= 0) {
+                  p1.equippedWeapon = WeaponType.Fists;
+                  p1.characterState = 'desarmado';
+                  p1.weaponState = 'desarmado';
+                }
+
+                if (p1.fsm === PlayerFSMState.MeleeAttack) {
+                  p1.fsm = PlayerFSMState.Idle;
+                }
+              }
+            }
+          }
+        } else if (s.p1Controller) {
+          s.p1Controller.isThrowing = false;
+        }
+
         // Sincronizar flag de arma pesada para reducción de velocidad y bloqueo de carrera
         if (s.p1Controller) {
           s.p1Controller.hasHeavyRifleEquipped = isRifleWeapon(p1.equippedWeapon);
@@ -2574,59 +2982,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           }
         }
 
-        // Granadas / Armas Arrojadizas P1 (Consumo limitado de inventario con representación visual)
-        if (throwPressed && p1.attackCooldown <= 0) {
-          const thrownType = consumeGrenade(s.p1Grenades);
-          if (thrownType) {
-            p1.attackCooldown = 50;
-            sounds.playGunshot('grenade');
-            const dir = p1.facingRight ? 1 : -1;
-            const gCfg = GRENADE_DATABASE[thrownType];
-
-            s.projectiles.push({
-              id: s.nextEntityId++,
-              x: p1.x + dir * 18,
-              y: p1.y - 12,
-              vx: dir * 420 + p1.velocityX * 0.35,
-              vy: -320,
-              damage: gCfg.damage * p1.damageDealtModifier,
-              onFireDuration: gCfg.burnDurationTicks || 0,
-              explosionRadius: gCfg.explosionRadius,
-              shooterId: p1.id,
-              weaponType: WeaponType.Grenade,
-              pelletCount: 1,
-              lifeTicks: 0,
-              maxLifeTicks: gCfg.fuseTicks || 85,
-              isGrenade: true,
-              isMolotov: thrownType === GrenadeType.Molotov,
-              grenadeType: thrownType,
-              rotation: 0,
-              rotationSpeed: dir * 0.22,
-              color: gCfg.color,
-            });
-
-            s.floatingTexts.push({
-              id: s.nextEntityId++,
-              text: `¡${gCfg.shortName}! (${s.p1Grenades.ammo[thrownType]} rest.)`,
-              x: p1.x,
-              y: p1.y - 32,
-              color: gCfg.color,
-              life: 30,
-            });
-          } else {
-            // Sin munición de granadas
-            p1.attackCooldown = 15;
-            sounds.playDryFire();
-            s.floatingTexts.push({
-              id: s.nextEntityId++,
-              text: '¡SIN GRANADAS!',
-              x: p1.x,
-              y: p1.y - 30,
-              color: '#ef4444',
-              life: 25,
-            });
-          }
-        }
+        // Lanzamiento de bombas/granadas P1 está centralizado arriba en la sección 3 con animación 'throw_up' (One Shot de 5 frames, soltando en Frame 3)
       }
 
       // ─────────────────────────────────────────────────────────
@@ -4176,10 +4532,15 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           sounds.playPickup();
 
           // Lógica de Equipamiento: cambia el estado del personaje según el arma
+          const isThrowable = isThrowableWeapon(w.weaponType);
           const isRifle = isRifleWeapon(w.weaponType);
           const isTwoHand = isTwoHandWeapon(w.weaponType);
           const isPistol = isPistolWeapon(w.weaponType);
-          if (isRifle) {
+          if (isThrowable) {
+            p1.characterState = 'arrojadiza';
+            p1.weaponState = 'arrojadiza';
+            s.p1Controller.hasHeavyRifleEquipped = false;
+          } else if (isRifle) {
             p1.characterState = 'arma_dos_manos';
             p1.weaponState = 'rifle';
             s.p1Controller.hasHeavyRifleEquipped = true;
@@ -4203,7 +4564,9 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
           s.floatingTexts.push({
             id: s.nextEntityId++,
-            text: isRifle
+            text: isThrowable
+              ? `¡${wData.name}! (arrojadiza)`
+              : isRifle
               ? `¡${wData.name}! (rifle)`
               : isTwoHand
               ? `¡${wData.name}! (arma_dos_manos)`
@@ -4212,7 +4575,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
               : `¡${wData.name}!`,
             x: p1.x,
             y: p1.y - 35,
-            color: isRifle ? '#eab308' : isTwoHand ? '#f97316' : '#38bdf8',
+            color: isThrowable ? '#38bdf8' : isRifle ? '#eab308' : isTwoHand ? '#f97316' : '#38bdf8',
             life: 45,
           });
 
@@ -4318,9 +4681,40 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             pr.rotationSpeed = -(pr.rotationSpeed || 0.15);
           }
 
+          if (pr.weaponType === WeaponType.Baseball) {
+            const target = pr.shooterId === s.p1.id ? s.bot : s.p1;
+            if (target.isAlive && Math.hypot(pr.x - target.x, pr.y - (target.y - 10)) < 26) {
+              target.health = Math.max(0, target.health - pr.damage);
+              target.velocityX += pr.vx * 0.45;
+              sounds.playPunch();
+              addSparks(pr.x, pr.y, '#f8fafc', 10);
+              s.floatingTexts.push({
+                id: s.nextEntityId++,
+                text: `¡BÉISBOL! -${Math.round(pr.damage)}`,
+                x: target.x,
+                y: target.y - 30,
+                color: '#f8fafc',
+                life: 30,
+              });
+              s.projectiles.splice(i, 1);
+              continue;
+            }
+          }
+
+          if (pr.weaponType === WeaponType.Mine) {
+            const target = pr.shooterId === s.p1.id ? s.bot : s.p1;
+            if (pr.lifeTicks > 15 && target.isAlive && Math.hypot(pr.x - target.x, pr.y - target.y) < 28) {
+              triggerGrenadeDetonation(s, pr);
+              s.projectiles.splice(i, 1);
+              continue;
+            }
+          }
+
           const maxFuse = pr.maxLifeTicks || (pr.isMolotov ? 70 : 85);
           if (pr.lifeTicks >= maxFuse) {
-            triggerGrenadeDetonation(s, pr);
+            if (pr.weaponType !== WeaponType.Baseball) {
+              triggerGrenadeDetonation(s, pr);
+            }
             s.projectiles.splice(i, 1);
             continue;
           }
@@ -5149,8 +5543,44 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           isBlade &&
           (p.fsm === PlayerFSMState.MeleeAttack || p.isSliding || p.isChargingHeavy);
 
-        // -1. Animación de Ataque a dos manos (Rifles/Escopetas) (rifle_shoot - 4 frames)
+        // -2. Animación de Lanzamiento (throw_up - 5 frames)
         if (
+          p.isThrowing &&
+          s.p1ThrowUpSheet &&
+          s.p1ThrowUpSheet.complete &&
+          s.p1ThrowUpSheet.naturalWidth > 0
+        ) {
+          const throwCols = cfg?.throwUpCols || 5;
+          const throwRows = cfg?.throwUpRows || 1;
+          const frameW = s.p1ThrowUpSheet.naturalWidth / throwCols;
+          const frameH = s.p1ThrowUpSheet.naturalHeight / throwRows;
+
+          const safeCol = Math.max(0, Math.min(throwCols - 1, p.throwAnimFrame || 0));
+          const sx = safeCol * frameW;
+          const sy = 0;
+
+          ctx.drawImage(s.p1ThrowUpSheet, sx, sy, frameW, frameH, drawX, drawY, charW, charH);
+
+          const currentF = p.throwAnimFrame || 0;
+
+          if (currentF < 2 && !p.throwHasReleased) {
+            const wImg = s.weaponImages[p.equippedWeapon] || s.weaponImages[WeaponType.Grenade];
+            if (wImg && wImg.complete && wImg.naturalWidth > 0) {
+              ctx.save();
+              if (currentF === 0) {
+                // Frame 0: mano recogida hacia atrás
+                ctx.translate(-14, -14);
+                ctx.rotate(-0.35);
+              } else if (currentF === 1) {
+                // Frame 1: mano levantada hacia arriba
+                ctx.translate(-6, -26);
+                ctx.rotate(-0.75);
+              }
+              ctx.drawImage(wImg, -8, -8, 16, 16);
+              ctx.restore();
+            }
+          }
+        } else if (
           p.isRifleShooting &&
           s.p1RifleSheet &&
           s.p1RifleSheet.complete &&
@@ -5705,14 +6135,14 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       for (const pr of s.projectiles) {
         if (pr.isGrenade) {
           const gType = pr.grenadeType || GrenadeType.Frag;
-          const gImg = s.grenadeImages[gType];
+          const wImg = (pr.weaponType && s.weaponImages[pr.weaponType]) || s.grenadeImages[gType];
           ctx.save();
           ctx.translate(pr.x, pr.y);
           ctx.rotate(pr.rotation || 0);
 
-          if (gImg && gImg.complete && gImg.naturalWidth > 0) {
-            // Renderizado físico preciso con la imagen/modelo de la granada equipada
-            ctx.drawImage(gImg, -10, -10, 20, 20);
+          if (wImg && wImg.complete && wImg.naturalWidth > 0) {
+            // Renderizado físico preciso con la imagen/modelo de la granada o arrojadizo equipado
+            ctx.drawImage(wImg, -11, -11, 22, 22);
           } else {
             ctx.fillStyle = pr.color;
             ctx.beginPath();

@@ -132,9 +132,16 @@ export interface PlayerState {
   rifleAnimTimer?: number;
   rifleHasFired?: boolean;
 
-  // Estado del personaje según arma equipada ('arma_dos_manos' | 'arma_una_mano' | 'pistola' | 'rifle' | 'desarmado')
+  // Set de animación de Lanzamiento (throw_up - 5 frames One Shot, suelta en frame 3)
+  isThrowing?: boolean;
+  throwAnimFrame?: number;
+  throwAnimTimer?: number;
+  throwHasReleased?: boolean;
+  throwInitialInertia?: number;
+
+  // Estado del personaje según arma equipada ('arma_dos_manos' | 'arma_una_mano' | 'pistola' | 'rifle' | 'arrojadiza' | 'desarmado')
   characterState?: string;
-  weaponState?: 'arma_dos_manos' | 'arma_una_mano' | 'pistola' | 'rifle' | 'desarmado';
+  weaponState?: 'arma_dos_manos' | 'arma_una_mano' | 'pistola' | 'rifle' | 'arrojadiza' | 'desarmado';
 }
 
 export function createPlayerState(

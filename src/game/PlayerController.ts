@@ -106,6 +106,9 @@ export class PlayerController {
   // Flag de disparo activo con rifle
   public isShootingRifle: boolean = false;
 
+  // Flag de animación activa de lanzamiento (throw_up): se detiene o camina a velocidad de caminata
+  public isThrowing: boolean = false;
+
   // Altura actual interna del collider
   private _hitboxHeight: number = PLAYER_CONFIG.HITBOX_HEIGHT_STAND;
 
@@ -317,6 +320,15 @@ export class PlayerController {
         this.rollDirection = targetDir;
         // Velocidad limitada estrictamente a caminar: no puede correr
         this.vx = targetDir * PLAYER_CONFIG.WALK_SPEED;
+      }
+      return;
+    }
+
+    if (this.isThrowing) {
+      // Movimiento: El personaje se detiene mientras ejecuta el lanzamiento
+      this.vx = 0;
+      if (input.moveDir !== 0) {
+        this.facingRight = input.moveDir > 0;
       }
       return;
     }
@@ -545,6 +557,11 @@ export class PlayerController {
     }
 
     // En el suelo: transición fluida entre Idle, Walk y Run con inercia
+    if (this.isThrowing) {
+      this.state = PlayerState.Idle;
+      return;
+    }
+
     const currentSpeed = Math.abs(this.vx);
     if (currentSpeed <= 10) {
       this.state = PlayerState.Idle;

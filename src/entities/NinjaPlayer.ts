@@ -6,6 +6,7 @@
 import Phaser from 'phaser';
 import { NINJA_CONFIG, NinjaState } from '../game/NinjaController';
 import { PlayerInput } from './Player';
+import { isOneHandWeapon, WeaponType } from '../game/WeaponData';
 
 export interface NinjaPlayerOptions {
   textureKey?: string;
@@ -38,6 +39,12 @@ export class NinjaPlayer extends Phaser.Physics.Arcade.Sprite {
   private coyoteTimer: number = 0;
   private jumpBufferTimer: number = 0;
   private shootCooldownTimer: number = 0;
+
+  // Combo melee Ninja (3 Filas: Puñetazo, Patada, Uppercut)
+  private attackTimer: number = 0;
+  private comboStep: number = 0;
+  private comboWindowTimer: number = 0;
+  private comboBuffered: boolean = false;
 
   constructor(
     scene: Phaser.Scene,
@@ -96,6 +103,86 @@ export class NinjaPlayer extends Phaser.Physics.Arcade.Sprite {
 
     if (input.jumpPressed) {
       this.jumpBufferTimer = 100; // ms
+    }
+
+    // Actualización de ventana de combo melee Ninja (tecla N)
+    if (this.comboWindowTimer > 0) {
+      this.comboWindowTimer -= delta;
+      if (this.comboWindowTimer <= 0 && this.state !== NinjaState.Attack) {
+        this.comboStep = 0;
+      }
+    }
+
+    // Lógica de ataque melee / arma a una mano Ninja (One-Shot, bloqueo de movimiento)
+    if (this.state === NinjaState.Attack) {
+      this.setVelocityX(0);
+      this.attackTimer -= delta;
+
+      const isOneHand = this.currentWeapon && isOneHandWeapon(this.currentWeapon as WeaponType);
+      const animKey = isOneHand
+        ? 'one_hand_attack'
+        : (this.comboStep === 0 ? 'ninja_punch' : this.comboStep === 1 ? 'ninja_kick' : 'ninja_uppercut');
+
+      if (!isOneHand && input.meleePressed && this.comboStep < 2) {
+        this.comboBuffered = true;
+      }
+
+      if (this.anims?.animationManager?.exists(animKey) && this.anims.currentAnim?.key !== animKey) {
+        this.anims.play(animKey, true);
+      }
+
+      if (this.attackTimer <= 0) {
+        if (!isOneHand && this.comboBuffered && this.comboStep < 2) {
+          this.comboStep++;
+          this.attackTimer = 330;
+          this.comboBuffered = false;
+          this.comboWindowTimer = 450;
+          const nextAnimKey = this.comboStep === 1 ? 'ninja_kick' : 'ninja_uppercut';
+          if (this.anims?.animationManager?.exists(nextAnimKey)) {
+            this.anims.play(nextAnimKey, true);
+          }
+        } else {
+          this.state = onFloor ? NinjaState.Idle : NinjaState.Fall;
+          this.anims?.stop();
+          this.setTexture('ninja_sprite');
+          if (isOneHand || this.comboStep >= 2) {
+            this.comboStep = 0;
+            this.comboWindowTimer = 0;
+          } else {
+            this.comboStep++;
+            this.comboWindowTimer = 450;
+          }
+        }
+      }
+      return;
+    }
+
+    // Iniciar ataque Ninja si se presiona la tecla de ataque (N) en el suelo
+    if (input.meleePressed && onFloor && this.state !== NinjaState.Roll) {
+      this.state = NinjaState.Attack;
+      const isOneHand = this.currentWeapon && isOneHandWeapon(this.currentWeapon as WeaponType);
+
+      if (isOneHand) {
+        // Ataque a una mano: velocidad mayor (200ms) y One Shot
+        this.comboStep = 0;
+        this.attackTimer = 200;
+        this.comboBuffered = false;
+        this.setVelocityX(0);
+        if (this.anims?.animationManager?.exists('one_hand_attack')) {
+          this.anims.play('one_hand_attack', true);
+        }
+      } else {
+        const targetStep = (this.comboWindowTimer > 0 && this.comboStep > 0 && this.comboStep <= 2) ? this.comboStep : 0;
+        this.comboStep = targetStep;
+        this.attackTimer = 330;
+        this.comboBuffered = false;
+        this.setVelocityX(0);
+        const animKey = targetStep === 0 ? 'ninja_punch' : targetStep === 1 ? 'ninja_kick' : 'ninja_uppercut';
+        if (this.anims?.animationManager?.exists(animKey)) {
+          this.anims.play(animKey, true);
+        }
+      }
+      return;
     }
 
     // Lógica exclusiva de Rodada / Evasión Ninja (7 frames sin loop)

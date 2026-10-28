@@ -11,7 +11,7 @@ import { GameConstants } from '../game/GameConstants';
 import { PhysicsRect, PhysicsStep } from '../game/PhysicsStep';
 import { PlayerFSM } from '../game/PlayerFSM';
 import { createPlayerState, PlayerFSMState, PlayerState } from '../game/PlayerState';
-import { getWeapon, isBladeWeapon, SpawnableWeaponsList, WeaponCategory, WeaponDatabase, WeaponType } from '../game/WeaponData';
+import { getWeapon, isBladeWeapon, isOneHandWeapon, SpawnableWeaponsList, WeaponCategory, WeaponDatabase, WeaponType } from '../game/WeaponData';
 import { PlayerController, PlayerInput, PlayerState as ControllerState, PLAYER_CONFIG } from '../game/PlayerController';
 import { sounds } from '../game/SoundEffects';
 import { getWorldConfig, WorldConfig, HazardCfg, PlatformRect } from '../game/WorldData';
@@ -72,6 +72,16 @@ export interface SpritesheetDef {
   jumpCols?: number;
   jumpRows?: number;
   jumpTotalFrames?: number;
+  hasMeleeSheet?: boolean;
+  meleeSheetUrl?: string;
+  meleeCols?: number;
+  meleeRows?: number;
+  meleeTotalFramesPerRow?: number;
+  hasOneHandAttackSheet?: boolean;
+  oneHandAttackSheetUrl?: string;
+  oneHandCols?: number;
+  oneHandRows?: number;
+  oneHandTotalFrames?: number;
 }
 
 export const CHARACTER_SPRITESHEETS: Record<string, SpritesheetDef> = {
@@ -81,12 +91,17 @@ export const CHARACTER_SPRITESHEETS: Record<string, SpritesheetDef> = {
   // Animación de carrera horizontal de 6 frames con inercia (/assets/sprites/player/ninja_run.png).
   // Animación de rodar (roll) de 7 frames sin loop (/assets/sprites/player/ninja_roll.png).
   // Animación de salto (jump) de 6 frames en 2 filas x 3 columnas (/assets/sprites/player/ninja_jump.png).
+  // Hoja de sprites de combate melee de 3 filas x 6 columnas (/assets/sprites/player/ninja_melee.png):
+  //   Fila 1: Puñetazo | Fila 2: Patada | Fila 3: Uppercut
+  // Set de animación de Ataque a una mano de 5 frames (/assets/sprites/player/one_hand_attack.png)
   [BotFaction.Ninja]: {
     idleUrl: '/assets/sprites/player/ninja.png',
     walkSheetUrl: '/assets/sprites/player/ninja_walk.png',
     runSheetUrl: '/assets/sprites/player/ninja_run.png',
     rollSheetUrl: '/assets/sprites/player/ninja_roll.png',
     jumpSheetUrl: '/assets/sprites/player/ninja_jump.png',
+    meleeSheetUrl: '/assets/sprites/player/ninja_melee.png',
+    oneHandAttackSheetUrl: '/assets/sprites/player/one_hand_attack.png',
     cols: 6,
     rows: 1,
     totalFrames: 6,
@@ -94,6 +109,8 @@ export const CHARACTER_SPRITESHEETS: Record<string, SpritesheetDef> = {
     hasRunSheet: true,
     hasRollSheet: true,
     hasJumpSheet: true,
+    hasMeleeSheet: true,
+    hasOneHandAttackSheet: true,
     runCols: 6,
     runRows: 1,
     runTotalFrames: 6,
@@ -103,6 +120,12 @@ export const CHARACTER_SPRITESHEETS: Record<string, SpritesheetDef> = {
     jumpCols: 3,
     jumpRows: 2,
     jumpTotalFrames: 6,
+    meleeCols: 6,
+    meleeRows: 3,
+    meleeTotalFramesPerRow: 6,
+    oneHandCols: 5,
+    oneHandRows: 1,
+    oneHandTotalFrames: 5,
   },
   // ── 1. ASESINO (ASSASSIN) ──
   // Utiliza la imagen oficial prevista (/assets/sprites/player/Assassin_2.png)
@@ -416,6 +439,8 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     p1RunSheet: HTMLImageElement | null;
     p1RollSheet: HTMLImageElement | null;
     p1JumpSheet: HTMLImageElement | null;
+    p1MeleeSheet: HTMLImageElement | null;
+    p1OneHandSheet: HTMLImageElement | null;
     p1IdleSprite: HTMLImageElement | null;
     p1SheetConfig: SpritesheetDef;
     botWalkSheet: HTMLImageElement | null;
@@ -737,6 +762,24 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       p1JumpSheet.src = p1Cfg.jumpSheetUrl;
     }
 
+    let p1MeleeSheet: HTMLImageElement | null = null;
+    if (p1Cfg.hasMeleeSheet && p1Cfg.meleeSheetUrl) {
+      p1MeleeSheet = new Image();
+      p1MeleeSheet.src = p1Cfg.meleeSheetUrl;
+    } else if (effectiveP1Faction === BotFaction.Ninja) {
+      p1MeleeSheet = new Image();
+      p1MeleeSheet.src = '/assets/sprites/player/ninja_melee.png';
+    }
+
+    let p1OneHandSheet: HTMLImageElement | null = null;
+    if (p1Cfg.hasOneHandAttackSheet && p1Cfg.oneHandAttackSheetUrl) {
+      p1OneHandSheet = new Image();
+      p1OneHandSheet.src = p1Cfg.oneHandAttackSheetUrl;
+    } else if (effectiveP1Faction === BotFaction.Ninja) {
+      p1OneHandSheet = new Image();
+      p1OneHandSheet.src = '/assets/sprites/player/one_hand_attack.png';
+    }
+
     const p1IdleSprite = new Image();
     p1IdleSprite.src = p1Cfg.idleUrl || pArch.spriteUrl || '/assets/sprites/player/Assassin_2.png';
 
@@ -854,6 +897,8 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       p1RunSheet,
       p1RollSheet,
       p1JumpSheet,
+      p1MeleeSheet,
+      p1OneHandSheet,
       p1IdleSprite,
       p1SheetConfig: p1Cfg,
       botWalkSheet,
@@ -1076,6 +1121,14 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           sounds.playHit();
         } else {
           PlayerFSM.tryTransition(target, PlayerFSMState.KnockedDown);
+        }
+
+        if (target.id === s.p1.id) {
+          s.p1.isMeleeComboAttacking = false;
+          s.p1.comboStep = 0;
+          s.p1.meleeComboStep = 0;
+          s.p1.comboBuffered = false;
+          s.p1.comboWindowTicks = 0;
         }
 
         s.floatingTexts.push({
@@ -1322,13 +1375,15 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         const crouchHeld = is1v1 ? !!keys['arrowdown'] : !!(keys['s'] || keys['arrowdown']);
         const dropThrough = crouchHeld && jumpJustPressed;
 
+        const isNinjaComboLocked = !!p1.isMeleeComboAttacking || !!p1.isOneHandAttacking;
+
         const p1Input: PlayerInput = {
-          moveDir,
-          run: runHeld,
-          jump: jumpJustPressed && !dropThrough,
-          jumpHeld,
-          roll: rollPressed && !dropThrough,
-          dropThrough,
+          moveDir: isNinjaComboLocked ? 0 : moveDir,
+          run: isNinjaComboLocked ? false : runHeld,
+          jump: isNinjaComboLocked ? false : (jumpJustPressed && !dropThrough),
+          jumpHeld: isNinjaComboLocked ? false : jumpHeld,
+          roll: isNinjaComboLocked ? false : (rollPressed && !dropThrough),
+          dropThrough: isNinjaComboLocked ? false : dropThrough,
         };
 
         // Recuperación activa de derribo para P1 mediante teclas de movimiento (Flechas, WASD, salto, rodada)
@@ -1409,9 +1464,16 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
           s.p1Controller.update(1 / 60, p1Input, s.platforms);
 
+          if (p1.isMeleeComboAttacking || p1.isOneHandAttacking) {
+            s.p1Controller.vx = 0;
+            p1.velocityX = 0;
+            s.p1Controller.state = ControllerState.Idle;
+            p1.fsm = PlayerFSMState.MeleeAttack;
+          }
+
           p1.x = s.p1Controller.x;
           p1.y = s.p1Controller.y;
-          p1.velocityX = s.p1Controller.vx;
+          p1.velocityX = (p1.isMeleeComboAttacking || p1.isOneHandAttacking) ? 0 : s.p1Controller.vx;
           p1.velocityY = s.p1Controller.vy;
           p1.facingRight = s.p1Controller.facingRight;
           p1.onGround = s.p1Controller.isOnFloor;
@@ -1543,7 +1605,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           } else if (
             meleeJustPressed &&
             p1.attackCooldown <= 0 &&
-            (crouchHeld || s.p1Controller.state === ControllerState.Roll || Math.abs(p1.velocityX) > 130) &&
+            (crouchHeld || s.p1Controller.state === ControllerState.Roll) &&
             p1.onGround
           ) {
             const isBladeP1 = isBladeWeapon(p1.equippedWeapon);
@@ -1610,149 +1672,362 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                 addSparks(b.x + 12, b.y + 16, '#ef4444', 10);
               }
             });
-          } else if (
-            meleeHeld &&
-            p1.attackCooldown <= 0 &&
-            !p1.isSliding &&
-            (p1.fsm === PlayerFSMState.Idle ||
-              p1.fsm === PlayerFSMState.Run ||
-              p1.fsm === PlayerFSMState.Crouch)
-          ) {
-            const isBladeP1 = isBladeWeapon(p1.equippedWeapon);
-            if (!p1.isChargingHeavy) {
-              p1.isChargingHeavy = true;
-              p1.heavyChargeTicks = 0;
-              sounds.playHeavyCharge();
-            }
-            p1.heavyChargeTicks++;
-            p1.velocityX *= 0.88;
-            s.p1Controller.vx = p1.velocityX;
+          }
+        }
 
-            if (p1.heavyChargeTicks % 3 === 0) {
-              addSparks(
-                p1.x + (Math.random() - 0.5) * 24,
-                p1.y + (Math.random() - 0.5) * 24,
-                isBladeP1 ? '#e0f2fe' : '#38bdf8',
-                2
-              );
-            }
-          } else if (p1.isChargingHeavy && !meleeHeld) {
-            const isBladeP1 = isBladeWeapon(p1.equippedWeapon);
-            const charge = p1.heavyChargeTicks;
-            p1.isChargingHeavy = false;
-            p1.heavyChargeTicks = 0;
+        // ─────────────────────────────────────────────────────────
+        // SISTEMA DE ATAQUE (TECLA ÚNICA "N")
+        // - Si porta arma "Una mano" (Katana, Machete, Cuchillo, Baton, ShockBaton, Whip, CueStick):
+        //   Reproduce la animación 'one_hand_attack' de 5 frames (One Shot, veloz, bloqueo de movimiento).
+        // - Si está desarmado o con puños:
+        //   Reproduce el combo melee de 3 filas (1: Puñetazo | 2: Patada | 3: Uppercut).
+        // ─────────────────────────────────────────────────────────
+        const nJustPressed = !!s.keysJustPressed['n'] || !!s.keysJustPressed['N'];
 
-            if (charge >= 12) {
-              const chargeRatio = Math.min(1, charge / 36);
-              if (isBladeP1) {
-                sounds.playHeavyBladeSlash();
-                p1.attackCooldown = 30;
-              } else {
-                sounds.playHeavySmash();
-                p1.attackCooldown = 32;
-              }
+        if (
+          nJustPressed &&
+          p1.isAlive &&
+          s.roundActive &&
+          p1.fsm !== PlayerFSMState.KnockedDown &&
+          p1.fsm !== PlayerFSMState.GetUp &&
+          p1.fsm !== PlayerFSMState.Hitstun &&
+          p1.fsm !== PlayerFSMState.Roll &&
+          !p1.isGrappling
+        ) {
+          if (isOneHandWeapon(p1.equippedWeapon)) {
+            // Ataque a una mano: animación One Shot de 5 frames rápida
+            if (!p1.isOneHandAttacking) {
+              p1.isOneHandAttacking = true;
+              p1.oneHandAnimFrame = 0;
+              p1.oneHandAnimTimer = 0;
+              p1.oneHandHasHit = false;
+
+              // Bloqueo estricto de movimiento: no caminar, correr ni saltar
+              p1.velocityX = 0;
+              s.p1Controller.vx = 0;
+              s.p1Controller.state = ControllerState.Idle;
               PlayerFSM.tryTransition(p1, PlayerFSMState.MeleeAttack);
 
-              p1.velocityX = p1FacingDir * (isBladeP1 ? (220 + 150 * chargeRatio) : (180 + 120 * chargeRatio));
-              s.p1Controller.vx = p1.velocityX;
-              s.screenShake = 12 + Math.round(chargeRatio * 8);
-
-              if (isBladeP1) {
-                const slashHit = CombatSystem.resolveBladeHeavySlash(p1, bot, chargeRatio);
-                if (slashHit.didHit) {
-                  sounds.playBladeHit();
-                  addSparks(bot.x, bot.y, '#e0f2fe', 26);
-                  addSparks(bot.x, bot.y, '#ef4444', 18);
-                  addSparks(bot.x, bot.y, '#38bdf8', 16);
-                  s.floatingTexts.push({
-                    id: s.nextEntityId++,
-                    text: chargeRatio > 0.75
-                      ? `¡TAJO DEMOLEDOR CRÍTICO! -${Math.round(slashHit.damageDealt)}`
-                      : `¡TAJO CON FILO! -${Math.round(slashHit.damageDealt)}`,
-                    x: bot.x,
-                    y: bot.y - 35,
-                    color: '#38bdf8',
-                    life: 45,
-                  });
-                }
-              } else {
-                const smashHit = CombatSystem.resolveHeavySmash(p1, bot, chargeRatio);
-                if (smashHit.didHit) {
-                  sounds.playHit();
-                  addSparks(bot.x, bot.y, '#f59e0b', 24);
-                  addSparks(bot.x, bot.y, '#ef4444', 16);
-                  s.floatingTexts.push({
-                    id: s.nextEntityId++,
-                    text: chargeRatio > 0.75
-                      ? `¡SMASH CRÍTICO! -${Math.round(smashHit.damageDealt)}`
-                      : `¡HEAVY SMASH! -${Math.round(smashHit.damageDealt)}`,
-                    x: bot.x,
-                    y: bot.y - 35,
-                    color: '#f59e0b',
-                    life: 45,
-                  });
-                }
-              }
-
-              s.crates.forEach((c) => {
-                if (Math.hypot(p1.x - (c.x + c.w / 2), p1.y - (c.y + c.h / 2)) < 55) {
-                  c.health -= isBladeP1 ? 30 : 25;
-                  c.vx = p1FacingDir * 460;
-                  sounds.playCrateBreak();
-                  addSparks(c.x + 16, c.y + 16, '#d97706', 14);
-                }
-              });
-              s.barrels.forEach((b) => {
-                if (Math.hypot(p1.x - (b.x + b.w / 2), b.y - (b.y + b.h / 2)) < 55) {
-                  b.health -= 20;
-                  b.vx = p1FacingDir * 520;
-                  sounds.playHit();
-                  addSparks(b.x + 12, b.y + 16, '#ef4444', 14);
-                }
-              });
-            } else {
-              p1.comboStep = (p1.comboStep + 1) % 3;
-              p1.comboWindowTicks = isBladeP1 ? 34 : GameConstants.FistsComboWindowTicks;
-              p1.attackCooldown = isBladeP1 ? 14 : GameConstants.FistsCooldownTicks;
-              PlayerFSM.tryTransition(p1, PlayerFSMState.MeleeAttack);
-
-              if (isBladeP1) {
+              if (isBladeWeapon(p1.equippedWeapon)) {
                 sounds.playSwordSwing();
-                const hit = CombatSystem.resolveBladeMelee(p1, bot);
-                if (hit.didHit) {
-                  sounds.playBladeHit();
-                  addSparks(bot.x, bot.y, '#e0f2fe', 18);
-                  addSparks(bot.x, bot.y, '#ef4444', 14);
-                  s.screenShake = p1.comboStep === 2 ? 9 : 5;
-                  const bladeComboNames = ['¡TAJO HORIZONTAL!', '¡CLEAVE DESCENDENTE!', '¡CORTE FINAL!'];
-                  s.floatingTexts.push({
-                    id: s.nextEntityId++,
-                    text: `${bladeComboNames[p1.comboStep]} -${Math.round(hit.damageDealt)}`,
-                    x: bot.x,
-                    y: bot.y - 25,
-                    color: '#38bdf8',
-                    life: 35,
-                  });
-                }
               } else {
                 sounds.playPunch();
-                const hit = CombatSystem.resolveMelee(p1, bot);
-                if (hit.didHit) {
-                  sounds.playHit();
-                  addSparks(bot.x, bot.y, '#38bdf8', 12);
-                  s.screenShake = p1.comboStep === 2 ? 8 : 5;
-                  const comboNames = ['¡JAB!', '¡CROSS!', '¡PATADA!'];
-                  s.floatingTexts.push({
-                    id: s.nextEntityId++,
-                    text: `${comboNames[p1.comboStep]} -${Math.round(hit.damageDealt)}`,
-                    x: bot.x,
-                    y: bot.y - 25,
-                    color: '#38bdf8',
-                    life: 35,
-                  });
+              }
+            }
+          } else {
+            // Sistema de combo melee desarmado (Puños)
+            if (p1.isMeleeComboAttacking) {
+              // 2do o 3er toque durante la ventana de tiempo antes de que termine el golpe anterior
+              if (p1.meleeComboStep < 2) {
+                p1.comboBuffered = true;
+                p1.comboWindowTicks = 34;
+
+                // Si ya superó el frame de impacto (frames 3, 4 o 5), cancela de inmediato la recuperación e inicia el siguiente golpe
+                if (p1.meleeAnimFrame >= 3) {
+                  p1.meleeComboStep++;
+                  p1.comboStep = p1.meleeComboStep;
+                  p1.meleeAnimFrame = 0;
+                  p1.meleeAnimTimer = 0;
+                  p1.meleeHasHit = false;
+                  p1.comboBuffered = false;
+                  p1.comboWindowTicks = 34;
+                  sounds.playPunch();
+                }
+              }
+            } else {
+              // Nuevo golpe (1er toque, o continuación si la ventana sigue abierta)
+              let nextStep = 0;
+              if (p1.comboWindowTicks > 0 && p1.comboStep > 0 && p1.comboStep <= 2) {
+                nextStep = p1.comboStep;
+              } else {
+                nextStep = 0;
+              }
+
+              p1.isMeleeComboAttacking = true;
+              p1.meleeComboStep = nextStep;
+              p1.comboStep = nextStep;
+              p1.meleeAnimFrame = 0;
+              p1.meleeAnimTimer = 0;
+              p1.meleeHasHit = false;
+              p1.comboBuffered = false;
+              p1.comboWindowTicks = 34;
+
+              // Bloqueo de movimiento inmediato
+              p1.velocityX = 0;
+              s.p1Controller.vx = 0;
+              s.p1Controller.state = ControllerState.Idle;
+              PlayerFSM.tryTransition(p1, PlayerFSMState.MeleeAttack);
+
+              sounds.playPunch();
+            }
+          }
+        }
+
+        // ─────────────────────────────────────────────────────────
+        // LÓGICA DE AVANCE Y RESOLUCIÓN DEL ATAQUE A UNA MANO (one_hand_attack)
+        // 5 Fotogramas, One Shot, mayor velocidad que los puños (2 ticks/frame vs 3 ticks/frame)
+        // ─────────────────────────────────────────────────────────
+        if (p1.isOneHandAttacking) {
+          // Bloqueo estricto de movimiento: el personaje no puede caminar, correr ni saltar
+          p1.velocityX = 0;
+          s.p1Controller.vx = 0;
+          s.p1Controller.state = ControllerState.Idle;
+          p1.fsm = PlayerFSMState.MeleeAttack;
+
+          p1.oneHandAnimTimer = (p1.oneHandAnimTimer || 0) + 1;
+          // Velocidad rápida: avanza cada 2 ticks (~33ms/frame, 10 ticks = 166ms total vs 300ms de los puños)
+          if (p1.oneHandAnimTimer >= 2) {
+            p1.oneHandAnimTimer = 0;
+            p1.oneHandAnimFrame = (p1.oneHandAnimFrame || 0) + 1;
+
+            if (p1.oneHandAnimFrame >= 5) {
+              // Al terminar el último frame (One Shot), vuelve al estado normal (Idle)
+              p1.isOneHandAttacking = false;
+              p1.oneHandAnimFrame = 0;
+              p1.oneHandAnimTimer = 0;
+              p1.oneHandHasHit = false;
+              p1.fsm = PlayerFSMState.Idle;
+            }
+          }
+
+          // Detección de impacto en el fotograma activo (fotograma 2)
+          if (!p1.oneHandHasHit && (p1.oneHandAnimFrame || 0) >= 2) {
+            p1.oneHandHasHit = true;
+            const p1FacingDir = p1.facingRight ? 1 : -1;
+            const hitReach = 58;
+            const isBotInReach =
+              bot.isAlive &&
+              !bot.isGrabbed &&
+              !s.p2Controller.isInvulnerable &&
+              bot.fsm !== PlayerFSMState.Roll &&
+              ((p1FacingDir > 0 && bot.x >= p1.x - 10 && bot.x <= p1.x + hitReach) ||
+               (p1FacingDir < 0 && bot.x <= p1.x + 10 && bot.x >= p1.x - hitReach)) &&
+              Math.abs(bot.y - p1.y) < 34;
+
+            const wpn = getWeapon(p1.equippedWeapon);
+            const isBlade = isBladeWeapon(p1.equippedWeapon);
+            const baseDmg = wpn.damage || 16;
+            const finalDmg = baseDmg * p1.damageDealtModifier;
+
+            if (isBotInReach) {
+              if (isBlade) {
+                sounds.playBladeHit();
+                addSparks(bot.x, bot.y, '#38bdf8', 16);
+                addSparks(bot.x, bot.y, '#ffffff', 10);
+              } else {
+                sounds.playHit();
+                addSparks(bot.x, bot.y, '#f59e0b', 16);
+              }
+
+              s.screenShake = 7;
+              bot.velocityX = p1FacingDir * 170;
+              bot.hitstunTicks = 16;
+              PlayerFSM.tryTransition(bot, PlayerFSMState.Hitstun);
+
+              bot.health = Math.max(0, bot.health - finalDmg);
+              if (bot.health <= 0) {
+                bot.health = 0;
+                bot.isAlive = false;
+                PlayerFSM.tryTransition(bot, PlayerFSMState.Dead);
+                sounds.playHit();
+              }
+
+              s.floatingTexts.push({
+                id: s.nextEntityId++,
+                text: `¡${wpn.name.toUpperCase()}! -${Math.round(finalDmg)}`,
+                x: bot.x,
+                y: bot.y - 32,
+                color: isBlade ? '#38bdf8' : '#f59e0b',
+                life: 35,
+              });
+            }
+
+            // Impacto en cajas del escenario
+            s.crates.forEach((c) => {
+              if (Math.hypot(p1.x + p1FacingDir * 30 - (c.x + c.w / 2), p1.y - (c.y + c.h / 2)) < 48) {
+                c.health -= baseDmg * 1.2;
+                c.vx = p1FacingDir * 290;
+                sounds.playHit();
+                addSparks(c.x + 16, c.y + 16, '#d97706', 12);
+              }
+            });
+
+            // Impacto en barriles
+            s.barrels.forEach((b) => {
+              if (Math.hypot(p1.x + p1FacingDir * 30 - (b.x + b.w / 2), p1.y - (b.y + b.h / 2)) < 48) {
+                b.health -= baseDmg;
+                b.vx = p1FacingDir * 330;
+                sounds.playHit();
+                addSparks(b.x + 12, b.y + 16, '#ef4444', 12);
+              }
+            });
+          }
+        }
+
+        // Cuenta regresiva de la ventana de combo: si pasa el tiempo sin presionar 'N', se reinicia a 0
+        if (p1.comboWindowTicks > 0) {
+          p1.comboWindowTicks--;
+          if (p1.comboWindowTicks <= 0 && !p1.isMeleeComboAttacking) {
+            p1.comboStep = 0;
+            p1.meleeComboStep = 0;
+          }
+        }
+
+        // Lógica de avance fotograma a fotograma y resolución de daño del combo
+        if (p1.isMeleeComboAttacking) {
+          // Bloqueo estricto de movimiento: no puede caminar, correr ni saltar
+          p1.velocityX = 0;
+          s.p1Controller.vx = 0;
+          s.p1Controller.state = ControllerState.Idle;
+          p1.fsm = PlayerFSMState.MeleeAttack;
+
+          p1.meleeAnimTimer++;
+          // 3 ticks por fotograma (18 ticks = ~300ms a 60 FPS por golpe de 6 frames)
+          if (p1.meleeAnimTimer >= 3) {
+            p1.meleeAnimTimer = 0;
+            p1.meleeAnimFrame++;
+
+            // Si el jugador pulsó 'N' antes de terminar y estamos en frames de salida (frame >= 4)
+            if (p1.comboBuffered && p1.meleeAnimFrame >= 4 && p1.meleeComboStep < 2) {
+              p1.meleeComboStep++;
+              p1.comboStep = p1.meleeComboStep;
+              p1.meleeAnimFrame = 0;
+              p1.meleeAnimTimer = 0;
+              p1.meleeHasHit = false;
+              p1.comboBuffered = false;
+              p1.comboWindowTicks = 34;
+              sounds.playPunch();
+            } else if (p1.meleeAnimFrame >= 6) {
+              // Fin del último frame (One Shot completado)
+              if (p1.comboBuffered && p1.meleeComboStep < 2) {
+                p1.meleeComboStep++;
+                p1.comboStep = p1.meleeComboStep;
+                p1.meleeAnimFrame = 0;
+                p1.meleeAnimTimer = 0;
+                p1.meleeHasHit = false;
+                p1.comboBuffered = false;
+                p1.comboWindowTicks = 34;
+                sounds.playPunch();
+              } else {
+                // Al terminar el último frame, vuelve al estado normal (Idle)
+                p1.isMeleeComboAttacking = false;
+                p1.meleeAnimFrame = 0;
+                p1.fsm = PlayerFSMState.Idle;
+
+                if (p1.meleeComboStep >= 2) {
+                  // Si completó el Uppercut (3er golpe), el combo finaliza y se reinicia
+                  p1.comboStep = 0;
+                  p1.comboWindowTicks = 0;
+                  p1.meleeComboStep = 0;
+                } else {
+                  // Si completó golpe 1 o 2, habilita la ventana de combo para el siguiente toque de 'N'
+                  p1.comboStep = p1.meleeComboStep + 1;
+                  p1.comboWindowTicks = 24; // Ventana de ~400ms para continuar el combo
                 }
               }
             }
+          }
+
+          // Detección de impacto en los fotogramas activos de golpe (frame 2 o 3)
+          if (!p1.meleeHasHit && p1.meleeAnimFrame >= 2 && p1.meleeAnimFrame <= 3) {
+            p1.meleeHasHit = true;
+            const p1FacingDir = p1.facingRight ? 1 : -1;
+            const hitReach = 50;
+            const isBotInReach =
+              bot.isAlive &&
+              !bot.isGrabbed &&
+              !s.p2Controller.isInvulnerable &&
+              bot.fsm !== PlayerFSMState.Roll &&
+              ((p1FacingDir > 0 && bot.x >= p1.x - 10 && bot.x <= p1.x + hitReach) ||
+               (p1FacingDir < 0 && bot.x <= p1.x + 10 && bot.x >= p1.x - hitReach)) &&
+              Math.abs(bot.y - p1.y) < 32;
+
+            if (isBotInReach) {
+              sounds.playHit();
+              let damage = 12;
+              let shake = 5;
+              let text = '¡PUÑETAZO!';
+              let textColor = '#38bdf8';
+
+              if (p1.meleeComboStep === 0) {
+                // Fila 1: Puñetazo
+                damage = 12 * p1.damageDealtModifier;
+                shake = 5;
+                text = `¡PUÑETAZO! -${Math.round(damage)}`;
+                textColor = '#38bdf8';
+                bot.velocityX = p1FacingDir * 110;
+                bot.hitstunTicks = 14;
+                PlayerFSM.tryTransition(bot, PlayerFSMState.Hitstun);
+                addSparks(bot.x, bot.y, '#38bdf8', 14);
+              } else if (p1.meleeComboStep === 1) {
+                // Fila 2: Patada
+                damage = 18 * p1.damageDealtModifier;
+                shake = 8;
+                text = `¡PATADA! -${Math.round(damage)}`;
+                textColor = '#f59e0b';
+                bot.velocityX = p1FacingDir * 200;
+                bot.hitstunTicks = 18;
+                PlayerFSM.tryTransition(bot, PlayerFSMState.Hitstun);
+                addSparks(bot.x, bot.y, '#f59e0b', 18);
+                addSparks(bot.x, bot.y, '#ffffff', 12);
+              } else {
+                // Fila 3: Uppercut (Lanzamiento vertical demoledor y derribo)
+                damage = 28 * p1.damageDealtModifier;
+                shake = 14;
+                text = `¡UPPERCUT! -${Math.round(damage)}`;
+                textColor = '#ef4444';
+                bot.velocityX = p1FacingDir * 240;
+                bot.velocityY = -390;
+                s.p2Controller.vy = -390;
+                bot.onGround = false;
+                bot.knockdownTicks = 45;
+                PlayerFSM.tryTransition(bot, PlayerFSMState.KnockedDown);
+                sounds.playHeavySmash();
+                addSparks(bot.x, bot.y - 12, '#ef4444', 26);
+                addSparks(bot.x, bot.y - 12, '#fde047', 20);
+                addSparks(bot.x, bot.y - 12, '#ffffff', 16);
+              }
+
+              s.screenShake = shake;
+              bot.health = Math.max(0, bot.health - damage);
+              if (bot.health <= 0) {
+                bot.health = 0;
+                bot.isAlive = false;
+                PlayerFSM.tryTransition(bot, PlayerFSMState.Dead);
+                sounds.playHit();
+              }
+
+              s.floatingTexts.push({
+                id: s.nextEntityId++,
+                text,
+                x: bot.x,
+                y: bot.y - 32,
+                color: textColor,
+                life: 35,
+              });
+            }
+
+            // Daño e interacción con cajas destructibles
+            s.crates.forEach((c) => {
+              if (Math.hypot(p1.x + p1FacingDir * 26 - (c.x + c.w / 2), p1.y - (c.y + c.h / 2)) < 44) {
+                const cDmg = p1.meleeComboStep === 2 ? 30 : p1.meleeComboStep === 1 ? 20 : 12;
+                c.health -= cDmg;
+                c.vx = p1FacingDir * 280;
+                sounds.playHit();
+                addSparks(c.x + 16, c.y + 16, '#d97706', 10);
+              }
+            });
+
+            // Daño en barriles explosivos
+            s.barrels.forEach((b) => {
+              if (Math.hypot(p1.x + p1FacingDir * 26 - (b.x + b.w / 2), p1.y - (b.y + b.h / 2)) < 44) {
+                const bDmg = p1.meleeComboStep === 2 ? 25 : p1.meleeComboStep === 1 ? 16 : 10;
+                b.health -= bDmg;
+                b.vx = p1FacingDir * 320;
+                sounds.playHit();
+                addSparks(b.x + 12, b.y + 16, '#ef4444', 10);
+              }
+            });
           }
         }
 
@@ -3611,6 +3886,18 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
               PlayerFSM.tryTransition(target, PlayerFSMState.Hitstun);
             }
 
+            if (target.id === p1.id) {
+              p1.isMeleeComboAttacking = false;
+              p1.comboStep = 0;
+              p1.meleeComboStep = 0;
+              p1.comboBuffered = false;
+              p1.comboWindowTicks = 0;
+              p1.isOneHandAttacking = false;
+              p1.oneHandAnimFrame = 0;
+              p1.oneHandAnimTimer = 0;
+              p1.oneHandHasHit = false;
+            }
+
             s.floatingTexts.push({
               id: s.nextEntityId++,
               text: `-${Math.round(finalDmg)}`,
@@ -4335,8 +4622,113 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           isBlade &&
           (p.fsm === PlayerFSMState.MeleeAttack || p.isSliding || p.isChargingHeavy);
 
-        // 1. Animación exclusiva de Salto (Jump de 6 frames en 2 filas x 3 columnas)
+        // 0. Animación de Ataque a una mano (one_hand_attack - 5 frames rápidos) para Katana, Machete, Cuchillo, etc.
         if (
+          p.isOneHandAttacking &&
+          s.p1OneHandSheet &&
+          s.p1OneHandSheet.complete &&
+          s.p1OneHandSheet.naturalWidth > 0
+        ) {
+          const oneHandCols = cfg?.oneHandCols || 5;
+          const oneHandRows = cfg?.oneHandRows || 1;
+          const frameW = s.p1OneHandSheet.naturalWidth / oneHandCols;
+          const frameH = s.p1OneHandSheet.naturalHeight / oneHandRows;
+
+          const safeCol = Math.max(0, Math.min(oneHandCols - 1, p.oneHandAnimFrame || 0));
+          const sx = safeCol * frameW;
+          const sy = 0;
+
+          ctx.drawImage(s.p1OneHandSheet, sx, sy, frameW, frameH, drawX, drawY, charW, charH);
+
+          // Estela dinámica de corte/impacto veloz en frames activos (frames 1, 2, 3)
+          if ((p.oneHandAnimFrame || 0) >= 1 && (p.oneHandAnimFrame || 0) <= 3) {
+            ctx.save();
+            ctx.lineWidth = 3.5;
+            ctx.strokeStyle = '#38bdf8';
+            ctx.shadowColor = '#38bdf8';
+            ctx.shadowBlur = 12;
+            ctx.beginPath();
+            ctx.arc(12, -4, 38, -Math.PI * 0.35, Math.PI * 0.25, false);
+            ctx.stroke();
+            ctx.restore();
+          }
+
+          // Arma equipada en la mano orientada y posicionada según el fotograma del swing
+          const wImg = s.weaponImages[p.equippedWeapon];
+          if (wImg && wImg.complete && wImg.naturalWidth > 0) {
+            ctx.save();
+            const frame = p.oneHandAnimFrame || 0;
+            if (frame === 0) {
+              ctx.translate(12, -2);
+              ctx.rotate(-0.25);
+            } else if (frame === 1) {
+              ctx.translate(18, -14);
+              ctx.rotate(-0.7);
+            } else if (frame === 2) {
+              ctx.translate(26, -2);
+              ctx.rotate(0.2);
+            } else if (frame === 3) {
+              ctx.translate(22, 8);
+              ctx.rotate(0.65);
+            } else {
+              ctx.translate(16, 2);
+              ctx.rotate(0.1);
+            }
+            ctx.drawImage(wImg, -4, -8, 28, 14);
+            ctx.restore();
+          }
+        } else if (
+          p.isMeleeComboAttacking &&
+          s.p1MeleeSheet &&
+          s.p1MeleeSheet.complete &&
+          s.p1MeleeSheet.naturalWidth > 0
+        ) {
+          const meleeCols = cfg?.meleeCols || 6;
+          const meleeRows = cfg?.meleeRows || 3;
+          const frameW = s.p1MeleeSheet.naturalWidth / meleeCols;
+          const frameH = s.p1MeleeSheet.naturalHeight / meleeRows;
+
+          const safeRow = Math.max(0, Math.min(2, p.meleeComboStep));
+          const safeCol = Math.max(0, Math.min(5, p.meleeAnimFrame));
+
+          const sx = safeCol * frameW;
+          const sy = safeRow * frameH;
+
+          ctx.drawImage(s.p1MeleeSheet, sx, sy, frameW, frameH, drawX, drawY, charW, charH);
+
+          // Estelas dinámicas de impacto (frames activos 2 y 3)
+          if (p.meleeAnimFrame >= 2 && p.meleeAnimFrame <= 3) {
+            ctx.save();
+            ctx.lineWidth = 3.5;
+            if (safeRow === 0) {
+              // Puñetazo: Destello horizontal azul cielo
+              ctx.strokeStyle = '#38bdf8';
+              ctx.shadowColor = '#38bdf8';
+              ctx.shadowBlur = 10;
+              ctx.beginPath();
+              ctx.moveTo(14, -6);
+              ctx.lineTo(36, -6);
+              ctx.stroke();
+            } else if (safeRow === 1) {
+              // Patada: Arco dinámico ámbar
+              ctx.strokeStyle = '#f59e0b';
+              ctx.shadowColor = '#f59e0b';
+              ctx.shadowBlur = 12;
+              ctx.beginPath();
+              ctx.arc(6, 4, 32, -Math.PI * 0.25, Math.PI * 0.35, false);
+              ctx.stroke();
+            } else {
+              // Uppercut: Arco ascendente rojo/dorado demoledor
+              ctx.strokeStyle = '#ef4444';
+              ctx.shadowColor = '#fde047';
+              ctx.shadowBlur = 16;
+              ctx.beginPath();
+              ctx.arc(8, -8, 38, Math.PI * 0.1, -Math.PI * 0.5, true);
+              ctx.stroke();
+            }
+            ctx.restore();
+          }
+        } else if (
           !p.onGround &&
           !isRolling &&
           cfg?.hasJumpSheet &&
@@ -4541,8 +4933,8 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         }
 
         // Arma equipada en mano (proporcional al personaje aumentado)
-        // Si está ejecutando el ataque de filo, el arma ya forma parte de la animación fluida del spritesheet
-        if (p.equippedWeapon !== WeaponType.Fists && !isBladeAttacking) {
+        // Si está ejecutando el ataque de filo, el ataque a una mano o el combo melee del Ninja, las manos muestran la animación
+        if (p.equippedWeapon !== WeaponType.Fists && !isBladeAttacking && !p.isMeleeComboAttacking && !p.isOneHandAttacking) {
           const wImg = s.weaponImages[p.equippedWeapon];
           if (wImg && wImg.complete && wImg.naturalWidth > 0) {
             ctx.drawImage(wImg, 8, -6, 32, 16);

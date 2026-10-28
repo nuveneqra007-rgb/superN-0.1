@@ -40,6 +40,14 @@ export class MainScene extends Phaser.Scene {
       frameWidth: 200,
       frameHeight: 290,
     });
+    this.load.spritesheet('ninja_melee', '/assets/sprites/player/ninja_melee.png', {
+      frameWidth: 220,
+      frameHeight: 290,
+    });
+    this.load.spritesheet('one_hand_attack', '/assets/sprites/player/one_hand_attack.png', {
+      frameWidth: 220,
+      frameHeight: 290,
+    });
     this.load.image('bot_sprite', '/assets/sprites/bot/thug.png');
     this.load.image('platform_block', '/assets/backgrounds/warehouse.jpg');
   }
@@ -93,6 +101,47 @@ export class MainScene extends Phaser.Scene {
         key: 'ninja_jump',
         frames: this.anims.generateFrameNumbers('ninja_jump', { start: 0, end: 5 }),
         frameRate: 10,
+        repeat: 0,
+      });
+    }
+
+    // Animaciones del Combo Melee del Ninja con tecla única 'N' (One Shot, 3 Filas):
+    // Fila 1: Puñetazo (frames 0 a 5)
+    if (!this.anims.exists('ninja_punch')) {
+      this.anims.create({
+        key: 'ninja_punch',
+        frames: this.anims.generateFrameNumbers('ninja_melee', { start: 0, end: 5 }),
+        frameRate: 18,
+        repeat: 0,
+      });
+    }
+
+    // Fila 2: Patada (frames 6 a 11)
+    if (!this.anims.exists('ninja_kick')) {
+      this.anims.create({
+        key: 'ninja_kick',
+        frames: this.anims.generateFrameNumbers('ninja_melee', { start: 6, end: 11 }),
+        frameRate: 18,
+        repeat: 0,
+      });
+    }
+
+    // Fila 3: Uppercut (frames 12 a 17)
+    if (!this.anims.exists('ninja_uppercut')) {
+      this.anims.create({
+        key: 'ninja_uppercut',
+        frames: this.anims.generateFrameNumbers('ninja_melee', { start: 12, end: 17 }),
+        frameRate: 18,
+        repeat: 0,
+      });
+    }
+
+    // Animación de Ataque a una mano de 5 fotogramas (rápido, One Shot)
+    if (!this.anims.exists('one_hand_attack')) {
+      this.anims.create({
+        key: 'one_hand_attack',
+        frames: this.anims.generateFrameNumbers('one_hand_attack', { start: 0, end: 4 }),
+        frameRate: 24, // Mayor velocidad que los puños
         repeat: 0,
       });
     }

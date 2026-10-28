@@ -98,6 +98,20 @@ export interface PlayerState {
   isGrabbed: boolean;
   grabbedTargetId: number | null;
   grappleTicks: number;
+
+  // Sistema de Combo Melee con Spritesheet de 3 Filas (Ninja: Puñetazo, Patada, Uppercut)
+  isMeleeComboAttacking?: boolean;
+  meleeComboStep: number;
+  meleeAnimFrame: number;
+  meleeAnimTimer: number;
+  meleeHasHit: boolean;
+  comboBuffered?: boolean;
+
+  // Set de animación de Ataque a una mano (one_hand_attack - 5 frames rápidos)
+  isOneHandAttacking?: boolean;
+  oneHandAnimFrame?: number;
+  oneHandAnimTimer?: number;
+  oneHandHasHit?: boolean;
 }
 
 export function createPlayerState(
@@ -157,5 +171,15 @@ export function createPlayerState(
     isGrabbed: false,
     grabbedTargetId: null,
     grappleTicks: 0,
+    isMeleeComboAttacking: false,
+    meleeComboStep: 0,
+    meleeAnimFrame: 0,
+    meleeAnimTimer: 0,
+    meleeHasHit: false,
+    comboBuffered: false,
+    isOneHandAttacking: false,
+    oneHandAnimFrame: 0,
+    oneHandAnimTimer: 0,
+    oneHandHasHit: false,
   };
 }

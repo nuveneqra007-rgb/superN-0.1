@@ -1049,3 +1049,22 @@ export function isBladeWeapon(type: WeaponType): boolean {
     type === WeaponType.Katana
   );
 }
+
+/**
+ * Armas de la categoría "Una mano" (One Hand):
+ * Katana, Machete, Cuchillo, Baton, ShockBaton, Whip y CueStick.
+ * Utilizan el set de animación de ataque rápido 'one_hand_attack' (5 frames).
+ */
+export const ONE_HAND_WEAPONS: ReadonlySet<WeaponType> = new Set([
+  WeaponType.Katana,
+  WeaponType.Machete,
+  WeaponType.Knife,
+  WeaponType.Baton,
+  WeaponType.ShockBaton,
+  WeaponType.Whip,
+  WeaponType.CueStick,
+]);
+
+export function isOneHandWeapon(type: WeaponType): boolean {
+  return ONE_HAND_WEAPONS.has(type);
+}

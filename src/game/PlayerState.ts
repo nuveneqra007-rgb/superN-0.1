@@ -28,6 +28,7 @@ export enum PlayerFSMState {
   KnockedDown = 'KnockedDown',   // 18 - Derribado en suelo
   GetUp = 'GetUp',               // 19 - Levantándose
   Dead = 'Dead',                 // 20 - Muerto
+  ArmaDosManos = 'arma_dos_manos', // Estado del personaje al equipar arma pesada a dos manos
 }
 
 export interface PlayerState {
@@ -112,6 +113,16 @@ export interface PlayerState {
   oneHandAnimFrame?: number;
   oneHandAnimTimer?: number;
   oneHandHasHit?: boolean;
+
+  // Set de animación de Ataque a dos manos (two_hand_attack - 6 frames pesados)
+  isTwoHandAttacking?: boolean;
+  twoHandAnimFrame?: number;
+  twoHandAnimTimer?: number;
+  twoHandHasHit?: boolean;
+
+  // Estado del personaje según arma equipada ('arma_dos_manos' | 'arma_una_mano' | 'desarmado')
+  characterState?: string;
+  weaponState?: 'arma_dos_manos' | 'arma_una_mano' | 'desarmado';
 }
 
 export function createPlayerState(
@@ -181,5 +192,11 @@ export function createPlayerState(
     oneHandAnimFrame: 0,
     oneHandAnimTimer: 0,
     oneHandHasHit: false,
+    isTwoHandAttacking: false,
+    twoHandAnimFrame: 0,
+    twoHandAnimTimer: 0,
+    twoHandHasHit: false,
+    characterState: 'desarmado',
+    weaponState: 'desarmado',
   };
 }

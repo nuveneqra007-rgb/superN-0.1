@@ -48,6 +48,10 @@ export class MainScene extends Phaser.Scene {
       frameWidth: 220,
       frameHeight: 290,
     });
+    this.load.spritesheet('two_hand_attack', '/assets/sprites/player/two_hand_attack.png', {
+      frameWidth: 220,
+      frameHeight: 290,
+    });
     this.load.image('bot_sprite', '/assets/sprites/bot/thug.png');
     this.load.image('platform_block', '/assets/backgrounds/warehouse.jpg');
   }
@@ -142,6 +146,16 @@ export class MainScene extends Phaser.Scene {
         key: 'one_hand_attack',
         frames: this.anims.generateFrameNumbers('one_hand_attack', { start: 0, end: 4 }),
         frameRate: 24, // Mayor velocidad que los puños
+        repeat: 0,
+      });
+    }
+
+    // Animación de Ataque a dos manos (Golpe pesado) de 6 fotogramas (más lento, One Shot)
+    if (!this.anims.exists('two_hand_attack')) {
+      this.anims.create({
+        key: 'two_hand_attack',
+        frames: this.anims.generateFrameNumbers('two_hand_attack', { start: 0, end: 5 }),
+        frameRate: 14, // Más lento por ser golpe pesado
         repeat: 0,
       });
     }

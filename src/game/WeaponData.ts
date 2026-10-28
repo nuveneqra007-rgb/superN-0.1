@@ -1068,3 +1068,47 @@ export const ONE_HAND_WEAPONS: ReadonlySet<WeaponType> = new Set([
 export function isOneHandWeapon(type: WeaponType): boolean {
   return ONE_HAND_WEAPONS.has(type);
 }
+
+/**
+ * Armas de la categoría "Ataque a dos manos (Golpe pesado)" (two_hand_attack):
+ * Hacha (Axe), Bat, LeadPipe, Hammer, Chair, Pipe, Bottle, Teapot y Pillow.
+ * Utilizan el set oficial de animación 'two_hand_attack' (6 frames) y
+ * cambian el estado del personaje a 'arma_dos_manos'.
+ */
+export const TWO_HAND_WEAPONS: ReadonlySet<WeaponType> = new Set([
+  WeaponType.Axe,
+  WeaponType.Bat,
+  WeaponType.LeadPipe,
+  WeaponType.Hammer,
+  WeaponType.Chair,
+  WeaponType.Pipe,
+  WeaponType.Bottle,
+  WeaponType.Teapot,
+  WeaponType.Pillow,
+]);
+
+export function isTwoHandWeapon(type: WeaponType): boolean {
+  return TWO_HAND_WEAPONS.has(type);
+}
+
+/**
+ * Armas de la categoría "Ataque a una mano (Pistolas)" (pistol_shoot):
+ * Pistol, Pistol45, Revolver, Magnum, SilencedPistol, MachinePistol, Uzi, SilencedUzi, FlareGun.
+ * Utilizan el set oficial de animación 'pistol_shoot' (4 frames) y la lógica de
+ * apuntado y disparo en movimiento de Superfighters.
+ */
+export const PISTOL_WEAPONS: ReadonlySet<WeaponType> = new Set([
+  WeaponType.Pistol,
+  WeaponType.Pistol45,
+  WeaponType.Revolver,
+  WeaponType.Magnum,
+  WeaponType.SilencedPistol,
+  WeaponType.MachinePistol,
+  WeaponType.Uzi,
+  WeaponType.SilencedUzi,
+  WeaponType.FlareGun,
+]);
+
+export function isPistolWeapon(type: WeaponType): boolean {
+  return PISTOL_WEAPONS.has(type);
+}

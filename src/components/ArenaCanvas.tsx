@@ -11,7 +11,7 @@ import { GameConstants } from '../game/GameConstants';
 import { PhysicsRect, PhysicsStep } from '../game/PhysicsStep';
 import { PlayerFSM } from '../game/PlayerFSM';
 import { createPlayerState, PlayerFSMState, PlayerState } from '../game/PlayerState';
-import { getWeapon, isBladeWeapon, isOneHandWeapon, SpawnableWeaponsList, WeaponCategory, WeaponDatabase, WeaponType } from '../game/WeaponData';
+import { getWeapon, isBladeWeapon, isOneHandWeapon, isTwoHandWeapon, SpawnableWeaponsList, WeaponCategory, WeaponDatabase, WeaponType } from '../game/WeaponData';
 import { PlayerController, PlayerInput, PlayerState as ControllerState, PLAYER_CONFIG } from '../game/PlayerController';
 import { sounds } from '../game/SoundEffects';
 import { getWorldConfig, WorldConfig, HazardCfg, PlatformRect } from '../game/WorldData';
@@ -82,6 +82,11 @@ export interface SpritesheetDef {
   oneHandCols?: number;
   oneHandRows?: number;
   oneHandTotalFrames?: number;
+  hasTwoHandAttackSheet?: boolean;
+  twoHandAttackSheetUrl?: string;
+  twoHandCols?: number;
+  twoHandRows?: number;
+  twoHandTotalFrames?: number;
 }
 
 export const CHARACTER_SPRITESHEETS: Record<string, SpritesheetDef> = {
@@ -94,6 +99,7 @@ export const CHARACTER_SPRITESHEETS: Record<string, SpritesheetDef> = {
   // Hoja de sprites de combate melee de 3 filas x 6 columnas (/assets/sprites/player/ninja_melee.png):
   //   Fila 1: Puñetazo | Fila 2: Patada | Fila 3: Uppercut
   // Set de animación de Ataque a una mano de 5 frames (/assets/sprites/player/one_hand_attack.png)
+  // Set oficial de Ataque a dos manos (Golpe pesado) de 6 frames (/assets/sprites/player/two_hand_attack.png)
   [BotFaction.Ninja]: {
     idleUrl: '/assets/sprites/player/ninja.png',
     walkSheetUrl: '/assets/sprites/player/ninja_walk.png',
@@ -102,6 +108,7 @@ export const CHARACTER_SPRITESHEETS: Record<string, SpritesheetDef> = {
     jumpSheetUrl: '/assets/sprites/player/ninja_jump.png',
     meleeSheetUrl: '/assets/sprites/player/ninja_melee.png',
     oneHandAttackSheetUrl: '/assets/sprites/player/one_hand_attack.png',
+    twoHandAttackSheetUrl: '/assets/sprites/player/two_hand_attack.png',
     cols: 6,
     rows: 1,
     totalFrames: 6,
@@ -111,6 +118,7 @@ export const CHARACTER_SPRITESHEETS: Record<string, SpritesheetDef> = {
     hasJumpSheet: true,
     hasMeleeSheet: true,
     hasOneHandAttackSheet: true,
+    hasTwoHandAttackSheet: true,
     runCols: 6,
     runRows: 1,
     runTotalFrames: 6,
@@ -126,6 +134,9 @@ export const CHARACTER_SPRITESHEETS: Record<string, SpritesheetDef> = {
     oneHandCols: 5,
     oneHandRows: 1,
     oneHandTotalFrames: 5,
+    twoHandCols: 6,
+    twoHandRows: 1,
+    twoHandTotalFrames: 6,
   },
   // ── 1. ASESINO (ASSASSIN) ──
   // Utiliza la imagen oficial prevista (/assets/sprites/player/Assassin_2.png)
@@ -441,6 +452,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     p1JumpSheet: HTMLImageElement | null;
     p1MeleeSheet: HTMLImageElement | null;
     p1OneHandSheet: HTMLImageElement | null;
+    p1TwoHandSheet: HTMLImageElement | null;
     p1IdleSprite: HTMLImageElement | null;
     p1SheetConfig: SpritesheetDef;
     botWalkSheet: HTMLImageElement | null;
@@ -780,6 +792,15 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       p1OneHandSheet.src = '/assets/sprites/player/one_hand_attack.png';
     }
 
+    let p1TwoHandSheet: HTMLImageElement | null = null;
+    if (p1Cfg.hasTwoHandAttackSheet && p1Cfg.twoHandAttackSheetUrl) {
+      p1TwoHandSheet = new Image();
+      p1TwoHandSheet.src = p1Cfg.twoHandAttackSheetUrl;
+    } else if (effectiveP1Faction === BotFaction.Ninja) {
+      p1TwoHandSheet = new Image();
+      p1TwoHandSheet.src = '/assets/sprites/player/two_hand_attack.png';
+    }
+
     const p1IdleSprite = new Image();
     p1IdleSprite.src = p1Cfg.idleUrl || pArch.spriteUrl || '/assets/sprites/player/Assassin_2.png';
 
@@ -899,6 +920,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       p1JumpSheet,
       p1MeleeSheet,
       p1OneHandSheet,
+      p1TwoHandSheet,
       p1IdleSprite,
       p1SheetConfig: p1Cfg,
       botWalkSheet,
@@ -960,6 +982,12 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     s.p1.meleeForceModifier = pArch.meleeForceModifier;
     s.p1.equippedWeapon = WeaponType.Fists;
     s.p1.ammo = 0;
+    s.p1.characterState = 'desarmado';
+    s.p1.weaponState = 'desarmado';
+    s.p1.isTwoHandAttacking = false;
+    s.p1.twoHandAnimFrame = 0;
+    s.p1.twoHandAnimTimer = 0;
+    s.p1.twoHandHasHit = false;
     if (s.p1Controller) {
       s.p1Controller.setPosition(spawnP1.x, spawnP1.y);
       s.p1Controller.facingRight = true;
@@ -1694,7 +1722,27 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           p1.fsm !== PlayerFSMState.Roll &&
           !p1.isGrappling
         ) {
-          if (isOneHandWeapon(p1.equippedWeapon)) {
+          if (isTwoHandWeapon(p1.equippedWeapon)) {
+            // Ataque a dos manos (Golpe pesado): animación One Shot de 6 frames, más lenta y pesada
+            if (!p1.isTwoHandAttacking) {
+              p1.isTwoHandAttacking = true;
+              p1.twoHandAnimFrame = 0;
+              p1.twoHandAnimTimer = 0;
+              p1.twoHandHasHit = false;
+
+              // Bloqueo estricto de movimiento: no caminar, correr ni saltar
+              p1.velocityX = 0;
+              s.p1Controller.vx = 0;
+              s.p1Controller.state = ControllerState.Idle;
+              PlayerFSM.tryTransition(p1, PlayerFSMState.MeleeAttack);
+
+              if (isBladeWeapon(p1.equippedWeapon)) {
+                sounds.playSwordSwing();
+              } else {
+                sounds.playPunch();
+              }
+            }
+          } else if (isOneHandWeapon(p1.equippedWeapon)) {
             // Ataque a una mano: animación One Shot de 5 frames rápida
             if (!p1.isOneHandAttacking) {
               p1.isOneHandAttacking = true;
@@ -1759,6 +1807,89 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
               PlayerFSM.tryTransition(p1, PlayerFSMState.MeleeAttack);
 
               sounds.playPunch();
+            }
+          }
+        }
+
+        // ─────────────────────────────────────────────────────────
+        // LÓGICA DE AVANCE Y RESOLUCIÓN DEL ATAQUE A DOS MANOS (two_hand_attack)
+        // 6 Fotogramas, One Shot, más lenta (4 ticks/frame = ~66ms/frame) y con mayor hitbox por ser golpe pesado
+        // ─────────────────────────────────────────────────────────
+        if (p1.isTwoHandAttacking) {
+          // Bloqueo estricto de movimiento: el personaje no puede caminar, correr ni saltar
+          p1.velocityX = 0;
+          s.p1Controller.vx = 0;
+          s.p1Controller.state = ControllerState.Idle;
+          p1.fsm = PlayerFSMState.MeleeAttack;
+
+          p1.twoHandAnimTimer = (p1.twoHandAnimTimer || 0) + 1;
+          // Más lenta que una mano (4 ticks/frame vs 2 ticks/frame)
+          if (p1.twoHandAnimTimer >= 4) {
+            p1.twoHandAnimTimer = 0;
+            p1.twoHandAnimFrame = (p1.twoHandAnimFrame || 0) + 1;
+
+            if (p1.twoHandAnimFrame >= 6) {
+              // Al terminar el 6to frame (One Shot), vuelve al estado normal (Idle)
+              p1.isTwoHandAttacking = false;
+              p1.twoHandAnimFrame = 0;
+              p1.twoHandAnimTimer = 0;
+              p1.twoHandHasHit = false;
+              p1.fsm = PlayerFSMState.Idle;
+            }
+          }
+
+          // Detección de impacto en el fotograma de golpe pesado hacia abajo (fotograma 3)
+          if (!p1.twoHandHasHit && (p1.twoHandAnimFrame || 0) === 3) {
+            p1.twoHandHasHit = true;
+            const p1FacingDir = p1.facingRight ? 1 : -1;
+            // Mayor hitbox por ser golpe pesado (82px alcance frontal y 48px vertical)
+            const hitReach = 82;
+            const isBotInReach =
+              bot.isAlive &&
+              !bot.isGrabbed &&
+              !s.p2Controller.isInvulnerable &&
+              bot.fsm !== PlayerFSMState.Roll &&
+              ((p1FacingDir > 0 && bot.x >= p1.x - 15 && bot.x <= p1.x + hitReach) ||
+               (p1FacingDir < 0 && bot.x <= p1.x + 15 && bot.x >= p1.x - hitReach)) &&
+              Math.abs(bot.y - p1.y) < 48;
+
+            const wpn = getWeapon(p1.equippedWeapon);
+            const isBlade = isBladeWeapon(p1.equippedWeapon);
+            const baseDmg = (wpn.damage || 22) * 1.45; // Golpe pesado con mayor daño
+            const finalDmg = baseDmg * p1.damageDealtModifier;
+
+            if (isBotInReach) {
+              if (isBlade) {
+                sounds.playBladeHit();
+                addSparks(bot.x, bot.y, '#38bdf8', 22);
+                addSparks(bot.x, bot.y, '#ffffff', 14);
+              } else {
+                sounds.playHit();
+                addSparks(bot.x, bot.y, '#f97316', 22);
+                addSparks(bot.x, bot.y, '#fbbf24', 14);
+              }
+
+              s.screenShake = 12; // Mayor sacudida por golpe pesado
+              bot.velocityX = p1FacingDir * 260; // Mayor retroceso
+              bot.hitstunTicks = 24; // Mayor aturdimiento
+              PlayerFSM.tryTransition(bot, PlayerFSMState.Hitstun);
+
+              bot.health = Math.max(0, bot.health - finalDmg);
+              if (bot.health <= 0) {
+                bot.health = 0;
+                bot.isAlive = false;
+                PlayerFSM.tryTransition(bot, PlayerFSMState.Dead);
+                sounds.playHit();
+              }
+
+              s.floatingTexts.push({
+                id: s.nextEntityId++,
+                text: `¡GOLPE PESADO (${wpn.name.toUpperCase()})! -${Math.round(finalDmg)}`,
+                x: bot.x,
+                y: bot.y - 36,
+                color: '#f97316',
+                life: 55,
+              });
             }
           }
         }
@@ -3684,12 +3815,26 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           p1.equippedWeapon = w.weaponType;
           p1.ammo = wData.magSize;
           sounds.playPickup();
+
+          // Lógica de Equipamiento: cambia el estado del personaje a arma_dos_manos
+          const isTwoHand = isTwoHandWeapon(w.weaponType);
+          if (isTwoHand) {
+            p1.characterState = 'arma_dos_manos';
+            p1.weaponState = 'arma_dos_manos';
+          } else if (isOneHandWeapon(w.weaponType)) {
+            p1.characterState = 'arma_una_mano';
+            p1.weaponState = 'arma_una_mano';
+          } else {
+            p1.characterState = 'desarmado';
+            p1.weaponState = 'desarmado';
+          }
+
           s.floatingTexts.push({
             id: s.nextEntityId++,
-            text: `¡${wData.name}!`,
+            text: isTwoHand ? `¡${wData.name}! (arma_dos_manos)` : `¡${wData.name}!`,
             x: p1.x,
             y: p1.y - 35,
-            color: '#38bdf8',
+            color: isTwoHand ? '#f97316' : '#38bdf8',
             life: 45,
           });
 
@@ -3896,6 +4041,10 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
               p1.oneHandAnimFrame = 0;
               p1.oneHandAnimTimer = 0;
               p1.oneHandHasHit = false;
+              p1.isTwoHandAttacking = false;
+              p1.twoHandAnimFrame = 0;
+              p1.twoHandAnimTimer = 0;
+              p1.twoHandHasHit = false;
             }
 
             s.floatingTexts.push({
@@ -4622,8 +4771,72 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           isBlade &&
           (p.fsm === PlayerFSMState.MeleeAttack || p.isSliding || p.isChargingHeavy);
 
-        // 0. Animación de Ataque a una mano (one_hand_attack - 5 frames rápidos) para Katana, Machete, Cuchillo, etc.
+        // 0. Animación de Ataque a dos manos (two_hand_attack - 6 frames pesados) para Hacha, Bat, LeadPipe, Hammer, Chair, Pipe, Bottle, Teapot, Pillow
         if (
+          p.isTwoHandAttacking &&
+          s.p1TwoHandSheet &&
+          s.p1TwoHandSheet.complete &&
+          s.p1TwoHandSheet.naturalWidth > 0
+        ) {
+          const twoHandCols = cfg?.twoHandCols || 6;
+          const twoHandRows = cfg?.twoHandRows || 1;
+          const frameW = s.p1TwoHandSheet.naturalWidth / twoHandCols;
+          const frameH = s.p1TwoHandSheet.naturalHeight / twoHandRows;
+
+          const safeCol = Math.max(0, Math.min(twoHandCols - 1, p.twoHandAnimFrame || 0));
+          const sx = safeCol * frameW;
+          const sy = 0;
+
+          ctx.drawImage(s.p1TwoHandSheet, sx, sy, frameW, frameH, drawX, drawY, charW, charH);
+
+          const currentF = p.twoHandAnimFrame || 0;
+          // Estela pesada de impacto / onda expansiva
+          if (currentF >= 2 && currentF <= 4) {
+            ctx.save();
+            ctx.lineWidth = 4.5;
+            ctx.strokeStyle = '#f97316';
+            ctx.shadowColor = '#f97316';
+            ctx.shadowBlur = 16;
+            ctx.beginPath();
+            if (currentF === 3) {
+              // Impacto contra el suelo / arco grande hacia abajo
+              ctx.arc(20, 14, 46, -Math.PI * 0.4, Math.PI * 0.45, false);
+            } else {
+              ctx.arc(14, -10, 42, -Math.PI * 0.6, Math.PI * 0.1, false);
+            }
+            ctx.stroke();
+            ctx.restore();
+          }
+
+          // Arma pesada equipada orientada según el fotograma del golpe a dos manos
+          const wImg = s.weaponImages[p.equippedWeapon];
+          if (wImg && wImg.complete && wImg.naturalWidth > 0) {
+            ctx.save();
+            if (currentF === 0) {
+              ctx.translate(14, -2);
+              ctx.rotate(-0.3);
+            } else if (currentF === 1) {
+              ctx.translate(10, -28);
+              ctx.rotate(-1.2);
+            } else if (currentF === 2) {
+              ctx.translate(14, -30);
+              ctx.rotate(-1.4);
+            } else if (currentF === 3) {
+              // Golpe contra el suelo
+              ctx.translate(26, 18);
+              ctx.rotate(1.15);
+            } else if (currentF === 4) {
+              ctx.translate(18, 6);
+              ctx.rotate(0.5);
+            } else {
+              ctx.translate(14, 0);
+              ctx.rotate(0.1);
+            }
+            // Armas pesadas se dibujan con mayor tamaño y peso visual
+            ctx.drawImage(wImg, -6, -9, 34, 18);
+            ctx.restore();
+          }
+        } else if (
           p.isOneHandAttacking &&
           s.p1OneHandSheet &&
           s.p1OneHandSheet.complete &&
@@ -4933,8 +5146,8 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         }
 
         // Arma equipada en mano (proporcional al personaje aumentado)
-        // Si está ejecutando el ataque de filo, el ataque a una mano o el combo melee del Ninja, las manos muestran la animación
-        if (p.equippedWeapon !== WeaponType.Fists && !isBladeAttacking && !p.isMeleeComboAttacking && !p.isOneHandAttacking) {
+        // Si está ejecutando el ataque de filo, el ataque a una mano, el ataque a dos manos o el combo melee del Ninja, las manos muestran la animación
+        if (p.equippedWeapon !== WeaponType.Fists && !isBladeAttacking && !p.isMeleeComboAttacking && !p.isOneHandAttacking && !p.isTwoHandAttacking) {
           const wImg = s.weaponImages[p.equippedWeapon];
           if (wImg && wImg.complete && wImg.naturalWidth > 0) {
             ctx.drawImage(wImg, 8, -6, 32, 16);
@@ -5186,6 +5399,11 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             ) : null}
             <span className="text-sm font-bold text-yellow-400">{hudState.p1Weapon}</span>
           </div>
+          {isTwoHandWeapon(hudState.p1Weapon) && (
+            <span className="text-[10px] uppercase font-mono-code font-bold text-orange-400 bg-orange-950/80 border border-orange-600/60 rounded px-1.5 py-0.5 my-0.5">
+              arma_dos_manos • Golpe pesado
+            </span>
+          )}
           <span className="text-xs font-mono-code text-neutral-300">
             {hudState.p1MaxAmmo === -1
               ? 'Melee (Infinito)'

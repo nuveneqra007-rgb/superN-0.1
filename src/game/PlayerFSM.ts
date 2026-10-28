@@ -28,6 +28,7 @@ const Priorities: Record<PlayerFSMState, number> = {
   [PlayerFSMState.KnockedDown]: 9,
   [PlayerFSMState.GetUp]: 9, // bloquea input
   [PlayerFSMState.Dead]: 10,
+  [PlayerFSMState.ArmaDosManos]: 3,
 };
 
 export const PlayerFSM = {

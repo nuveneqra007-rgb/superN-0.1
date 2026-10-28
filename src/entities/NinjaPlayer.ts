@@ -6,7 +6,7 @@
 import Phaser from 'phaser';
 import { NINJA_CONFIG, NinjaState } from '../game/NinjaController';
 import { PlayerInput } from './Player';
-import { isOneHandWeapon, WeaponType } from '../game/WeaponData';
+import { isOneHandWeapon, isTwoHandWeapon, WeaponType } from '../game/WeaponData';
 
 export interface NinjaPlayerOptions {
   textureKey?: string;
@@ -26,6 +26,7 @@ export class NinjaPlayer extends Phaser.Physics.Arcade.Sprite {
   public maxHp: number;
   public isInvulnerable: boolean = false;
   public state: NinjaState = NinjaState.Idle;
+  public characterState: string = 'desarmado';
   public facing: 'left' | 'right' = 'right';
   public speedMultiplier: number;
 
@@ -77,6 +78,13 @@ export class NinjaPlayer extends Phaser.Physics.Arcade.Sprite {
 
   public equipWeapon(weaponName: string): void {
     this.currentWeapon = weaponName;
+    if (isTwoHandWeapon(weaponName as WeaponType)) {
+      this.characterState = 'arma_dos_manos';
+    } else if (isOneHandWeapon(weaponName as WeaponType)) {
+      this.characterState = 'arma_una_mano';
+    } else {
+      this.characterState = 'desarmado';
+    }
   }
 
   public takeDamage(amount: number): boolean {
@@ -113,17 +121,20 @@ export class NinjaPlayer extends Phaser.Physics.Arcade.Sprite {
       }
     }
 
-    // Lógica de ataque melee / arma a una mano Ninja (One-Shot, bloqueo de movimiento)
+    // Lógica de ataque melee / arma a una mano / arma a dos manos Ninja (One-Shot, bloqueo de movimiento)
     if (this.state === NinjaState.Attack) {
       this.setVelocityX(0);
       this.attackTimer -= delta;
 
+      const isTwoHand = this.currentWeapon && isTwoHandWeapon(this.currentWeapon as WeaponType);
       const isOneHand = this.currentWeapon && isOneHandWeapon(this.currentWeapon as WeaponType);
-      const animKey = isOneHand
+      const animKey = isTwoHand
+        ? 'two_hand_attack'
+        : isOneHand
         ? 'one_hand_attack'
         : (this.comboStep === 0 ? 'ninja_punch' : this.comboStep === 1 ? 'ninja_kick' : 'ninja_uppercut');
 
-      if (!isOneHand && input.meleePressed && this.comboStep < 2) {
+      if (!isTwoHand && !isOneHand && input.meleePressed && this.comboStep < 2) {
         this.comboBuffered = true;
       }
 
@@ -132,7 +143,7 @@ export class NinjaPlayer extends Phaser.Physics.Arcade.Sprite {
       }
 
       if (this.attackTimer <= 0) {
-        if (!isOneHand && this.comboBuffered && this.comboStep < 2) {
+        if (!isTwoHand && !isOneHand && this.comboBuffered && this.comboStep < 2) {
           this.comboStep++;
           this.attackTimer = 330;
           this.comboBuffered = false;
@@ -145,7 +156,7 @@ export class NinjaPlayer extends Phaser.Physics.Arcade.Sprite {
           this.state = onFloor ? NinjaState.Idle : NinjaState.Fall;
           this.anims?.stop();
           this.setTexture('ninja_sprite');
-          if (isOneHand || this.comboStep >= 2) {
+          if (isTwoHand || isOneHand || this.comboStep >= 2) {
             this.comboStep = 0;
             this.comboWindowTimer = 0;
           } else {
@@ -160,9 +171,19 @@ export class NinjaPlayer extends Phaser.Physics.Arcade.Sprite {
     // Iniciar ataque Ninja si se presiona la tecla de ataque (N) en el suelo
     if (input.meleePressed && onFloor && this.state !== NinjaState.Roll) {
       this.state = NinjaState.Attack;
+      const isTwoHand = this.currentWeapon && isTwoHandWeapon(this.currentWeapon as WeaponType);
       const isOneHand = this.currentWeapon && isOneHandWeapon(this.currentWeapon as WeaponType);
 
-      if (isOneHand) {
+      if (isTwoHand) {
+        // Ataque a dos manos (Golpe pesado): One Shot, más lento (450ms) y contundente
+        this.comboStep = 0;
+        this.attackTimer = 450;
+        this.comboBuffered = false;
+        this.setVelocityX(0);
+        if (this.anims?.animationManager?.exists('two_hand_attack')) {
+          this.anims.play('two_hand_attack', true);
+        }
+      } else if (isOneHand) {
         // Ataque a una mano: velocidad mayor (200ms) y One Shot
         this.comboStep = 0;
         this.attackTimer = 200;

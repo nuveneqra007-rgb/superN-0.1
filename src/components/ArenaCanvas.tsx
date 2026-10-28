@@ -60,6 +60,17 @@ export interface SpritesheetDef {
 }
 
 export const CHARACTER_SPRITESHEETS: Record<string, SpritesheetDef> = {
+  // ── 0. NINJA (PROTAGONISTA ÚNICO) ──
+  // Pixel art de cuerpo negro con detalles naranja.
+  // Animación de caminata horizontal de 6 frames (/assets/sprites/player/ninja_walk.png).
+  [BotFaction.Ninja]: {
+    idleUrl: '/assets/sprites/player/ninja.png',
+    walkSheetUrl: '/assets/sprites/player/ninja_walk.png',
+    cols: 6,
+    rows: 1,
+    totalFrames: 6,
+    hasWalkSheet: true,
+  },
   // ── 1. ASESINO (ASSASSIN) ──
   // Utiliza la imagen oficial prevista (/assets/sprites/player/Assassin_2.png)
   // para idle y caminata con ciclo biomecánico fluido, sin cambiar a formas no previstas ni perder la imagen.
@@ -614,13 +625,19 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
   // Inicializar estado del juego
   useEffect(() => {
     const worldCfg = getWorldConfig(worldId);
-    const arch = getBotArchetype(botFaction);
-    const pArch = getBotArchetype(playerFaction);
+    const effectiveP1Faction = BotFaction.Ninja;
+    const effectiveP2Faction = gameMode === 'local1v1' ? BotFaction.Ninja : botFaction;
+
+    const arch = getBotArchetype(effectiveP2Faction);
+    const pArch = getBotArchetype(effectiveP1Faction);
 
     const spawnP1 = worldCfg.spawns[0] || { x: 200, y: 460 };
     const spawnBot = worldCfg.spawns[1] || { x: 760, y: 460 };
 
-    const p1 = createPlayerState(1, pArch.name.toUpperCase(), false, spawnP1.x, spawnP1.y);
+    const p1Label = gameMode === 'local1v1' ? 'NINJA (J1)' : 'NINJA';
+    const p2Label = gameMode === 'local1v1' ? 'NINJA (J2)' : arch.name.toUpperCase();
+
+    const p1 = createPlayerState(1, p1Label, false, spawnP1.x, spawnP1.y);
     p1.maxHealth = pArch.maxHealth;
     p1.health = pArch.maxHealth;
     p1.speedModifier = pArch.speedModifier;
@@ -630,7 +647,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     p1.equippedWeapon = WeaponType.Fists;
     p1.ammo = 0;
 
-    const bot = createPlayerState(2, arch.name.toUpperCase(), true, spawnBot.x, spawnBot.y);
+    const bot = createPlayerState(2, p2Label, gameMode !== 'local1v1', spawnBot.x, spawnBot.y);
     bot.maxHealth = arch.maxHealth;
     bot.health = arch.maxHealth;
     bot.speedModifier = arch.speedModifier;
@@ -648,12 +665,12 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     }
 
     // Carga de Spritesheet y texturas para P1 y Bot según su facción seleccionada
-    const p1Cfg = CHARACTER_SPRITESHEETS[playerFaction] || {
-      idleUrl: pArch.spriteUrl || '/assets/sprites/player/Assassin_2.png',
+    const p1Cfg = CHARACTER_SPRITESHEETS[effectiveP1Faction] || {
+      idleUrl: pArch.spriteUrl || '/assets/sprites/player/ninja.png',
       hasWalkSheet: false,
     };
-    const botCfg = CHARACTER_SPRITESHEETS[botFaction] || {
-      idleUrl: arch.spriteUrl || '/assets/sprites/bot/agent.png',
+    const botCfg = CHARACTER_SPRITESHEETS[effectiveP2Faction] || {
+      idleUrl: arch.spriteUrl || '/assets/sprites/bot/thug.png',
       hasWalkSheet: false,
     };
 
@@ -783,8 +800,10 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     if (!stateRef.current) return;
     const s = stateRef.current;
     const worldCfg = s.worldConfig;
-    const arch = getBotArchetype(botFaction);
-    const pArch = getBotArchetype(playerFaction);
+    const effectiveP1Faction = BotFaction.Ninja;
+    const effectiveP2Faction = gameMode === 'local1v1' ? BotFaction.Ninja : botFaction;
+    const arch = getBotArchetype(effectiveP2Faction);
+    const pArch = getBotArchetype(effectiveP1Faction);
 
     const spawnP1 = worldCfg.spawns[0] || { x: 200, y: 460 };
     const spawnBot = worldCfg.spawns[1] || { x: 760, y: 460 };
@@ -803,7 +822,10 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       }));
     }
 
-    s.p1 = createPlayerState(1, pArch.name.toUpperCase(), false, spawnP1.x, spawnP1.y);
+    const p1Label = gameMode === 'local1v1' ? 'NINJA (J1)' : 'NINJA';
+    const p2Label = gameMode === 'local1v1' ? 'NINJA (J2)' : arch.name.toUpperCase();
+
+    s.p1 = createPlayerState(1, p1Label, false, spawnP1.x, spawnP1.y);
     s.p1.maxHealth = pArch.maxHealth;
     s.p1.health = pArch.maxHealth;
     s.p1.speedModifier = pArch.speedModifier;
@@ -817,7 +839,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       s.p1Controller.facingRight = true;
     }
 
-    s.bot = createPlayerState(2, arch.name.toUpperCase(), true, spawnBot.x, spawnBot.y);
+    s.bot = createPlayerState(2, p2Label, gameMode !== 'local1v1', spawnBot.x, spawnBot.y);
     s.bot.maxHealth = arch.maxHealth;
     s.bot.health = arch.maxHealth;
     s.bot.speedModifier = arch.speedModifier;
@@ -4408,7 +4430,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       };
 
       renderFighter(s.p1, s.p1Sprite, '#38bdf8', true);
-      renderFighter(s.bot, s.botSprite, '#f87171', false);
+      renderFighter(s.bot, s.botSprite, '#f87171', gameMode === 'local1v1');
 
       // 11. PROYECTILES
       for (const pr of s.projectiles) {

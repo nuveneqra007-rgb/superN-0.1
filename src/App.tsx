@@ -16,7 +16,7 @@ export const App: React.FC = () => {
   const [isTransitioning, setIsTransitioning] = useState<boolean>(false);
   const [showArsenal, setShowArsenal] = useState<boolean>(false);
 
-  const [playerFaction, setPlayerFaction] = useState<BotFaction>(BotFaction.Assassin);
+  const [playerFaction, setPlayerFaction] = useState<BotFaction>(BotFaction.Ninja);
   const [botFaction, setBotFaction] = useState<BotFaction>(BotFaction.Thug);
   const [rounds, setRounds] = useState<number>(5);
   const [selectedWorldId, setSelectedWorldId] = useState<string | null>(null);

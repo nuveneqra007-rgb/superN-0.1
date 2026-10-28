@@ -7,6 +7,7 @@ import { GameConstants } from './GameConstants';
 import { WeaponType } from './WeaponData';
 
 export enum BotFaction {
+  Ninja = 'Ninja',
   Thug = 'Thug',
   Punk = 'Punk',
   Biker = 'Biker',
@@ -260,8 +261,43 @@ export const BotArchetypeDatabase: Record<BotFaction, BotArchetypeData> = {
     description: 'Jefe robot acorazado con ojos rojos y armadura que reduce el daño un 50%.',
     spriteUrl: '/assets/sprites/bot/tank.png',
   },
+  [BotFaction.Ninja]: {
+    faction: BotFaction.Ninja,
+    name: 'Ninja',
+    aiType: BotAIType.Grunt,
+    maxHealth: 100,
+    speedModifier: 1.15,
+    damageDealtModifier: 1.0,
+    damageTakenModifier: 1.0,
+    meleeForceModifier: 1.0,
+    equipWeaponChance: 1.0,
+    preferredWeapon: WeaponType.Katana,
+    description: 'Guerrero sigiloso de las sombras y único protagonista jugable. Rápido, letal y disciplinado con traje negro y detalles ámbar.',
+    spriteUrl: '/assets/sprites/player/ninja.png',
+  },
 };
 
+/**
+ * Las 15 facciones canónicas exclusivas de bots rivales (IA estática)
+ */
+export const CANONICAL_BOT_FACTIONS: BotFaction[] = [
+  BotFaction.Thug,
+  BotFaction.Punk,
+  BotFaction.Biker,
+  BotFaction.Gangster,
+  BotFaction.Police,
+  BotFaction.MetroCop,
+  BotFaction.Mutant,
+  BotFaction.Zombie,
+  BotFaction.Soldier,
+  BotFaction.Agent,
+  BotFaction.Assassin,
+  BotFaction.Cowboy,
+  BotFaction.Sniper,
+  BotFaction.Boss_Berserker,
+  BotFaction.Boss_Tank,
+];
+
 export function getBotArchetype(faction: BotFaction): BotArchetypeData {
-  return BotArchetypeDatabase[faction] || BotArchetypeDatabase[BotFaction.Agent];
+  return BotArchetypeDatabase[faction] || BotArchetypeDatabase[BotFaction.Ninja];
 }

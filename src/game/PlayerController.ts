@@ -78,6 +78,11 @@ export interface PlatformCollider {
 }
 
 export class PlayerController {
+  // Identificador de Jugador público: 1 = Jugador 1, 2 = Jugador 2
+  public player_id: 1 | 2 = 1;
+  public playerId: 1 | 2 = 1;
+  public input_prefix: string = 'p1_';
+
   // Posición en el centro del personaje
   public x: number;
   public y: number;
@@ -120,11 +125,190 @@ export class PlayerController {
   private rollDirection: -1 | 1 = 1;
   private dropThroughTimer: number = 0;
 
-  constructor(initialX: number, initialY: number, facingRight: boolean = true) {
+  constructor(initialX: number, initialY: number, facingRight: boolean = true, playerId: 1 | 2 = 1) {
     this.x = initialX;
     this.y = initialY;
     this.facingRight = facingRight;
     this.rollDirection = facingRight ? 1 : -1;
+    this.setPlayerId(playerId);
+  }
+
+  /**
+   * Configura el identificador del jugador y su prefijo de control.
+   */
+  public setPlayerId(id: 1 | 2): void {
+    this.player_id = id;
+    this.playerId = id;
+    this.input_prefix = id === 1 ? 'p1_' : 'p2_';
+  }
+
+  /**
+   * Lee y procesa las teclas de movimiento asignadas de forma completamente independiente
+   * según el player_id del Ninja.
+   * Si player_id == 1, lee exclusivamente las teclas de P1 (ej. WASD o Flechas según esquema).
+   * Si player_id == 2, lee exclusivamente las teclas de P2 (ej. Flechas o WASD según esquema).
+   *
+   * ARREGLO DEL ROLL:
+   * La combinación (Abajo + Movimiento) comprueba estrictamente el player_id del controlador
+   * para que SÓLO el personaje cuya tecla asignada fue presionada ruede, evitando que ambos
+   * rueden a la vez o se interfieran. Si el personaje no se mueve en horizontal (moveDir === 0),
+   * presionar abajo únicamente agacha (Crouch), NUNCA rueda.
+   */
+  public readInput(
+    keys: Record<string, boolean>,
+    keysJustPressed: Record<string, boolean>,
+    is1v1: boolean = true,
+    scheme: 'wasd_p1' | 'arrows_p1' = 'wasd_p1'
+  ): PlayerInput {
+    let leftKey = false;
+    let rightKey = false;
+    let upKey = false;
+    let upJustPressed = false;
+    let downKey = false;
+    let downJustPressed = false;
+    let runHeld = false;
+
+    if (this.player_id === 1) {
+      // ═════════════════════════════════════════════════════════
+      // JUGADOR 1 (player_id === 1)
+      // ═════════════════════════════════════════════════════════
+      if (scheme === 'wasd_p1') {
+        // Esquema A: J1 usa WASD + Q/Shift
+        leftKey = !!(keys['a'] || keys['A']);
+        rightKey = !!(keys['d'] || keys['D']);
+        upKey = !!(keys['w'] || keys['W']);
+        upJustPressed = !!(keysJustPressed['w'] || keysJustPressed['W']);
+        downKey = !!(keys['s'] || keys['S']);
+        downJustPressed = !!(keysJustPressed['s'] || keysJustPressed['S']);
+        runHeld = !!(keys['q'] || keys['Q'] || keys['shift']);
+
+        // En modo solitario vsBot (no hay J2 humano), J1 también puede usar las flechas
+        if (!is1v1) {
+          if (keys['arrowleft']) leftKey = true;
+          if (keys['arrowright']) rightKey = true;
+          if (keys['arrowup']) upKey = true;
+          if (keysJustPressed['arrowup'] || keysJustPressed[' ']) upJustPressed = true;
+          if (keys['arrowdown']) downKey = true;
+          if (keysJustPressed['arrowdown']) downJustPressed = true;
+          if (keys['.']) runHeld = true;
+        }
+      } else {
+        // Esquema B: J1 usa Flechas Direccionales
+        leftKey = !!keys['arrowleft'];
+        rightKey = !!keys['arrowright'];
+        upKey = !!keys['arrowup'];
+        upJustPressed = !!keysJustPressed['arrowup'];
+        downKey = !!keys['arrowdown'];
+        downJustPressed = !!keysJustPressed['arrowdown'];
+        runHeld = !!keys['.'];
+
+        if (!is1v1) {
+          if (keys['a'] || keys['A']) leftKey = true;
+          if (keys['d'] || keys['D']) rightKey = true;
+          if (keys['w'] || keys['W']) upKey = true;
+          if (keysJustPressed['w'] || keysJustPressed['W'] || keysJustPressed[' ']) upJustPressed = true;
+          if (keys['s'] || keys['S']) downKey = true;
+          if (keysJustPressed['s'] || keysJustPressed['S']) downJustPressed = true;
+          if (keys['q'] || keys['shift']) runHeld = true;
+        }
+      }
+    } else {
+      // ═════════════════════════════════════════════════════════
+      // JUGADOR 2 (player_id === 2)
+      // ═════════════════════════════════════════════════════════
+      // Estrictamente aislado: Jamás lee teclas de J1
+      if (scheme === 'wasd_p1') {
+        // Si J1 usa WASD, J2 usa Flechas direccionales exclusivamente
+        leftKey = !!keys['arrowleft'];
+        rightKey = !!keys['arrowright'];
+        upKey = !!keys['arrowup'];
+        upJustPressed = !!keysJustPressed['arrowup'];
+        downKey = !!keys['arrowdown'];
+        downJustPressed = !!keysJustPressed['arrowdown'];
+        runHeld = !!keys['.'];
+      } else {
+        // Si J1 usa Flechas, J2 usa WASD exclusivamente
+        leftKey = !!(keys['a'] || keys['A']);
+        rightKey = !!(keys['d'] || keys['D']);
+        upKey = !!(keys['w'] || keys['W']);
+        upJustPressed = !!(keysJustPressed['w'] || keysJustPressed['W']);
+        downKey = !!(keys['s'] || keys['S']);
+        downJustPressed = !!(keysJustPressed['s'] || keysJustPressed['S']);
+        runHeld = !!(keys['q'] || keys['Q']);
+      }
+    }
+
+    let moveDir: -1 | 0 | 1 = 0;
+    if (leftKey && !rightKey) moveDir = -1;
+    else if (rightKey && !leftKey) moveDir = 1;
+
+    // Validación estricta del Roll (Abajo + Movimiento):
+    // Solo rueda si el jugador tiene intención de dirección (moveDir !== 0)
+    // y acaba de presionar hacia abajo en sus teclas asignadas (downJustPressed).
+    const roll = moveDir !== 0 && downJustPressed;
+    const dropThrough = downKey && upJustPressed;
+
+    return {
+      moveDir,
+      run: runHeld,
+      jump: upJustPressed && !dropThrough,
+      jumpHeld: upKey,
+      roll: roll && !dropThrough,
+      dropThrough,
+    };
+  }
+
+  /**
+   * Lee y procesa las acciones de combate asignadas según el player_id.
+   */
+  public readCombatInput(
+    keys: Record<string, boolean>,
+    keysJustPressed: Record<string, boolean>,
+    is1v1: boolean = true,
+    scheme: 'wasd_p1' | 'arrows_p1' = 'wasd_p1'
+  ) {
+    if (this.player_id === 1) {
+      if (scheme === 'wasd_p1') {
+        // J1 en WASD: F o J (Melee), G o K (Disparo), R o L (Granada)
+        const melee = !!(keys['f'] || keys['F'] || keys['j'] || keys['J'] || (!is1v1 && (keys['n'] || keys['N'])));
+        const meleeJust = !!(keysJustPressed['f'] || keysJustPressed['F'] || keysJustPressed['j'] || keysJustPressed['J'] || (!is1v1 && (keysJustPressed['n'] || keysJustPressed['N'])));
+        const fire = !!(keys['g'] || keys['G'] || keys['k'] || keys['K'] || (!is1v1 && (keys['m'] || keys['M'])));
+        const fireJust = !!(keysJustPressed['g'] || keysJustPressed['G'] || keysJustPressed['k'] || keysJustPressed['K'] || (!is1v1 && (keysJustPressed['m'] || keysJustPressed['M'])));
+        const throwGrenade = !!(keys['r'] || keys['R'] || keys['l'] || keys['L'] || (!is1v1 && (keys[','] || keys['comma'])));
+        const throwJust = !!(keysJustPressed['r'] || keysJustPressed['R'] || keysJustPressed['l'] || keysJustPressed['L'] || (!is1v1 && (keysJustPressed[','] || keysJustPressed['comma'])));
+        return { melee, meleeJust, fire, fireJust, throwGrenade, throwJust };
+      } else {
+        // J1 en Flechas: N (Melee), M (Disparo), , (Granada)
+        const melee = !!(keys['n'] || keys['N'] || (!is1v1 && (keys['j'] || keys['J'])));
+        const meleeJust = !!(keysJustPressed['n'] || keysJustPressed['N'] || (!is1v1 && (keysJustPressed['j'] || keysJustPressed['J'])));
+        const fire = !!(keys['m'] || keys['M'] || (!is1v1 && (keys['k'] || keys['K'])));
+        const fireJust = !!(keysJustPressed['m'] || keysJustPressed['M'] || (!is1v1 && (keysJustPressed['k'] || keysJustPressed['K'])));
+        const throwGrenade = !!(keys[','] || keys['comma'] || (!is1v1 && (keys['g'] || keys['l'])));
+        const throwJust = !!(keysJustPressed[','] || keysJustPressed['comma'] || (!is1v1 && (keysJustPressed['g'] || keysJustPressed['l'])));
+        return { melee, meleeJust, fire, fireJust, throwGrenade, throwJust };
+      }
+    } else {
+      // J2 (player_id === 2)
+      if (scheme === 'wasd_p1') {
+        // J2 en Flechas: N (Melee), M (Disparo), , (Granada)
+        const melee = !!(keys['n'] || keys['N'] || keys['1']);
+        const meleeJust = !!(keysJustPressed['n'] || keysJustPressed['N'] || keysJustPressed['1']);
+        const fire = !!(keys['m'] || keys['M'] || keys['2']);
+        const fireJust = !!(keysJustPressed['m'] || keysJustPressed['M'] || keysJustPressed['2']);
+        const throwGrenade = !!(keys[','] || keys['comma'] || keys['3']);
+        const throwJust = !!(keysJustPressed[','] || keysJustPressed['comma'] || keysJustPressed['3']);
+        return { melee, meleeJust, fire, fireJust, throwGrenade, throwJust };
+      } else {
+        // J2 en WASD: J (Melee), K (Disparo), L (Granada)
+        const melee = !!(keys['j'] || keys['J']);
+        const meleeJust = !!(keysJustPressed['j'] || keysJustPressed['J']);
+        const fire = !!(keys['k'] || keys['K']);
+        const fireJust = !!(keysJustPressed['k'] || keysJustPressed['K']);
+        const throwGrenade = !!(keys['l'] || keys['L']);
+        const throwJust = !!(keysJustPressed['l'] || keysJustPressed['L']);
+        return { melee, meleeJust, fire, fireJust, throwGrenade, throwJust };
+      }
+    }
   }
 
   /**

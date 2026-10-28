@@ -438,6 +438,13 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     worldName: currentWorld.name,
   });
 
+  // Esquema de controles en 1v1 Local ('wasd_p1': J1=WASD / J2=Flechas, 'arrows_p1': J1=Flechas / J2=WASD)
+  const [controlScheme, setControlScheme] = useState<'wasd_p1' | 'arrows_p1'>('wasd_p1');
+  const controlSchemeRef = useRef<'wasd_p1' | 'arrows_p1'>('wasd_p1');
+  useEffect(() => {
+    controlSchemeRef.current = controlScheme;
+  }, [controlScheme]);
+
   // Estado mutado en el loop de 60Hz
   const stateRef = useRef<{
     p1: PlayerState;
@@ -774,6 +781,36 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     bot.meleeForceModifier = arch.meleeForceModifier;
     bot.equippedWeapon = WeaponType.Fists;
     bot.ammo = 0;
+    bot.characterState = 'desarmado';
+    bot.weaponState = 'desarmado';
+    bot.isTwoHandAttacking = false;
+    bot.twoHandAnimFrame = 0;
+    bot.twoHandAnimTimer = 0;
+    bot.twoHandHasHit = false;
+    bot.isOneHandAttacking = false;
+    bot.oneHandAnimFrame = 0;
+    bot.oneHandAnimTimer = 0;
+    bot.oneHandHasHit = false;
+    bot.isPistolShooting = false;
+    bot.pistolAnimFrame = 0;
+    bot.pistolAnimTimer = 0;
+    bot.pistolHasFired = false;
+    bot.isRifleShooting = false;
+    bot.rifleAnimFrame = 0;
+    bot.rifleAnimTimer = 0;
+    bot.rifleHasFired = false;
+    bot.isThrowing = false;
+    bot.throwAnimFrame = 0;
+    bot.throwAnimTimer = 0;
+    bot.throwHasReleased = false;
+    bot.isMeleeComboAttacking = false;
+    bot.meleeComboStep = 0;
+    bot.meleeAnimFrame = 0;
+    bot.meleeAnimTimer = 0;
+    bot.meleeHasHit = false;
+    bot.comboStep = 0;
+    bot.comboBuffered = false;
+    bot.comboWindowTicks = 0;
 
     // Cargar imagen de fondo si es el mundo clásico
     let bgImg: HTMLImageElement | null = null;
@@ -787,10 +824,12 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       idleUrl: pArch.spriteUrl || '/assets/sprites/player/ninja.png',
       hasWalkSheet: false,
     };
-    const botCfg = CHARACTER_SPRITESHEETS[effectiveP2Faction] || {
-      idleUrl: arch.spriteUrl || '/assets/sprites/bot/thug.png',
-      hasWalkSheet: false,
-    };
+    const botCfg = (gameMode === 'local1v1' || effectiveP2Faction === BotFaction.Ninja)
+      ? (CHARACTER_SPRITESHEETS[BotFaction.Ninja] || p1Cfg)
+      : (CHARACTER_SPRITESHEETS[effectiveP2Faction] || {
+          idleUrl: arch.spriteUrl || '/assets/sprites/bot/thug.png',
+          hasWalkSheet: false,
+        });
 
     let p1WalkSheet: HTMLImageElement | null = null;
     if (p1Cfg.hasWalkSheet && p1Cfg.walkSheetUrl) {
@@ -905,6 +944,10 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     let botThrowUpSheet: HTMLImageElement | null = null;
 
     if (gameMode === 'local1v1' || effectiveP2Faction === BotFaction.Ninja) {
+      botWalkSheet = p1WalkSheet;
+      botRunSheet = p1RunSheet;
+      botRollSheet = p1RollSheet;
+      botJumpSheet = p1JumpSheet;
       botMeleeSheet = p1MeleeSheet;
       botOneHandSheet = p1OneHandSheet;
       botTwoHandSheet = p1TwoHandSheet;
@@ -914,7 +957,9 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     }
 
     const botIdleSprite = new Image();
-    botIdleSprite.src = botCfg.idleUrl || arch.spriteUrl || '/assets/sprites/bot/agent.png';
+    botIdleSprite.src = (gameMode === 'local1v1' || effectiveP2Faction === BotFaction.Ninja)
+      ? (p1Cfg.idleUrl || '/assets/sprites/player/ninja.png')
+      : (botCfg.idleUrl || arch.spriteUrl || '/assets/sprites/bot/agent.png');
 
     // Preload weapon sprites
     const weaponImages: Record<string, HTMLImageElement> = {};
@@ -961,9 +1006,9 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
     stateRef.current = {
       p1,
-      p1Controller: new PlayerController(spawnP1.x, spawnP1.y, true),
+      p1Controller: new PlayerController(spawnP1.x, spawnP1.y, true, 1),
       bot,
-      p2Controller: new PlayerController(spawnBot.x, spawnBot.y, false),
+      p2Controller: new PlayerController(spawnBot.x, spawnBot.y, false, 2),
       botAI: createBotFSMData(arch.aiType),
       projectiles: [],
       worldWeapons,
@@ -1095,6 +1140,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     s.p1.throwAnimTimer = 0;
     s.p1.throwHasReleased = false;
     if (s.p1Controller) {
+      s.p1Controller.setPlayerId(1);
       s.p1Controller.setPosition(spawnP1.x, spawnP1.y);
       s.p1Controller.facingRight = true;
       s.p1Controller.isShootingPistol = false;
@@ -1112,9 +1158,44 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     s.bot.meleeForceModifier = arch.meleeForceModifier;
     s.bot.equippedWeapon = WeaponType.Fists;
     s.bot.ammo = 0;
+    s.bot.characterState = 'desarmado';
+    s.bot.weaponState = 'desarmado';
+    s.bot.isTwoHandAttacking = false;
+    s.bot.twoHandAnimFrame = 0;
+    s.bot.twoHandAnimTimer = 0;
+    s.bot.twoHandHasHit = false;
+    s.bot.isOneHandAttacking = false;
+    s.bot.oneHandAnimFrame = 0;
+    s.bot.oneHandAnimTimer = 0;
+    s.bot.oneHandHasHit = false;
+    s.bot.isPistolShooting = false;
+    s.bot.pistolAnimFrame = 0;
+    s.bot.pistolAnimTimer = 0;
+    s.bot.pistolHasFired = false;
+    s.bot.isRifleShooting = false;
+    s.bot.rifleAnimFrame = 0;
+    s.bot.rifleAnimTimer = 0;
+    s.bot.rifleHasFired = false;
+    s.bot.isThrowing = false;
+    s.bot.throwAnimFrame = 0;
+    s.bot.throwAnimTimer = 0;
+    s.bot.throwHasReleased = false;
+    s.bot.isMeleeComboAttacking = false;
+    s.bot.meleeComboStep = 0;
+    s.bot.meleeAnimFrame = 0;
+    s.bot.meleeAnimTimer = 0;
+    s.bot.meleeHasHit = false;
+    s.bot.comboStep = 0;
+    s.bot.comboBuffered = false;
+    s.bot.comboWindowTicks = 0;
     if (s.p2Controller) {
+      s.p2Controller.setPlayerId(2);
       s.p2Controller.setPosition(spawnBot.x, spawnBot.y);
       s.p2Controller.facingRight = false;
+      s.p2Controller.isShootingPistol = false;
+      s.p2Controller.isShootingRifle = false;
+      s.p2Controller.isThrowing = false;
+      s.p2Controller.hasHeavyRifleEquipped = false;
     }
 
     // Reinicializar puntos de spawn y armas en plataformas
@@ -1267,6 +1348,22 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           s.p1.meleeComboStep = 0;
           s.p1.comboBuffered = false;
           s.p1.comboWindowTicks = 0;
+          s.p1.isOneHandAttacking = false;
+          s.p1.isTwoHandAttacking = false;
+          s.p1.isPistolShooting = false;
+          s.p1.isRifleShooting = false;
+          s.p1.isThrowing = false;
+        } else {
+          s.bot.isMeleeComboAttacking = false;
+          s.bot.comboStep = 0;
+          s.bot.meleeComboStep = 0;
+          s.bot.comboBuffered = false;
+          s.bot.comboWindowTicks = 0;
+          s.bot.isOneHandAttacking = false;
+          s.bot.isTwoHandAttacking = false;
+          s.bot.isPistolShooting = false;
+          s.bot.isRifleShooting = false;
+          s.bot.isThrowing = false;
         }
 
         s.floatingTexts.push({
@@ -1513,47 +1610,43 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       // ─────────────────────────────────────────────────────────
       if (p1.isAlive && s.roundActive) {
         const is1v1 = gameMode === 'local1v1';
-        const leftKey = is1v1 ? !!keys['arrowleft'] : !!(keys['a'] || keys['arrowleft']);
-        const rightKey = is1v1 ? !!keys['arrowright'] : !!(keys['d'] || keys['arrowright']);
-        let moveDir: -1 | 0 | 1 = 0;
-        if (leftKey && !rightKey) moveDir = -1;
-        else if (rightKey && !leftKey) moveDir = 1;
+        const scheme = controlSchemeRef.current;
+        s.p1Controller.setPlayerId(1);
+        const p1RawInput = s.p1Controller.readInput(keys, s.keysJustPressed, is1v1, scheme);
+        const p1Combat = s.p1Controller.readCombatInput(keys, s.keysJustPressed, is1v1, scheme);
 
-        const runHeld = is1v1
-          ? !!keys['.']
-          : !!(keys['shift'] || keys['e'] || keys['.'] || keys['q']);
-        const jumpJustPressed = is1v1
-          ? !!s.keysJustPressed['arrowup']
-          : !!(s.keysJustPressed['w'] || s.keysJustPressed['arrowup'] || s.keysJustPressed[' ']);
-        const jumpHeld = is1v1
-          ? !!keys['arrowup']
-          : !!(keys['w'] || keys['arrowup'] || keys[' ']);
-        const rollPressed = is1v1
-          ? !!(s.keysJustPressed['arrowdown'] || s.keysJustPressed['c'] || s.keysJustPressed['shift'])
-          : !!(s.keysJustPressed['s'] || s.keysJustPressed['arrowdown'] || s.keysJustPressed['c'] || s.keysJustPressed['shift']);
-        const crouchHeld = is1v1 ? !!keys['arrowdown'] : !!(keys['s'] || keys['arrowdown']);
-        const dropThrough = crouchHeld && jumpJustPressed;
+        const moveDir = p1RawInput.moveDir;
+        const leftKey = moveDir === -1;
+        const rightKey = moveDir === 1;
+        const runHeld = p1RawInput.run;
+        const jumpJustPressed = p1RawInput.jump;
+        const jumpHeld = p1RawInput.jumpHeld;
+        const rollPressed = p1RawInput.roll;
+        const dropThrough = !!p1RawInput.dropThrough;
+        const crouchHeld = (scheme === 'wasd_p1')
+          ? !!(keys['s'] || keys['S'] || (!is1v1 && keys['arrowdown']))
+          : !!(keys['arrowdown'] || (!is1v1 && (keys['s'] || keys['S'])));
 
-        const isNinjaComboLocked = !!p1.isMeleeComboAttacking || !!p1.isOneHandAttacking;
+        const isNinjaComboLocked = !!p1.isMeleeComboAttacking || !!p1.isOneHandAttacking || !!p1.isTwoHandAttacking;
 
         const p1Input: PlayerInput = {
           moveDir: isNinjaComboLocked ? 0 : moveDir,
           run: isNinjaComboLocked ? false : runHeld,
-          jump: isNinjaComboLocked ? false : (jumpJustPressed && !dropThrough),
+          jump: isNinjaComboLocked ? false : jumpJustPressed,
           jumpHeld: isNinjaComboLocked ? false : jumpHeld,
-          roll: isNinjaComboLocked ? false : (rollPressed && !dropThrough),
+          roll: isNinjaComboLocked ? false : rollPressed,
           dropThrough: isNinjaComboLocked ? false : dropThrough,
         };
 
-        // Recuperación activa de derribo para P1 mediante teclas de movimiento (Flechas, WASD, salto, rodada)
+        // Recuperación activa de derribo para P1 mediante teclas de movimiento (Flechas, salto, rodada)
         if (p1.fsm === PlayerFSMState.KnockedDown || p1.fsm === PlayerFSMState.GetUp) {
           const hasDirInput = moveDir !== 0;
-          const hasVerticalInput = jumpJustPressed || rollPressed || crouchHeld;
+          const hasVerticalInput = jumpJustPressed || (hasDirInput && rollPressed) || crouchHeld;
           const anyMovementPressed = hasDirInput || hasVerticalInput || (is1v1 ? !!keys['n'] || !!keys['m'] : !!keys['n'] || !!keys['j'] || !!keys['m'] || !!keys['k']);
 
           // Si presiona teclas tras un mínimo amortiguamiento de impacto (4 ticks)
           if (anyMovementPressed && p1.stateTicks >= 4) {
-            if (rollPressed || (crouchHeld && hasDirInput)) {
+            if ((rollPressed && hasDirInput) || (crouchHeld && hasDirInput)) {
               // Rodada de escape / recuperación inmediata
               if (hasDirInput) p1.facingRight = moveDir > 0;
               PlayerFSM.tryTransition(p1, PlayerFSMState.Roll);
@@ -1672,24 +1765,16 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           }
         }
 
-        const meleePressed = is1v1 ? !!(keys['n'] || keys['N']) : !!(keys['n'] || keys['N'] || keys['j'] || keys['J']);
-        const firePressed = is1v1 ? !!(keys['m'] || keys['M']) : !!(keys['m'] || keys['M'] || keys['k'] || keys['K']);
-        const throwPressed = is1v1 ? !!(keys[','] || keys['comma'] || keys['.']) : !!(keys['g'] || keys['G'] || keys['comma'] || keys[','] || keys['l'] || keys['L']);
+        const meleePressed = p1Combat.melee;
+        const firePressed = p1Combat.fire;
+        const throwPressed = p1Combat.throwGrenade;
 
         // Melee Attack P1 - Advanced Melee System
         const p1FacingDir = p1.facingRight ? 1 : -1;
         const meleeHeld = meleePressed;
-        const meleeJustPressed = is1v1
-          ? (!!s.keysJustPressed['n'] || !!s.keysJustPressed['N'])
-          : (!!s.keysJustPressed['n'] || !!s.keysJustPressed['N'] || !!s.keysJustPressed['j'] || !!s.keysJustPressed['J']);
-
-        const fireJustPressed = is1v1
-          ? (!!s.keysJustPressed['m'] || !!s.keysJustPressed['M'])
-          : (!!s.keysJustPressed['m'] || !!s.keysJustPressed['M'] || !!s.keysJustPressed['k'] || !!s.keysJustPressed['K']);
-
-        const throwJustPressed = is1v1
-          ? (!!s.keysJustPressed[','] || !!s.keysJustPressed['comma'] || !!s.keysJustPressed['.'])
-          : (!!s.keysJustPressed[','] || !!s.keysJustPressed['comma'] || !!s.keysJustPressed['l'] || !!s.keysJustPressed['L'] || !!s.keysJustPressed['g'] || !!s.keysJustPressed['G']);
+        const meleeJustPressed = p1Combat.meleeJust;
+        const fireJustPressed = p1Combat.fireJust;
+        const throwJustPressed = p1Combat.throwJust;
 
         if (p1.isGrappling && p1.grabbedTargetId === bot.id) {
           p1.grappleTicks++;
@@ -2990,34 +3075,39 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       // ─────────────────────────────────────────────────────────
       if (bot.isAlive && s.roundActive) {
         if (gameMode === 'local1v1') {
-          // J2 en 1v1 Local: A/D (mover), W (salto), S (rodar), Q (correr), J (melee), K (disparo), L (granada)
-          const leftKey = !!keys['a'];
-          const rightKey = !!keys['d'];
-          let moveDir: -1 | 0 | 1 = 0;
-          if (leftKey && !rightKey) moveDir = -1;
-          else if (rightKey && !leftKey) moveDir = 1;
+          const scheme = controlSchemeRef.current;
+          s.p2Controller.setPlayerId(2);
+          const p2RawInput = s.p2Controller.readInput(keys, s.keysJustPressed, true, scheme);
+          const p2Combat = s.p2Controller.readCombatInput(keys, s.keysJustPressed, true, scheme);
 
-          const runHeld = !!keys['q'];
-          const jumpJustPressed = !!s.keysJustPressed['w'];
-          const jumpHeld = !!keys['w'];
-          const rollPressed = !!(s.keysJustPressed['s'] || s.keysJustPressed['c'] || s.keysJustPressed['shift']);
-          const crouchHeld = !!keys['s'];
-          const dropThrough = crouchHeld && jumpJustPressed;
+          const moveDir = p2RawInput.moveDir;
+          const leftKey = moveDir === -1;
+          const rightKey = moveDir === 1;
+          const runHeld = p2RawInput.run;
+          const jumpJustPressed = p2RawInput.jump;
+          const jumpHeld = p2RawInput.jumpHeld;
+          const rollPressed = p2RawInput.roll;
+          const dropThrough = !!p2RawInput.dropThrough;
+          const crouchHeld = (scheme === 'wasd_p1')
+            ? !!keys['arrowdown']
+            : !!(keys['s'] || keys['S']);
+
+          const isNinjaComboLocked = !!bot.isMeleeComboAttacking || !!bot.isOneHandAttacking || !!bot.isTwoHandAttacking;
 
           const p2Input: PlayerInput = {
-            moveDir,
-            run: runHeld,
-            jump: jumpJustPressed && !dropThrough,
-            jumpHeld,
-            roll: rollPressed && !dropThrough,
-            dropThrough,
+            moveDir: isNinjaComboLocked ? 0 : moveDir,
+            run: isNinjaComboLocked ? false : runHeld,
+            jump: isNinjaComboLocked ? false : jumpJustPressed,
+            jumpHeld: isNinjaComboLocked ? false : jumpHeld,
+            roll: isNinjaComboLocked ? false : rollPressed,
+            dropThrough: isNinjaComboLocked ? false : dropThrough,
           };
 
           // Recuperación activa de derribo para P2 (1v1) mediante teclas de movimiento (W, A, S, D, salto, rodada)
           if (bot.fsm === PlayerFSMState.KnockedDown || bot.fsm === PlayerFSMState.GetUp) {
             const hasDirInput = moveDir !== 0;
             const hasVerticalInput = jumpJustPressed || rollPressed || crouchHeld;
-            const anyP2Input = hasDirInput || hasVerticalInput || !!keys['j'] || !!keys['k'] || !!keys['l'];
+            const anyP2Input = hasDirInput || hasVerticalInput || !!keys['j'] || !!keys['J'] || !!keys['k'] || !!keys['K'] || !!keys['l'] || !!keys['L'];
 
             if (anyP2Input && bot.stateTicks >= 4) {
               if (rollPressed || (crouchHeld && hasDirInput)) {
@@ -3120,7 +3210,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
               bot.fsm = PlayerFSMState.Fall;
             } else if (s.p2Controller.state === ControllerState.Run || s.p2Controller.state === ControllerState.Walk) {
               if (bot.fsm !== PlayerFSMState.MeleeAttack && bot.fsm !== PlayerFSMState.RangedFire) {
-                bot.fsm = PlayerFSMState.Run;
+                bot.fsm = s.p2Controller.state === ControllerState.Run ? PlayerFSMState.Run : PlayerFSMState.Idle;
               }
             } else {
               if (bot.fsm !== PlayerFSMState.MeleeAttack && bot.fsm !== PlayerFSMState.RangedFire) {
@@ -3129,15 +3219,24 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             }
           }
 
-          const meleePressed = !!keys['j'];
-          const firePressed = !!keys['k'];
-          const throwPressed = !!keys['l'];
+          const isTwoHand = isTwoHandWeapon(bot.equippedWeapon);
+          const isOneHand = isOneHandWeapon(bot.equippedWeapon);
+          const isRifle = isRifleWeapon(bot.equippedWeapon);
+          const isPistol = isPistolWeapon(bot.equippedWeapon);
+          const isThrowable = isThrowableWeapon(bot.equippedWeapon);
+          const isFirearm = isRifle || isPistol;
 
-          // ── COMBATE MELEE AVANZADO JUGADOR 2 (1v1 LOCAL) ──
+          if (s.p2Controller) {
+            s.p2Controller.hasHeavyRifleEquipped = isRifle;
+          }
+
+          const meleeJustPressed = p2Combat.meleeJust;
+          const fireJustPressed = p2Combat.fireJust;
+          const firePressed = p2Combat.fire;
+          const throwJustPressed = p2Combat.throwJust;
           const p2FacingDir = bot.facingRight ? 1 : -1;
-          const j2MeleeHeld = !!keys['j'];
-          const j2MeleeJustPressed = !!s.keysJustPressed['j'];
 
+          // ── COMBATE JUGADOR 2 (1v1 LOCAL) ──
           if (bot.isGrappling && bot.grabbedTargetId === p1.id) {
             bot.grappleTicks++;
             p1.x = bot.x + p2FacingDir * 24;
@@ -3149,7 +3248,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             s.p1Controller.vx = 0;
             s.p1Controller.vy = 0;
 
-            if (j2MeleeJustPressed) {
+            if (meleeJustPressed) {
               sounds.playThrow();
               const throwDirX = leftKey ? -1 : (rightKey ? 1 : p2FacingDir);
               const throwUp = jumpHeld || !crouchHeld;
@@ -3191,284 +3290,1072 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
               p1.isGrabbed = false;
               bot.attackCooldown = 15;
             }
-          } else {
-            const rivalDist = Math.hypot(p1.x - bot.x, p1.y - bot.y);
-            const isNearP1 = rivalDist < 38 && Math.abs(p1.y - bot.y) < 26;
+          } else if (
+            meleeJustPressed &&
+            Math.hypot(p1.x - bot.x, p1.y - bot.y) < 38 &&
+            Math.abs(p1.y - bot.y) < 26 &&
+            p1.isAlive &&
+            !p1.isGrabbed &&
+            !s.p1Controller.isInvulnerable &&
+            bot.attackCooldown <= 0 &&
+            bot.onGround &&
+            (crouchHeld || (bot.facingRight ? rightKey : leftKey))
+          ) {
+            bot.isGrappling = true;
+            bot.grabbedTargetId = p1.id;
+            bot.grappleTicks = 0;
+            p1.isGrabbed = true;
+            sounds.playGrapple();
+            s.floatingTexts.push({
+              id: s.nextEntityId++,
+              text: '¡AGARRE J2!',
+              x: bot.x,
+              y: bot.y - 30,
+              color: '#f87171',
+              life: 30,
+            });
+          } else if (
+            meleeJustPressed &&
+            bot.attackCooldown <= 0 &&
+            (crouchHeld || s.p2Controller.state === ControllerState.Roll || Math.abs(bot.velocityX) > 130) &&
+            bot.onGround
+          ) {
+            const isBladeJ2 = isBladeWeapon(bot.equippedWeapon);
+            bot.isSliding = true;
+            bot.slideTicks = 18;
+            bot.attackCooldown = isBladeJ2 ? 24 : 28;
+            bot.velocityX = p2FacingDir * (isBladeJ2 ? 460 : 430);
+            s.p2Controller.vx = bot.velocityX;
+            if (isBladeJ2) {
+              sounds.playSwordSwing();
+              sounds.playSlide();
+            } else {
+              sounds.playSlide();
+            }
+            PlayerFSM.tryTransition(bot, PlayerFSMState.CrouchSlide);
+            addSparks(bot.x, bot.y + 16, isBladeJ2 ? '#e0f2fe' : '#94a3b8', 14);
 
-            if (
-              j2MeleeJustPressed &&
-              isNearP1 &&
-              p1.isAlive &&
-              !p1.isGrabbed &&
-              !s.p1Controller.isInvulnerable &&
-              bot.attackCooldown <= 0 &&
-              bot.onGround &&
-              (crouchHeld || (bot.facingRight ? rightKey : leftKey))
-            ) {
-              bot.isGrappling = true;
-              bot.grabbedTargetId = p1.id;
-              bot.grappleTicks = 0;
-              p1.isGrabbed = true;
-              sounds.playGrapple();
-              s.floatingTexts.push({
-                id: s.nextEntityId++,
-                text: '¡AGARRE J2!',
-                x: bot.x,
-                y: bot.y - 30,
-                color: '#f87171',
-                life: 30,
-              });
-            } else if (
-              j2MeleeJustPressed &&
-              bot.attackCooldown <= 0 &&
-              (crouchHeld || s.p2Controller.state === ControllerState.Roll || Math.abs(bot.velocityX) > 130) &&
-              bot.onGround
-            ) {
-              const isBladeJ2 = isBladeWeapon(bot.equippedWeapon);
-              bot.isSliding = true;
-              bot.slideTicks = 18;
-              bot.attackCooldown = isBladeJ2 ? 24 : 28;
-              bot.velocityX = p2FacingDir * (isBladeJ2 ? 460 : 430);
-              s.p2Controller.vx = bot.velocityX;
-              if (isBladeJ2) {
-                sounds.playSwordSwing();
-                sounds.playSlide();
-              } else {
-                sounds.playSlide();
+            if (isBladeJ2) {
+              const slideHit = CombatSystem.resolveBladeDashSlash(bot, p1);
+              if (slideHit.didHit) {
+                sounds.playBladeHit();
+                s.screenShake = 9;
+                addSparks(p1.x, p1.y + 12, '#ef4444', 18);
+                addSparks(p1.x, p1.y + 12, '#ffffff', 12);
+                s.floatingTexts.push({
+                  id: s.nextEntityId++,
+                  text: `¡TAJO RASANTE J2! -${Math.round(slideHit.damageDealt)}`,
+                  x: p1.x,
+                  y: p1.y - 25,
+                  color: '#ef4444',
+                  life: 35,
+                });
               }
-              PlayerFSM.tryTransition(bot, PlayerFSMState.CrouchSlide);
-              addSparks(bot.x, bot.y + 16, isBladeJ2 ? '#e0f2fe' : '#94a3b8', 14);
+            } else {
+              const slideHit = CombatSystem.resolveSlideTackle(bot, p1);
+              if (slideHit.didHit) {
+                sounds.playHit();
+                s.screenShake = 8;
+                addSparks(p1.x, p1.y + 12, '#ef4444', 16);
+                s.floatingTexts.push({
+                  id: s.nextEntityId++,
+                  text: `¡BARRIDA J2! -${Math.round(slideHit.damageDealt)}`,
+                  x: p1.x,
+                  y: p1.y - 25,
+                  color: '#ef4444',
+                  life: 35,
+                });
+              }
+            }
 
-              if (isBladeJ2) {
-                const slideHit = CombatSystem.resolveBladeDashSlash(bot, p1);
-                if (slideHit.didHit) {
-                  sounds.playBladeHit();
-                  s.screenShake = 9;
-                  addSparks(p1.x, p1.y + 12, '#ef4444', 18);
-                  addSparks(p1.x, p1.y + 12, '#ffffff', 12);
-                  s.floatingTexts.push({
-                    id: s.nextEntityId++,
-                    text: `¡TAJO RASANTE J2! -${Math.round(slideHit.damageDealt)}`,
-                    x: p1.x,
-                    y: p1.y - 25,
-                    color: '#ef4444',
-                    life: 35,
-                  });
+            s.crates.forEach((c) => {
+              if (Math.hypot(bot.x - (c.x + c.w / 2), bot.y - (c.y + c.h / 2)) < 50) {
+                c.health -= isBladeJ2 ? 25 : 15;
+                c.vx = p2FacingDir * 320;
+                sounds.playHit();
+                addSparks(c.x + 16, c.y + 16, '#d97706', 10);
+              }
+            });
+            s.barrels.forEach((b) => {
+              if (Math.hypot(bot.x - (b.x + b.w / 2), bot.y - (b.y + b.h / 2)) < 50) {
+                b.health -= 15;
+                b.vx = p2FacingDir * 380;
+                sounds.playHit();
+                addSparks(b.x + 12, b.y + 16, '#ef4444', 10);
+              }
+            });
+          } else if (
+            meleeJustPressed &&
+            bot.isAlive &&
+            s.roundActive &&
+            bot.fsm !== PlayerFSMState.KnockedDown &&
+            bot.fsm !== PlayerFSMState.GetUp &&
+            bot.fsm !== PlayerFSMState.Hitstun &&
+            bot.fsm !== PlayerFSMState.Roll &&
+            !bot.isGrappling &&
+            !bot.isThrowing
+          ) {
+            if (isTwoHand) {
+              if (!bot.isTwoHandAttacking) {
+                bot.isTwoHandAttacking = true;
+                bot.twoHandAnimFrame = 0;
+                bot.twoHandAnimTimer = 0;
+                bot.twoHandHasHit = false;
+
+                bot.velocityX = 0;
+                s.p2Controller.vx = 0;
+                s.p2Controller.state = ControllerState.Idle;
+                PlayerFSM.tryTransition(bot, PlayerFSMState.MeleeAttack);
+
+                if (isBladeWeapon(bot.equippedWeapon)) {
+                  sounds.playSwordSwing();
+                } else {
+                  sounds.playPunch();
+                }
+              }
+            } else if (isOneHand) {
+              if (!bot.isOneHandAttacking) {
+                bot.isOneHandAttacking = true;
+                bot.oneHandAnimFrame = 0;
+                bot.oneHandAnimTimer = 0;
+                bot.oneHandHasHit = false;
+
+                bot.velocityX = 0;
+                s.p2Controller.vx = 0;
+                s.p2Controller.state = ControllerState.Idle;
+                PlayerFSM.tryTransition(bot, PlayerFSMState.MeleeAttack);
+
+                if (isBladeWeapon(bot.equippedWeapon)) {
+                  sounds.playSwordSwing();
+                } else {
+                  sounds.playPunch();
+                }
+              }
+            } else {
+              // Combo Melee desarmado J2 (3 golpes idénticos al protagonista)
+              if (bot.isMeleeComboAttacking) {
+                if (bot.meleeComboStep < 2) {
+                  bot.comboBuffered = true;
+                  bot.comboWindowTicks = 34;
+
+                  if (bot.meleeAnimFrame >= 3) {
+                    bot.meleeComboStep++;
+                    bot.comboStep = bot.meleeComboStep;
+                    bot.meleeAnimFrame = 0;
+                    bot.meleeAnimTimer = 0;
+                    bot.meleeHasHit = false;
+                    bot.comboBuffered = false;
+                    bot.comboWindowTicks = 34;
+                    sounds.playPunch();
+                  }
                 }
               } else {
-                const slideHit = CombatSystem.resolveSlideTackle(bot, p1);
-                if (slideHit.didHit) {
-                  sounds.playHit();
-                  s.screenShake = 8;
-                  addSparks(p1.x, p1.y + 12, '#ef4444', 16);
-                  s.floatingTexts.push({
-                    id: s.nextEntityId++,
-                    text: `¡BARRIDA J2! -${Math.round(slideHit.damageDealt)}`,
-                    x: p1.x,
-                    y: p1.y - 25,
-                    color: '#ef4444',
-                    life: 35,
-                  });
+                let nextStep = 0;
+                if (bot.comboWindowTicks > 0 && bot.comboStep > 0 && bot.comboStep <= 2) {
+                  nextStep = bot.comboStep;
+                } else {
+                  nextStep = 0;
                 }
+
+                bot.isMeleeComboAttacking = true;
+                bot.meleeComboStep = nextStep;
+                bot.comboStep = nextStep;
+                bot.meleeAnimFrame = 0;
+                bot.meleeAnimTimer = 0;
+                bot.meleeHasHit = false;
+                bot.comboBuffered = false;
+                bot.comboWindowTicks = 34;
+
+                bot.velocityX = 0;
+                s.p2Controller.vx = 0;
+                s.p2Controller.state = ControllerState.Idle;
+                PlayerFSM.tryTransition(bot, PlayerFSMState.MeleeAttack);
+
+                sounds.playPunch();
+              }
+            }
+          }
+
+          // ── DISPARO DE ARMAS DE FUEGO JUGADOR 2 (Tecla K) ──
+          if (
+            (fireJustPressed || (firePressed && (bot.isRifleShooting || bot.isPistolShooting))) &&
+            isFirearm &&
+            bot.isAlive &&
+            s.roundActive &&
+            bot.fsm !== PlayerFSMState.KnockedDown &&
+            bot.fsm !== PlayerFSMState.GetUp &&
+            bot.fsm !== PlayerFSMState.Hitstun &&
+            bot.fsm !== PlayerFSMState.Roll &&
+            !bot.isGrappling &&
+            !bot.isThrowing
+          ) {
+            if (isRifle) {
+              if (bot.attackCooldown <= 0 && !bot.isRifleShooting) {
+                if (bot.ammo > 0) {
+                  const wpn = getWeapon(bot.equippedWeapon);
+                  bot.isRifleShooting = true;
+                  bot.rifleAnimFrame = 0;
+                  bot.rifleAnimTimer = 0;
+                  bot.rifleHasFired = true;
+                  s.p2Controller.isShootingRifle = true;
+
+                  bot.attackCooldown = Math.max(wpn.cooldownTicks, 10);
+                  bot.ammo--;
+                  PlayerFSM.tryTransition(bot, PlayerFSMState.RangedFire);
+                  sounds.playGunshot(wpn.soundType || wpn.type.toLowerCase());
+
+                  const dir = bot.facingRight ? 1 : -1;
+                  const muzzleX = bot.x + dir * 32;
+                  const muzzleY = bot.y - 7;
+
+                  addSparks(muzzleX, muzzleY, '#fde047', 12);
+                  addSparks(muzzleX, muzzleY, '#ffffff', 6);
+                  s.screenShake = Math.min(14, Math.max(5, (wpn.damage || 25) / 3));
+
+                  const count = wpn.pelletCount || 1;
+                  for (let i = 0; i < count; i++) {
+                    const spreadAngle = ((Math.random() - 0.5) * ((wpn.accuracyDeg || 4) * Math.PI / 180)) / 2;
+                    const speed = wpn.projectileSpeed || 950;
+                    s.projectiles.push({
+                      id: s.nextEntityId++,
+                      x: muzzleX,
+                      y: muzzleY,
+                      vx: dir * speed * Math.cos(spreadAngle),
+                      vy: speed * Math.sin(spreadAngle),
+                      damage: (wpn.damage / count) * bot.damageDealtModifier,
+                      onFireDuration: wpn.onFireDuration || 0,
+                      explosionRadius: wpn.explosionRadius || 0,
+                      shooterId: bot.id,
+                      weaponType: bot.equippedWeapon,
+                      pelletCount: count,
+                      lifeTicks: 0,
+                      maxLifeTicks: 60,
+                      color: wpn.color || '#facc15',
+                    });
+                  }
+                } else {
+                  bot.attackCooldown = 15;
+                  sounds.playDryFire();
+                }
+              }
+            } else if (isPistol) {
+              if (bot.attackCooldown <= 0 && !bot.isPistolShooting) {
+                if (bot.ammo > 0) {
+                  const wpn = getWeapon(bot.equippedWeapon);
+                  bot.isPistolShooting = true;
+                  bot.pistolAnimFrame = 0;
+                  bot.pistolAnimTimer = 0;
+                  bot.pistolHasFired = true;
+                  s.p2Controller.isShootingPistol = true;
+
+                  bot.attackCooldown = Math.max(wpn.cooldownTicks, 14);
+                  bot.ammo--;
+                  PlayerFSM.tryTransition(bot, PlayerFSMState.RangedFire);
+                  sounds.playGunshot(wpn.type.toLowerCase());
+
+                  const dir = bot.facingRight ? 1 : -1;
+                  const muzzleX = bot.x + dir * 28;
+                  const muzzleY = bot.y - 6;
+
+                  addSparks(muzzleX, muzzleY, '#fde047', 8);
+                  s.screenShake = Math.min(10, Math.max(3, (wpn.damage || 20) / 4));
+
+                  const count = wpn.pelletCount || 1;
+                  for (let i = 0; i < count; i++) {
+                    const spreadAngle = ((Math.random() - 0.5) * ((wpn.accuracyDeg || 3) * Math.PI / 180)) / 2;
+                    const speed = wpn.projectileSpeed || 900;
+                    s.projectiles.push({
+                      id: s.nextEntityId++,
+                      x: muzzleX,
+                      y: muzzleY,
+                      vx: dir * speed * Math.cos(spreadAngle),
+                      vy: speed * Math.sin(spreadAngle),
+                      damage: (wpn.damage / count) * bot.damageDealtModifier,
+                      onFireDuration: wpn.onFireDuration || 0,
+                      explosionRadius: wpn.explosionRadius || 0,
+                      shooterId: bot.id,
+                      weaponType: bot.equippedWeapon,
+                      pelletCount: count,
+                      lifeTicks: 0,
+                      maxLifeTicks: 60,
+                      color: '#facc15',
+                    });
+                  }
+                } else {
+                  bot.attackCooldown = 15;
+                  sounds.playDryFire();
+                }
+              }
+            }
+          }
+
+          // ── LANZAMIENTO DE BOMBAS / GRANADAS JUGADOR 2 (Tecla L) ──
+          if (
+            throwJustPressed &&
+            bot.isAlive &&
+            s.roundActive &&
+            bot.fsm !== PlayerFSMState.KnockedDown &&
+            bot.fsm !== PlayerFSMState.GetUp &&
+            bot.fsm !== PlayerFSMState.Hitstun &&
+            bot.fsm !== PlayerFSMState.Roll &&
+            !bot.isGrappling &&
+            !bot.isThrowing
+          ) {
+            const hasGrenadesInInventory = getTotalGrenades(s.botGrenades) > 0;
+            if (bot.attackCooldown <= 0) {
+              if (isThrowable && bot.ammo > 0) {
+                bot.isThrowing = true;
+                bot.throwAnimFrame = 0;
+                bot.throwAnimTimer = 0;
+                bot.throwHasReleased = false;
+                bot.throwInitialInertia = bot.velocityX * 0.45;
+                bot.velocityX = 0;
+                s.p2Controller.vx = 0;
+                s.p2Controller.state = ControllerState.Idle;
+                s.p2Controller.isThrowing = true;
+                bot.attackCooldown = 25;
+                PlayerFSM.tryTransition(bot, PlayerFSMState.MeleeAttack);
+                sounds.playSwordSwing();
+              } else if (hasGrenadesInInventory) {
+                bot.isThrowing = true;
+                bot.throwAnimFrame = 0;
+                bot.throwAnimTimer = 0;
+                bot.throwHasReleased = false;
+                bot.throwInitialInertia = bot.velocityX * 0.45;
+                bot.velocityX = 0;
+                s.p2Controller.vx = 0;
+                s.p2Controller.state = ControllerState.Idle;
+                s.p2Controller.isThrowing = true;
+                bot.attackCooldown = 25;
+                PlayerFSM.tryTransition(bot, PlayerFSMState.MeleeAttack);
+                sounds.playSwordSwing();
+              } else {
+                bot.attackCooldown = 15;
+                sounds.playDryFire();
+                s.floatingTexts.push({
+                  id: s.nextEntityId++,
+                  text: '¡SIN BOMBAS / GRANADAS!',
+                  x: bot.x,
+                  y: bot.y - 30,
+                  color: '#ef4444',
+                  life: 25,
+                });
+              }
+            }
+          }
+
+          // ── BUCLES DE ANIMACIÓN Y FOTOGRAMAS JUGADOR 2 ──
+          // Ataque a Dos Manos (two_hand_attack - 6 frames)
+          if (bot.isTwoHandAttacking) {
+            bot.velocityX = 0;
+            s.p2Controller.vx = 0;
+            s.p2Controller.state = ControllerState.Idle;
+            bot.fsm = PlayerFSMState.MeleeAttack;
+
+            bot.twoHandAnimTimer = (bot.twoHandAnimTimer || 0) + 1;
+            if (bot.twoHandAnimTimer >= 4) {
+              bot.twoHandAnimTimer = 0;
+              bot.twoHandAnimFrame = (bot.twoHandAnimFrame || 0) + 1;
+
+              if (bot.twoHandAnimFrame >= 6) {
+                bot.isTwoHandAttacking = false;
+                bot.twoHandAnimFrame = 0;
+                bot.twoHandAnimTimer = 0;
+                bot.twoHandHasHit = false;
+                bot.fsm = PlayerFSMState.Idle;
+              }
+            }
+
+            if (!bot.twoHandHasHit && (bot.twoHandAnimFrame || 0) === 3) {
+              bot.twoHandHasHit = true;
+              const hitReach = 82;
+              const isP1InReach =
+                p1.isAlive &&
+                !p1.isGrabbed &&
+                !s.p1Controller.isInvulnerable &&
+                p1.fsm !== PlayerFSMState.Roll &&
+                ((p2FacingDir > 0 && p1.x >= bot.x - 15 && p1.x <= bot.x + hitReach) ||
+                 (p2FacingDir < 0 && p1.x <= bot.x + 15 && p1.x >= bot.x - hitReach)) &&
+                Math.abs(p1.y - bot.y) < 48;
+
+              const wpn = getWeapon(bot.equippedWeapon);
+              const isBlade = isBladeWeapon(bot.equippedWeapon);
+              const baseDmg = (wpn.damage || 22) * 1.45;
+              const finalDmg = baseDmg * bot.damageDealtModifier;
+
+              if (isP1InReach) {
+                if (isBlade) {
+                  sounds.playBladeHit();
+                  addSparks(p1.x, p1.y, '#38bdf8', 22);
+                  addSparks(p1.x, p1.y, '#ffffff', 14);
+                } else {
+                  sounds.playHit();
+                  addSparks(p1.x, p1.y, '#f97316', 22);
+                  addSparks(p1.x, p1.y, '#fbbf24', 14);
+                }
+
+                s.screenShake = 12;
+                p1.velocityX = p2FacingDir * 260;
+                p1.hitstunTicks = 24;
+                PlayerFSM.tryTransition(p1, PlayerFSMState.Hitstun);
+
+                p1.health = Math.max(0, p1.health - finalDmg);
+                if (p1.health <= 0) {
+                  p1.health = 0;
+                  p1.isAlive = false;
+                  PlayerFSM.tryTransition(p1, PlayerFSMState.Dead);
+                  sounds.playHit();
+                }
+
+                s.floatingTexts.push({
+                  id: s.nextEntityId++,
+                  text: `¡GOLPE PESADO (${wpn.name.toUpperCase()})! -${Math.round(finalDmg)}`,
+                  x: p1.x,
+                  y: p1.y - 36,
+                  color: '#f97316',
+                  life: 55,
+                });
               }
 
               s.crates.forEach((c) => {
-                if (Math.hypot(bot.x - (c.x + c.w / 2), bot.y - (c.y + c.h / 2)) < 50) {
-                  c.health -= isBladeJ2 ? 25 : 15;
-                  c.vx = p2FacingDir * 320;
+                if (Math.hypot(bot.x + p2FacingDir * 32 - (c.x + c.w / 2), bot.y - (c.y + c.h / 2)) < 52) {
+                  c.health -= baseDmg * 1.5;
+                  c.vx = p2FacingDir * 380;
+                  sounds.playCrateBreak();
+                  addSparks(c.x + 16, c.y + 16, '#d97706', 14);
+                }
+              });
+
+              s.barrels.forEach((b) => {
+                if (Math.hypot(bot.x + p2FacingDir * 32 - (b.x + b.w / 2), bot.y - (b.y + b.h / 2)) < 52) {
+                  b.health -= baseDmg * 1.2;
+                  b.vx = p2FacingDir * 420;
+                  sounds.playHit();
+                  addSparks(b.x + 12, b.y + 16, '#ef4444', 14);
+                }
+              });
+            }
+          }
+
+          // Ataque a Una Mano (one_hand_attack - 5 frames)
+          if (bot.isOneHandAttacking) {
+            bot.velocityX = 0;
+            s.p2Controller.vx = 0;
+            s.p2Controller.state = ControllerState.Idle;
+            bot.fsm = PlayerFSMState.MeleeAttack;
+
+            bot.oneHandAnimTimer = (bot.oneHandAnimTimer || 0) + 1;
+            if (bot.oneHandAnimTimer >= 2) {
+              bot.oneHandAnimTimer = 0;
+              bot.oneHandAnimFrame = (bot.oneHandAnimFrame || 0) + 1;
+
+              if (bot.oneHandAnimFrame >= 5) {
+                bot.isOneHandAttacking = false;
+                bot.oneHandAnimFrame = 0;
+                bot.oneHandAnimTimer = 0;
+                bot.oneHandHasHit = false;
+                bot.fsm = PlayerFSMState.Idle;
+              }
+            }
+
+            if (!bot.oneHandHasHit && (bot.oneHandAnimFrame || 0) >= 2) {
+              bot.oneHandHasHit = true;
+              const hitReach = 58;
+              const isP1InReach =
+                p1.isAlive &&
+                !p1.isGrabbed &&
+                !s.p1Controller.isInvulnerable &&
+                p1.fsm !== PlayerFSMState.Roll &&
+                ((p2FacingDir > 0 && p1.x >= bot.x - 10 && p1.x <= bot.x + hitReach) ||
+                 (p2FacingDir < 0 && p1.x <= bot.x + 10 && p1.x >= bot.x - hitReach)) &&
+                Math.abs(p1.y - bot.y) < 34;
+
+              const wpn = getWeapon(bot.equippedWeapon);
+              const isBlade = isBladeWeapon(bot.equippedWeapon);
+              const baseDmg = wpn.damage || 16;
+              const finalDmg = baseDmg * bot.damageDealtModifier;
+
+              if (isP1InReach) {
+                if (isBlade) {
+                  sounds.playBladeHit();
+                  addSparks(p1.x, p1.y, '#38bdf8', 16);
+                  addSparks(p1.x, p1.y, '#ffffff', 10);
+                } else {
+                  sounds.playHit();
+                  addSparks(p1.x, p1.y, '#f59e0b', 16);
+                }
+
+                s.screenShake = 7;
+                p1.velocityX = p2FacingDir * 170;
+                p1.hitstunTicks = 16;
+                PlayerFSM.tryTransition(p1, PlayerFSMState.Hitstun);
+
+                p1.health = Math.max(0, p1.health - finalDmg);
+                if (p1.health <= 0) {
+                  p1.health = 0;
+                  p1.isAlive = false;
+                  PlayerFSM.tryTransition(p1, PlayerFSMState.Dead);
+                  sounds.playHit();
+                }
+
+                s.floatingTexts.push({
+                  id: s.nextEntityId++,
+                  text: `¡${wpn.name.toUpperCase()}! -${Math.round(finalDmg)}`,
+                  x: p1.x,
+                  y: p1.y - 32,
+                  color: isBlade ? '#38bdf8' : '#f59e0b',
+                  life: 35,
+                });
+              }
+
+              s.crates.forEach((c) => {
+                if (Math.hypot(bot.x + p2FacingDir * 30 - (c.x + c.w / 2), bot.y - (c.y + c.h / 2)) < 48) {
+                  c.health -= baseDmg * 1.2;
+                  c.vx = p2FacingDir * 290;
+                  sounds.playHit();
+                  addSparks(c.x + 16, c.y + 16, '#d97706', 12);
+                }
+              });
+
+              s.barrels.forEach((b) => {
+                if (Math.hypot(bot.x + p2FacingDir * 30 - (b.x + b.w / 2), bot.y - (b.y + b.h / 2)) < 48) {
+                  b.health -= baseDmg;
+                  b.vx = p2FacingDir * 330;
+                  sounds.playHit();
+                  addSparks(b.x + 12, b.y + 16, '#ef4444', 12);
+                }
+              });
+            }
+          }
+
+          // Disparo de Pistolas (pistol_shoot - 4 frames)
+          if (bot.isPistolShooting) {
+            if (bot.fsm === PlayerFSMState.KnockedDown || bot.fsm === PlayerFSMState.Hitstun || !bot.isAlive) {
+              bot.isPistolShooting = false;
+              bot.pistolAnimFrame = 0;
+              bot.pistolAnimTimer = 0;
+              s.p2Controller.isShootingPistol = false;
+            } else {
+              s.p2Controller.isShootingPistol = true;
+              if (moveDir !== 0) {
+                bot.facingRight = moveDir > 0;
+                s.p2Controller.facingRight = bot.facingRight;
+              }
+
+              bot.pistolAnimTimer = (bot.pistolAnimTimer || 0) + 1;
+              if (bot.pistolAnimTimer >= 4) {
+                bot.pistolAnimTimer = 0;
+                bot.pistolAnimFrame = (bot.pistolAnimFrame || 0) + 1;
+
+                if (bot.pistolAnimFrame >= 4) {
+                  const isAuto =
+                    bot.equippedWeapon === WeaponType.Uzi ||
+                    bot.equippedWeapon === WeaponType.SilencedUzi ||
+                    bot.equippedWeapon === WeaponType.MachinePistol;
+                  const kHeld = !!keys['k'] || !!keys['K'];
+
+                  if (isAuto && kHeld && bot.ammo > 0 && bot.attackCooldown <= 0) {
+                    bot.pistolAnimFrame = 0;
+                    bot.ammo--;
+                    const wpn = getWeapon(bot.equippedWeapon);
+                    bot.attackCooldown = Math.max(wpn.cooldownTicks, 10);
+                    sounds.playGunshot(wpn.type.toLowerCase());
+
+                    const dir = bot.facingRight ? 1 : -1;
+                    const muzzleX = bot.x + dir * 28;
+                    const muzzleY = bot.y - 6;
+
+                    addSparks(muzzleX, muzzleY, '#fde047', 8);
+                    s.screenShake = 3;
+
+                    const speed = wpn.projectileSpeed || 900;
+                    const spreadAngle = ((Math.random() - 0.5) * ((wpn.accuracyDeg || 4) * Math.PI / 180)) / 2;
+                    s.projectiles.push({
+                      id: s.nextEntityId++,
+                      x: muzzleX,
+                      y: muzzleY,
+                      vx: dir * speed * Math.cos(spreadAngle),
+                      vy: speed * Math.sin(spreadAngle),
+                      damage: wpn.damage * bot.damageDealtModifier,
+                      onFireDuration: 0,
+                      explosionRadius: 0,
+                      shooterId: bot.id,
+                      weaponType: bot.equippedWeapon,
+                      pelletCount: 1,
+                      lifeTicks: 0,
+                      maxLifeTicks: 60,
+                      color: '#facc15',
+                    });
+                  } else {
+                    bot.isPistolShooting = false;
+                    bot.pistolAnimFrame = 0;
+                    bot.pistolAnimTimer = 0;
+                    s.p2Controller.isShootingPistol = false;
+                    if (bot.fsm === PlayerFSMState.RangedFire) {
+                      bot.fsm = PlayerFSMState.Idle;
+                    }
+                  }
+                }
+              }
+            }
+          } else if (s.p2Controller) {
+            s.p2Controller.isShootingPistol = false;
+          }
+
+          // Disparo de Rifles/Escopetas (rifle_shoot - 4 frames con retroceso en frame 3)
+          if (bot.isRifleShooting) {
+            if (bot.fsm === PlayerFSMState.KnockedDown || bot.fsm === PlayerFSMState.Hitstun || !bot.isAlive) {
+              bot.isRifleShooting = false;
+              bot.rifleAnimFrame = 0;
+              bot.rifleAnimTimer = 0;
+              s.p2Controller.isShootingRifle = false;
+            } else {
+              s.p2Controller.isShootingRifle = true;
+              if (moveDir !== 0) {
+                bot.facingRight = moveDir > 0;
+                s.p2Controller.facingRight = bot.facingRight;
+              }
+
+              bot.rifleAnimTimer = (bot.rifleAnimTimer || 0) + 1;
+              if (bot.rifleAnimTimer >= 4) {
+                bot.rifleAnimTimer = 0;
+                bot.rifleAnimFrame = (bot.rifleAnimFrame || 0) + 1;
+
+                if (bot.rifleAnimFrame >= 4) {
+                  const isAuto =
+                    bot.equippedWeapon === WeaponType.M60 ||
+                    bot.equippedWeapon === WeaponType.Assault ||
+                    bot.equippedWeapon === WeaponType.Rifle ||
+                    bot.equippedWeapon === WeaponType.TommyGun ||
+                    bot.equippedWeapon === WeaponType.SMG ||
+                    bot.equippedWeapon === WeaponType.Carbine ||
+                    bot.equippedWeapon === WeaponType.MP50;
+                  const kHeld = !!keys['k'] || !!keys['K'];
+
+                  if (isAuto && kHeld && bot.ammo > 0 && bot.attackCooldown <= 0) {
+                    bot.rifleAnimFrame = 0;
+                    bot.ammo--;
+                    const wpn = getWeapon(bot.equippedWeapon);
+                    bot.attackCooldown = Math.max(wpn.cooldownTicks, 8);
+                    sounds.playGunshot(wpn.soundType || wpn.type.toLowerCase());
+
+                    const dir = bot.facingRight ? 1 : -1;
+                    const muzzleX = bot.x + dir * 32;
+                    const muzzleY = bot.y - 7;
+
+                    addSparks(muzzleX, muzzleY, '#fde047', 10);
+                    addSparks(muzzleX, muzzleY, '#ffffff', 5);
+                    s.screenShake = 4;
+
+                    const speed = wpn.projectileSpeed || 950;
+                    const spreadAngle = ((Math.random() - 0.5) * ((wpn.accuracyDeg || 4) * Math.PI / 180)) / 2;
+                    s.projectiles.push({
+                      id: s.nextEntityId++,
+                      x: muzzleX,
+                      y: muzzleY,
+                      vx: dir * speed * Math.cos(spreadAngle),
+                      vy: speed * Math.sin(spreadAngle),
+                      damage: wpn.damage * bot.damageDealtModifier,
+                      onFireDuration: wpn.onFireDuration || 0,
+                      explosionRadius: wpn.explosionRadius || 0,
+                      shooterId: bot.id,
+                      weaponType: bot.equippedWeapon,
+                      pelletCount: 1,
+                      lifeTicks: 0,
+                      maxLifeTicks: 60,
+                      color: wpn.color || '#facc15',
+                    });
+                  } else {
+                    bot.isRifleShooting = false;
+                    bot.rifleAnimFrame = 0;
+                    bot.rifleAnimTimer = 0;
+                    s.p2Controller.isShootingRifle = false;
+                    if (bot.fsm === PlayerFSMState.RangedFire) {
+                      bot.fsm = PlayerFSMState.Idle;
+                    }
+                  }
+                }
+              }
+            }
+          } else if (s.p2Controller) {
+            s.p2Controller.isShootingRifle = false;
+          }
+
+          // Lanzamiento (throw_up - 5 frames, liberación en frame 2)
+          if (bot.isThrowing) {
+            if (bot.fsm === PlayerFSMState.KnockedDown || bot.fsm === PlayerFSMState.Hitstun || !bot.isAlive) {
+              bot.isThrowing = false;
+              bot.throwAnimFrame = 0;
+              bot.throwAnimTimer = 0;
+              bot.throwHasReleased = false;
+              s.p2Controller.isThrowing = false;
+            } else {
+              s.p2Controller.isThrowing = true;
+              bot.velocityX = 0;
+              s.p2Controller.vx = 0;
+              s.p2Controller.state = ControllerState.Idle;
+
+              if (moveDir !== 0) {
+                bot.facingRight = moveDir > 0;
+                s.p2Controller.facingRight = bot.facingRight;
+              }
+
+              if (bot.throwAnimFrame === 2 && !bot.throwHasReleased) {
+                bot.throwHasReleased = true;
+
+                const dir = bot.facingRight ? 1 : -1;
+                const launchX = bot.x + dir * 26;
+                const launchY = bot.y - 14;
+                const inheritedInertia = bot.throwInitialInertia || 0;
+                const wType = bot.equippedWeapon;
+                const isThrowableNow = isThrowableWeapon(wType);
+
+                if (isThrowableNow) {
+                  bot.ammo--;
+                  const wpn = getWeapon(wType);
+
+                  if (wType === WeaponType.Grenade) {
+                    const gCfg = GRENADE_DATABASE[GrenadeType.Frag];
+                    sounds.playGunshot('grenade');
+                    s.projectiles.push({
+                      id: s.nextEntityId++,
+                      x: launchX,
+                      y: launchY,
+                      vx: dir * 440 + inheritedInertia,
+                      vy: -300,
+                      damage: gCfg.damage * bot.damageDealtModifier,
+                      onFireDuration: 0,
+                      explosionRadius: gCfg.explosionRadius,
+                      shooterId: bot.id,
+                      weaponType: WeaponType.Grenade,
+                      pelletCount: 1,
+                      lifeTicks: 0,
+                      maxLifeTicks: gCfg.fuseTicks || 85,
+                      isGrenade: true,
+                      isThrowable: true,
+                      grenadeType: GrenadeType.Frag,
+                      rotation: 0,
+                      rotationSpeed: dir * 0.25,
+                      color: gCfg.color,
+                    });
+                  } else if (wType === WeaponType.Molotov) {
+                    const gCfg = GRENADE_DATABASE[GrenadeType.Molotov];
+                    sounds.playGunshot('grenade');
+                    s.projectiles.push({
+                      id: s.nextEntityId++,
+                      x: launchX,
+                      y: launchY,
+                      vx: dir * 390 + inheritedInertia,
+                      vy: -270,
+                      damage: gCfg.damage * bot.damageDealtModifier,
+                      onFireDuration: gCfg.burnDurationTicks || 240,
+                      explosionRadius: gCfg.explosionRadius,
+                      shooterId: bot.id,
+                      weaponType: WeaponType.Molotov,
+                      pelletCount: 1,
+                      lifeTicks: 0,
+                      maxLifeTicks: 70,
+                      isGrenade: true,
+                      isMolotov: true,
+                      isThrowable: true,
+                      grenadeType: GrenadeType.Molotov,
+                      rotation: 0,
+                      rotationSpeed: dir * 0.28,
+                      color: gCfg.color,
+                    });
+                  } else if (wType === WeaponType.C4) {
+                    sounds.playGunshot('grenade');
+                    s.projectiles.push({
+                      id: s.nextEntityId++,
+                      x: launchX,
+                      y: launchY,
+                      vx: dir * 350 + inheritedInertia,
+                      vy: -240,
+                      damage: (wpn.damage || 60) * bot.damageDealtModifier,
+                      onFireDuration: 0,
+                      explosionRadius: wpn.explosionRadius || 85,
+                      shooterId: bot.id,
+                      weaponType: WeaponType.C4,
+                      pelletCount: 1,
+                      lifeTicks: 0,
+                      maxLifeTicks: 80,
+                      isGrenade: true,
+                      isThrowable: true,
+                      rotation: 0,
+                      rotationSpeed: dir * 0.18,
+                      color: '#ef4444',
+                    });
+                  } else if (wType === WeaponType.Mine) {
+                    sounds.playPickup();
+                    s.projectiles.push({
+                      id: s.nextEntityId++,
+                      x: launchX,
+                      y: launchY,
+                      vx: dir * 280 + inheritedInertia,
+                      vy: -180,
+                      damage: (wpn.damage || 45) * bot.damageDealtModifier,
+                      onFireDuration: 0,
+                      explosionRadius: wpn.explosionRadius || 60,
+                      shooterId: bot.id,
+                      weaponType: WeaponType.Mine,
+                      pelletCount: 1,
+                      lifeTicks: 0,
+                      maxLifeTicks: 250,
+                      isGrenade: true,
+                      isThrowable: true,
+                      rotation: 0,
+                      rotationSpeed: dir * 0.12,
+                      color: '#f59e0b',
+                    });
+                  } else if (wType === WeaponType.Baseball) {
+                    sounds.playPunch();
+                    s.projectiles.push({
+                      id: s.nextEntityId++,
+                      x: launchX,
+                      y: launchY,
+                      vx: dir * 650 + inheritedInertia,
+                      vy: -140,
+                      damage: (wpn.damage || 14) * bot.damageDealtModifier,
+                      onFireDuration: 0,
+                      explosionRadius: 0,
+                      shooterId: bot.id,
+                      weaponType: WeaponType.Baseball,
+                      pelletCount: 1,
+                      lifeTicks: 0,
+                      maxLifeTicks: 90,
+                      isGrenade: true,
+                      isThrowable: true,
+                      rotation: 0,
+                      rotationSpeed: dir * 0.45,
+                      color: '#f8fafc',
+                    });
+                  }
+
+                  s.floatingTexts.push({
+                    id: s.nextEntityId++,
+                    text: `¡${wpn.name}! (${bot.ammo} rest.)`,
+                    x: bot.x,
+                    y: bot.y - 32,
+                    color: wpn.color || '#38bdf8',
+                    life: 30,
+                  });
+                } else {
+                  const thrownType = consumeGrenade(s.botGrenades);
+                  if (thrownType) {
+                    sounds.playGunshot('grenade');
+                    const gCfg = GRENADE_DATABASE[thrownType];
+                    s.projectiles.push({
+                      id: s.nextEntityId++,
+                      x: launchX,
+                      y: launchY,
+                      vx: dir * 420 + inheritedInertia,
+                      vy: -310,
+                      damage: gCfg.damage * bot.damageDealtModifier,
+                      onFireDuration: gCfg.burnDurationTicks || 0,
+                      explosionRadius: gCfg.explosionRadius,
+                      shooterId: bot.id,
+                      weaponType: WeaponType.Grenade,
+                      pelletCount: 1,
+                      lifeTicks: 0,
+                      maxLifeTicks: gCfg.fuseTicks || 85,
+                      isGrenade: true,
+                      isMolotov: thrownType === GrenadeType.Molotov,
+                      isThrowable: true,
+                      grenadeType: thrownType,
+                      rotation: 0,
+                      rotationSpeed: dir * 0.24,
+                      color: gCfg.color,
+                    });
+
+                    s.floatingTexts.push({
+                      id: s.nextEntityId++,
+                      text: `¡${gCfg.shortName}! (${s.botGrenades.ammo[thrownType]} rest.)`,
+                      x: bot.x,
+                      y: bot.y - 32,
+                      color: gCfg.color,
+                      life: 30,
+                    });
+                  }
+                }
+              }
+
+              bot.throwAnimTimer = (bot.throwAnimTimer || 0) + 1;
+              if (bot.throwAnimTimer >= 4) {
+                bot.throwAnimTimer = 0;
+                bot.throwAnimFrame = (bot.throwAnimFrame || 0) + 1;
+
+                if (bot.throwAnimFrame >= 5) {
+                  bot.isThrowing = false;
+                  bot.throwAnimFrame = 0;
+                  bot.throwAnimTimer = 0;
+                  bot.throwHasReleased = false;
+                  s.p2Controller.isThrowing = false;
+
+                  if (isThrowableWeapon(bot.equippedWeapon) && bot.ammo <= 0) {
+                    bot.equippedWeapon = WeaponType.Fists;
+                    bot.characterState = 'desarmado';
+                    bot.weaponState = 'desarmado';
+                  }
+
+                  if (bot.fsm === PlayerFSMState.MeleeAttack) {
+                    bot.fsm = PlayerFSMState.Idle;
+                  }
+                }
+              }
+            }
+          } else if (s.p2Controller) {
+            s.p2Controller.isThrowing = false;
+          }
+
+          // Combo melee desarmado (Puños / Patada / Uppercut)
+          if (bot.comboWindowTicks > 0) {
+            bot.comboWindowTicks--;
+            if (bot.comboWindowTicks <= 0 && !bot.isMeleeComboAttacking) {
+              bot.comboStep = 0;
+              bot.meleeComboStep = 0;
+            }
+          }
+
+          if (bot.isMeleeComboAttacking) {
+            bot.velocityX = 0;
+            s.p2Controller.vx = 0;
+            s.p2Controller.state = ControllerState.Idle;
+            bot.fsm = PlayerFSMState.MeleeAttack;
+
+            bot.meleeAnimTimer++;
+            if (bot.meleeAnimTimer >= 3) {
+              bot.meleeAnimTimer = 0;
+              bot.meleeAnimFrame++;
+
+              if (bot.comboBuffered && bot.meleeAnimFrame >= 4 && bot.meleeComboStep < 2) {
+                bot.meleeComboStep++;
+                bot.comboStep = bot.meleeComboStep;
+                bot.meleeAnimFrame = 0;
+                bot.meleeAnimTimer = 0;
+                bot.meleeHasHit = false;
+                bot.comboBuffered = false;
+                bot.comboWindowTicks = 34;
+                sounds.playPunch();
+              } else if (bot.meleeAnimFrame >= 6) {
+                if (bot.comboBuffered && bot.meleeComboStep < 2) {
+                  bot.meleeComboStep++;
+                  bot.comboStep = bot.meleeComboStep;
+                  bot.meleeAnimFrame = 0;
+                  bot.meleeAnimTimer = 0;
+                  bot.meleeHasHit = false;
+                  bot.comboBuffered = false;
+                  bot.comboWindowTicks = 34;
+                  sounds.playPunch();
+                } else {
+                  bot.isMeleeComboAttacking = false;
+                  bot.meleeAnimFrame = 0;
+                  bot.fsm = PlayerFSMState.Idle;
+
+                  if (bot.meleeComboStep >= 2) {
+                    bot.comboStep = 0;
+                    bot.comboWindowTicks = 0;
+                    bot.meleeComboStep = 0;
+                  } else {
+                    bot.comboStep = bot.meleeComboStep + 1;
+                    bot.comboWindowTicks = 24;
+                  }
+                }
+              }
+            }
+
+            if (!bot.meleeHasHit && bot.meleeAnimFrame >= 2 && bot.meleeAnimFrame <= 3) {
+              bot.meleeHasHit = true;
+              const hitReach = 50;
+              const isP1InReach =
+                p1.isAlive &&
+                !p1.isGrabbed &&
+                !s.p1Controller.isInvulnerable &&
+                p1.fsm !== PlayerFSMState.Roll &&
+                ((p2FacingDir > 0 && p1.x >= bot.x - 10 && p1.x <= bot.x + hitReach) ||
+                 (p2FacingDir < 0 && p1.x <= bot.x + 10 && p1.x >= bot.x - hitReach)) &&
+                Math.abs(p1.y - bot.y) < 32;
+
+              if (isP1InReach) {
+                sounds.playHit();
+                let damage = 12;
+                let shake = 5;
+                let text = '¡PUÑETAZO J2!';
+                let textColor = '#f43f5e';
+
+                if (bot.meleeComboStep === 0) {
+                  damage = 12 * bot.damageDealtModifier;
+                  shake = 5;
+                  text = `¡PUÑETAZO J2! -${Math.round(damage)}`;
+                  textColor = '#38bdf8';
+                  p1.velocityX = p2FacingDir * 110;
+                  p1.hitstunTicks = 14;
+                  PlayerFSM.tryTransition(p1, PlayerFSMState.Hitstun);
+                  addSparks(p1.x, p1.y, '#38bdf8', 14);
+                } else if (bot.meleeComboStep === 1) {
+                  damage = 18 * bot.damageDealtModifier;
+                  shake = 8;
+                  text = `¡PATADA J2! -${Math.round(damage)}`;
+                  textColor = '#f59e0b';
+                  p1.velocityX = p2FacingDir * 200;
+                  p1.hitstunTicks = 18;
+                  PlayerFSM.tryTransition(p1, PlayerFSMState.Hitstun);
+                  addSparks(p1.x, p1.y, '#f59e0b', 18);
+                  addSparks(p1.x, p1.y, '#ffffff', 12);
+                } else {
+                  damage = 28 * bot.damageDealtModifier;
+                  shake = 14;
+                  text = `¡UPPERCUT J2! -${Math.round(damage)}`;
+                  textColor = '#ef4444';
+                  p1.velocityX = p2FacingDir * 240;
+                  p1.velocityY = -390;
+                  s.p1Controller.vy = -390;
+                  p1.onGround = false;
+                  p1.knockdownTicks = 45;
+                  PlayerFSM.tryTransition(p1, PlayerFSMState.KnockedDown);
+                  sounds.playHeavySmash();
+                  addSparks(p1.x, p1.y - 12, '#ef4444', 26);
+                  addSparks(p1.x, p1.y - 12, '#fde047', 20);
+                  addSparks(p1.x, p1.y - 12, '#ffffff', 16);
+                }
+
+                s.screenShake = shake;
+                p1.health = Math.max(0, p1.health - damage);
+                if (p1.health <= 0) {
+                  p1.health = 0;
+                  p1.isAlive = false;
+                  PlayerFSM.tryTransition(p1, PlayerFSMState.Dead);
+                  sounds.playHit();
+                }
+
+                s.floatingTexts.push({
+                  id: s.nextEntityId++,
+                  text,
+                  x: p1.x,
+                  y: p1.y - 32,
+                  color: textColor,
+                  life: 35,
+                });
+              }
+
+              s.crates.forEach((c) => {
+                if (Math.hypot(bot.x + p2FacingDir * 26 - (c.x + c.w / 2), bot.y - (c.y + c.h / 2)) < 44) {
+                  const cDmg = bot.meleeComboStep === 2 ? 30 : bot.meleeComboStep === 1 ? 20 : 12;
+                  c.health -= cDmg;
+                  c.vx = p2FacingDir * 280;
                   sounds.playHit();
                   addSparks(c.x + 16, c.y + 16, '#d97706', 10);
                 }
               });
+
               s.barrels.forEach((b) => {
-                if (Math.hypot(bot.x - (b.x + b.w / 2), bot.y - (b.y + b.h / 2)) < 50) {
-                  b.health -= 15;
-                  b.vx = p2FacingDir * 380;
+                if (Math.hypot(bot.x + p2FacingDir * 26 - (b.x + b.w / 2), bot.y - (b.y + b.h / 2)) < 44) {
+                  const bDmg = bot.meleeComboStep === 2 ? 25 : bot.meleeComboStep === 1 ? 16 : 10;
+                  b.health -= bDmg;
+                  b.vx = p2FacingDir * 320;
                   sounds.playHit();
                   addSparks(b.x + 12, b.y + 16, '#ef4444', 10);
                 }
               });
-            } else if (
-              j2MeleeHeld &&
-              bot.attackCooldown <= 0 &&
-              !bot.isSliding &&
-              (bot.fsm === PlayerFSMState.Idle ||
-                bot.fsm === PlayerFSMState.Run ||
-                bot.fsm === PlayerFSMState.Crouch)
-            ) {
-              if (!bot.isChargingHeavy) {
-                bot.isChargingHeavy = true;
-                bot.heavyChargeTicks = 0;
-                sounds.playHeavyCharge();
-              }
-              bot.heavyChargeTicks++;
-              bot.velocityX *= 0.88;
-              s.p2Controller.vx = bot.velocityX;
-
-              if (bot.heavyChargeTicks % 3 === 0) {
-                addSparks(
-                  bot.x + (Math.random() - 0.5) * 24,
-                  bot.y + (Math.random() - 0.5) * 24,
-                  '#ef4444',
-                  2
-                );
-              }
-            } else if (bot.isChargingHeavy && !j2MeleeHeld) {
-              const isBladeJ2 = isBladeWeapon(bot.equippedWeapon);
-              const charge = bot.heavyChargeTicks;
-              bot.isChargingHeavy = false;
-              bot.heavyChargeTicks = 0;
-
-              if (charge >= 12) {
-                const chargeRatio = Math.min(1, charge / 36);
-                if (isBladeJ2) {
-                  sounds.playHeavyBladeSlash();
-                  bot.attackCooldown = 30;
-                } else {
-                  sounds.playHeavySmash();
-                  bot.attackCooldown = 32;
-                }
-                PlayerFSM.tryTransition(bot, PlayerFSMState.MeleeAttack);
-
-                bot.velocityX = p2FacingDir * (isBladeJ2 ? (220 + 150 * chargeRatio) : (180 + 120 * chargeRatio));
-                s.p2Controller.vx = bot.velocityX;
-                s.screenShake = 12 + Math.round(chargeRatio * 8);
-
-                if (isBladeJ2) {
-                  const slashHit = CombatSystem.resolveBladeHeavySlash(bot, p1, chargeRatio);
-                  if (slashHit.didHit) {
-                    sounds.playBladeHit();
-                    addSparks(p1.x, p1.y, '#e0f2fe', 26);
-                    addSparks(p1.x, p1.y, '#ef4444', 20);
-                    s.floatingTexts.push({
-                      id: s.nextEntityId++,
-                      text: chargeRatio > 0.75
-                        ? `¡TAJO DEMOLEDOR CRÍTICO J2! -${Math.round(slashHit.damageDealt)}`
-                        : `¡TAJO CON FILO J2! -${Math.round(slashHit.damageDealt)}`,
-                      x: p1.x,
-                      y: p1.y - 35,
-                      color: '#ef4444',
-                      life: 45,
-                    });
-                  }
-                } else {
-                  const smashHit = CombatSystem.resolveHeavySmash(bot, p1, chargeRatio);
-                  if (smashHit.didHit) {
-                    sounds.playHit();
-                    addSparks(p1.x, p1.y, '#f59e0b', 24);
-                    addSparks(p1.x, p1.y, '#ef4444', 16);
-                    s.floatingTexts.push({
-                      id: s.nextEntityId++,
-                      text: chargeRatio > 0.75
-                        ? `¡SMASH CRÍTICO J2! -${Math.round(smashHit.damageDealt)}`
-                        : `¡HEAVY SMASH J2! -${Math.round(smashHit.damageDealt)}`,
-                      x: p1.x,
-                      y: p1.y - 35,
-                      color: '#f59e0b',
-                      life: 45,
-                    });
-                  }
-                }
-
-                s.crates.forEach((c) => {
-                  if (Math.hypot(bot.x - (c.x + c.w / 2), bot.y - (c.y + c.h / 2)) < 55) {
-                    c.health -= isBladeJ2 ? 30 : 25;
-                    c.vx = p2FacingDir * 460;
-                    sounds.playCrateBreak();
-                    addSparks(c.x + 16, c.y + 16, '#d97706', 14);
-                  }
-                });
-                s.barrels.forEach((b) => {
-                  if (Math.hypot(bot.x - (b.x + b.w / 2), b.y - (b.y + b.h / 2)) < 55) {
-                    b.health -= 20;
-                    b.vx = p2FacingDir * 520;
-                    sounds.playHit();
-                    addSparks(b.x + 12, b.y + 16, '#ef4444', 14);
-                  }
-                });
-              } else {
-                bot.comboStep = (bot.comboStep + 1) % 3;
-                bot.comboWindowTicks = isBladeJ2 ? 34 : GameConstants.FistsComboWindowTicks;
-                bot.attackCooldown = isBladeJ2 ? 14 : GameConstants.FistsCooldownTicks;
-                PlayerFSM.tryTransition(bot, PlayerFSMState.MeleeAttack);
-
-                if (isBladeJ2) {
-                  sounds.playSwordSwing();
-                  if (s.p1Controller.isInvulnerable) {
-                    s.floatingTexts.push({
-                      id: s.nextEntityId++,
-                      text: '¡ESQUIVADO!',
-                      x: p1.x,
-                      y: p1.y - 25,
-                      color: '#38bdf8',
-                      life: 25,
-                    });
-                  } else {
-                    const hit = CombatSystem.resolveBladeMelee(bot, p1);
-                    if (hit.didHit) {
-                      sounds.playBladeHit();
-                      addSparks(p1.x, p1.y, '#e0f2fe', 18);
-                      addSparks(p1.x, p1.y, '#ef4444', 14);
-                      s.screenShake = bot.comboStep === 2 ? 9 : 5;
-                      const bladeComboNames = ['¡TAJO HORIZONTAL!', '¡CLEAVE DESCENDENTE!', '¡CORTE FINAL!'];
-                      s.floatingTexts.push({
-                        id: s.nextEntityId++,
-                        text: `${bladeComboNames[bot.comboStep]} J2 -${Math.round(hit.damageDealt)}`,
-                        x: p1.x,
-                        y: p1.y - 25,
-                        color: '#ef4444',
-                        life: 35,
-                      });
-                    }
-                  }
-                } else {
-                  sounds.playPunch();
-                  if (s.p1Controller.isInvulnerable) {
-                    s.floatingTexts.push({
-                      id: s.nextEntityId++,
-                      text: '¡ESQUIVADO!',
-                      x: p1.x,
-                      y: p1.y - 25,
-                      color: '#38bdf8',
-                      life: 25,
-                    });
-                  } else {
-                    const hit = CombatSystem.resolveMelee(bot, p1);
-                    if (hit.didHit) {
-                      sounds.playHit();
-                      addSparks(p1.x, p1.y, '#ef4444', 12);
-                      s.screenShake = bot.comboStep === 2 ? 8 : 5;
-                      const comboNames = ['¡JAB!', '¡CROSS!', '¡PATADA!'];
-                      s.floatingTexts.push({
-                        id: s.nextEntityId++,
-                        text: `${comboNames[bot.comboStep]} -${Math.round(hit.damageDealt)}`,
-                        x: p1.x,
-                        y: p1.y - 25,
-                        color: '#ef4444',
-                        life: 35,
-                      });
-                    }
-                  }
-                }
-
-                s.crates.forEach((crate) => {
-                  if (Math.hypot(bot.x - (crate.x + crate.w / 2), bot.y - (crate.y + crate.h / 2)) < 45) {
-                    crate.health -= 15;
-                    crate.vx = p2FacingDir * 180;
-                    sounds.playHit();
-                    addSparks(crate.x + 16, crate.y + 16, '#d97706', 8);
-                  }
-                });
-
-                s.barrels.forEach((barrel) => {
-                  if (Math.hypot(bot.x - (barrel.x + barrel.w / 2), bot.y - (barrel.y + barrel.h / 2)) < 45) {
-                    barrel.health -= 15;
-                    barrel.vx = p2FacingDir * 240;
-                    sounds.playHit();
-                    addSparks(barrel.x + 12, barrel.y + 16, '#ef4444', 8);
-                  }
-                });
-              }
             }
           }
 
@@ -3479,7 +4366,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             }
           }
 
-          // Fire J2
+          // Armas de fuego pesadas no rifle/pistola (ej. Bazooka, Shotgun, Flamethrower)
           if (
             firePressed &&
             bot.attackCooldown <= 0 &&
@@ -3488,17 +4375,18 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             bot.fsm !== PlayerFSMState.Roll
           ) {
             const wpn = getWeapon(bot.equippedWeapon);
-            if (wpn.category === 'Firearm') {
+            if (wpn.category === 'Firearm' && !isPistol && !isRifle) {
               bot.attackCooldown = wpn.cooldownTicks;
               bot.ammo--;
               PlayerFSM.tryTransition(bot, PlayerFSMState.RangedFire);
               sounds.playGunshot(wpn.type.toLowerCase());
-              s.screenShake = Math.max(s.screenShake, wpn.type === WeaponType.Shotgun ? 8 : 4);
 
               const dir = bot.facingRight ? 1 : -1;
               const muzzleX = bot.x + dir * 28;
               const muzzleY = bot.y - 6;
+
               addSparks(muzzleX, muzzleY, '#fde047', 6);
+              s.screenShake = Math.min(10, (wpn.damage || 20) / 4);
 
               const count = wpn.pelletCount || 1;
               for (let i = 0; i < count; i++) {
@@ -3521,58 +4409,6 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                   color: '#f87171',
                 });
               }
-            }
-          }
-
-          // Granadas J2 (Consumo limitado de inventario con representación visual)
-          if (throwPressed && bot.attackCooldown <= 0) {
-            const thrownType = consumeGrenade(s.botGrenades);
-            if (thrownType) {
-              bot.attackCooldown = 50;
-              sounds.playGunshot('grenade');
-              const dir = bot.facingRight ? 1 : -1;
-              const gCfg = GRENADE_DATABASE[thrownType];
-              s.projectiles.push({
-                id: s.nextEntityId++,
-                x: bot.x + dir * 18,
-                y: bot.y - 12,
-                vx: dir * 420 + bot.velocityX * 0.35,
-                vy: -320,
-                damage: gCfg.damage * bot.damageDealtModifier,
-                onFireDuration: gCfg.burnDurationTicks || 0,
-                explosionRadius: gCfg.explosionRadius,
-                shooterId: bot.id,
-                weaponType: WeaponType.Grenade,
-                pelletCount: 1,
-                lifeTicks: 0,
-                maxLifeTicks: gCfg.fuseTicks || 85,
-                isGrenade: true,
-                isMolotov: thrownType === GrenadeType.Molotov,
-                grenadeType: thrownType,
-                rotation: 0,
-                rotationSpeed: dir * 0.22,
-                color: gCfg.color,
-              });
-
-              s.floatingTexts.push({
-                id: s.nextEntityId++,
-                text: `¡${gCfg.shortName}! (${s.botGrenades.ammo[thrownType]} rest.)`,
-                x: bot.x,
-                y: bot.y - 32,
-                color: gCfg.color,
-                life: 30,
-              });
-            } else {
-              bot.attackCooldown = 15;
-              sounds.playDryFire();
-              s.floatingTexts.push({
-                id: s.nextEntityId++,
-                text: '¡SIN GRANADAS!',
-                x: bot.x,
-                y: bot.y - 32,
-                color: '#94a3b8',
-                life: 25,
-              });
             }
           }
         } else {
@@ -4595,19 +5431,59 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         const canBotPickup =
           bot.fsm === PlayerFSMState.Crouch ||
           bot.equippedWeapon === WeaponType.Fists ||
-          (gameMode === 'local1v1' && keys['s']);
+          (gameMode === 'local1v1' && (keys['s'] || keys['S']));
 
         if (d2 < 32 && canBotPickup) {
           const wData = getWeapon(w.weaponType);
           bot.equippedWeapon = w.weaponType;
           bot.ammo = wData.magSize;
           sounds.playPickup();
+
+          // Lógica de Equipamiento J2 / Bot: cambia el estado del personaje según el arma
+          const isThrowable = isThrowableWeapon(w.weaponType);
+          const isRifle = isRifleWeapon(w.weaponType);
+          const isTwoHand = isTwoHandWeapon(w.weaponType);
+          const isPistol = isPistolWeapon(w.weaponType);
+          if (isThrowable) {
+            bot.characterState = 'arrojadiza';
+            bot.weaponState = 'arrojadiza';
+            if (s.p2Controller) s.p2Controller.hasHeavyRifleEquipped = false;
+          } else if (isRifle) {
+            bot.characterState = 'arma_dos_manos';
+            bot.weaponState = 'rifle';
+            if (s.p2Controller) s.p2Controller.hasHeavyRifleEquipped = true;
+          } else if (isTwoHand) {
+            bot.characterState = 'arma_dos_manos';
+            bot.weaponState = 'arma_dos_manos';
+            if (s.p2Controller) s.p2Controller.hasHeavyRifleEquipped = false;
+          } else if (isPistol) {
+            bot.characterState = 'arma_una_mano';
+            bot.weaponState = 'pistola';
+            if (s.p2Controller) s.p2Controller.hasHeavyRifleEquipped = false;
+          } else if (isOneHandWeapon(w.weaponType)) {
+            bot.characterState = 'arma_una_mano';
+            bot.weaponState = 'arma_una_mano';
+            if (s.p2Controller) s.p2Controller.hasHeavyRifleEquipped = false;
+          } else {
+            bot.characterState = 'desarmado';
+            bot.weaponState = 'desarmado';
+            if (s.p2Controller) s.p2Controller.hasHeavyRifleEquipped = false;
+          }
+
           s.floatingTexts.push({
             id: s.nextEntityId++,
-            text: `¡${wData.name}!`,
+            text: isThrowable
+              ? `¡${wData.name}! (arrojadiza)`
+              : isRifle
+              ? `¡${wData.name}! (rifle)`
+              : isTwoHand
+              ? `¡${wData.name}! (arma_dos_manos)`
+              : isPistol
+              ? `¡${wData.name}! (pistola)`
+              : `¡${wData.name}!`,
             x: bot.x,
             y: bot.y - 35,
-            color: '#f97316',
+            color: isThrowable ? '#38bdf8' : isRifle ? '#eab308' : isTwoHand ? '#f97316' : '#f87171',
             life: 45,
           });
 
@@ -4817,6 +5693,50 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
               p1.twoHandAnimFrame = 0;
               p1.twoHandAnimTimer = 0;
               p1.twoHandHasHit = false;
+              p1.isPistolShooting = false;
+              p1.pistolAnimFrame = 0;
+              p1.pistolAnimTimer = 0;
+              p1.isRifleShooting = false;
+              p1.rifleAnimFrame = 0;
+              p1.rifleAnimTimer = 0;
+              p1.isThrowing = false;
+              p1.throwAnimFrame = 0;
+              p1.throwAnimTimer = 0;
+              p1.throwHasReleased = false;
+              if (s.p1Controller) {
+                s.p1Controller.isShootingPistol = false;
+                s.p1Controller.isShootingRifle = false;
+                s.p1Controller.isThrowing = false;
+              }
+            } else {
+              bot.isMeleeComboAttacking = false;
+              bot.comboStep = 0;
+              bot.meleeComboStep = 0;
+              bot.comboBuffered = false;
+              bot.comboWindowTicks = 0;
+              bot.isOneHandAttacking = false;
+              bot.oneHandAnimFrame = 0;
+              bot.oneHandAnimTimer = 0;
+              bot.oneHandHasHit = false;
+              bot.isTwoHandAttacking = false;
+              bot.twoHandAnimFrame = 0;
+              bot.twoHandAnimTimer = 0;
+              bot.twoHandHasHit = false;
+              bot.isPistolShooting = false;
+              bot.pistolAnimFrame = 0;
+              bot.pistolAnimTimer = 0;
+              bot.isRifleShooting = false;
+              bot.rifleAnimFrame = 0;
+              bot.rifleAnimTimer = 0;
+              bot.isThrowing = false;
+              bot.throwAnimFrame = 0;
+              bot.throwAnimTimer = 0;
+              bot.throwHasReleased = false;
+              if (s.p2Controller) {
+                s.p2Controller.isShootingPistol = false;
+                s.p2Controller.isShootingRifle = false;
+                s.p2Controller.isThrowing = false;
+              }
             }
 
             s.floatingTexts.push({
@@ -5449,7 +6369,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         p: PlayerState,
         sprite: HTMLImageElement | null,
         nameTagColor: string,
-        isHuman: boolean
+        playerId: 1 | 2
       ) => {
         // Dimensiones aumentadas para hacer a los personajes más grandes y visibles en pantalla
         const isBigFighter =
@@ -5460,13 +6380,22 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         const charH = isBigFighter ? 82 : 74;
         const drawX = -charW / 2;
         const drawY = -charH / 2;
-        const sheet = isHuman ? s.p1WalkSheet : s.botWalkSheet;
-        const runSheet = isHuman ? s.p1RunSheet : s.botRunSheet;
-        const rollSheet = isHuman ? s.p1RollSheet : s.botRollSheet;
-        const jumpSheet = isHuman ? s.p1JumpSheet : s.botJumpSheet;
-        const idleImg = isHuman ? s.p1IdleSprite : s.botIdleSprite;
-        const cfg = isHuman ? s.p1SheetConfig : s.botSheetConfig;
+
+        const isP1 = playerId === 1;
+        const controller = isP1 ? s.p1Controller : s.p2Controller;
+        const sheet = isP1 ? s.p1WalkSheet : (s.botWalkSheet || s.p1WalkSheet);
+        const runSheet = isP1 ? s.p1RunSheet : (s.botRunSheet || s.p1RunSheet);
+        const rollSheet = isP1 ? s.p1RollSheet : (s.botRollSheet || s.p1RollSheet);
+        const jumpSheet = isP1 ? s.p1JumpSheet : (s.botJumpSheet || s.p1JumpSheet);
+        const idleImg = isP1 ? s.p1IdleSprite : (s.botIdleSprite || s.p1IdleSprite);
+        const cfg = isP1 ? s.p1SheetConfig : (s.botSheetConfig || s.p1SheetConfig);
         const is1v1 = gameMode === 'local1v1';
+        const activeThrowSheet = isP1 ? s.p1ThrowUpSheet : (s.botThrowUpSheet || s.p1ThrowUpSheet);
+        const activeRifleSheet = isP1 ? s.p1RifleSheet : (s.botRifleSheet || s.p1RifleSheet);
+        const activePistolSheet = isP1 ? s.p1PistolSheet : (s.botPistolSheet || s.p1PistolSheet);
+        const activeTwoHandSheet = isP1 ? s.p1TwoHandSheet : (s.botTwoHandSheet || s.p1TwoHandSheet);
+        const activeOneHandSheet = isP1 ? s.p1OneHandSheet : (s.botOneHandSheet || s.p1OneHandSheet);
+        const activeMeleeSheet = isP1 ? s.p1MeleeSheet : (s.botMeleeSheet || s.p1MeleeSheet);
 
         if (!p.isAlive) {
           ctx.save();
@@ -5489,13 +6418,16 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
         const isRolling =
           p.fsm === PlayerFSMState.Roll ||
-          (isHuman && s.p1Controller.state === ControllerState.Roll) ||
-          (!isHuman && is1v1 && s.p2Controller.state === ControllerState.Roll);
+          (controller && controller.state === ControllerState.Roll);
+
+        const isInvulnerable = controller
+          ? controller.isInvulnerable
+          : (p.invulnerabilityTicks > 0);
 
         if (p.invulnerabilityTicks > 0 && Math.floor(p.invulnerabilityTicks / 4) % 2 === 0) {
           ctx.globalAlpha = 0.5;
-        } else if (isRolling && (isHuman ? s.p1Controller.isInvulnerable : p.invulnerabilityTicks > 0)) {
-          ctx.shadowColor = '#38bdf8';
+        } else if (isRolling && isInvulnerable) {
+          ctx.shadowColor = isP1 ? '#38bdf8' : '#f43f5e';
           ctx.shadowBlur = 16;
         }
 
@@ -5546,20 +6478,20 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         // -2. Animación de Lanzamiento (throw_up - 5 frames)
         if (
           p.isThrowing &&
-          s.p1ThrowUpSheet &&
-          s.p1ThrowUpSheet.complete &&
-          s.p1ThrowUpSheet.naturalWidth > 0
+          activeThrowSheet &&
+          activeThrowSheet.complete &&
+          activeThrowSheet.naturalWidth > 0
         ) {
           const throwCols = cfg?.throwUpCols || 5;
           const throwRows = cfg?.throwUpRows || 1;
-          const frameW = s.p1ThrowUpSheet.naturalWidth / throwCols;
-          const frameH = s.p1ThrowUpSheet.naturalHeight / throwRows;
+          const frameW = activeThrowSheet.naturalWidth / throwCols;
+          const frameH = activeThrowSheet.naturalHeight / throwRows;
 
           const safeCol = Math.max(0, Math.min(throwCols - 1, p.throwAnimFrame || 0));
           const sx = safeCol * frameW;
           const sy = 0;
 
-          ctx.drawImage(s.p1ThrowUpSheet, sx, sy, frameW, frameH, drawX, drawY, charW, charH);
+          ctx.drawImage(activeThrowSheet, sx, sy, frameW, frameH, drawX, drawY, charW, charH);
 
           const currentF = p.throwAnimFrame || 0;
 
@@ -5582,20 +6514,20 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           }
         } else if (
           p.isRifleShooting &&
-          s.p1RifleSheet &&
-          s.p1RifleSheet.complete &&
-          s.p1RifleSheet.naturalWidth > 0
+          activeRifleSheet &&
+          activeRifleSheet.complete &&
+          activeRifleSheet.naturalWidth > 0
         ) {
           const rifleCols = cfg?.rifleCols || 4;
           const rifleRows = cfg?.rifleRows || 1;
-          const frameW = s.p1RifleSheet.naturalWidth / rifleCols;
-          const frameH = s.p1RifleSheet.naturalHeight / rifleRows;
+          const frameW = activeRifleSheet.naturalWidth / rifleCols;
+          const frameH = activeRifleSheet.naturalHeight / rifleRows;
 
           const safeCol = Math.max(0, Math.min(rifleCols - 1, p.rifleAnimFrame || 0));
           const sx = safeCol * frameW;
           const sy = 0;
 
-          ctx.drawImage(s.p1RifleSheet, sx, sy, frameW, frameH, drawX, drawY, charW, charH);
+          ctx.drawImage(activeRifleSheet, sx, sy, frameW, frameH, drawX, drawY, charW, charH);
 
           const currentF = p.rifleAnimFrame || 0;
 
@@ -5645,20 +6577,20 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           }
         } else if (
           p.isPistolShooting &&
-          s.p1PistolSheet &&
-          s.p1PistolSheet.complete &&
-          s.p1PistolSheet.naturalWidth > 0
+          activePistolSheet &&
+          activePistolSheet.complete &&
+          activePistolSheet.naturalWidth > 0
         ) {
           const pistolCols = cfg?.pistolCols || 4;
           const pistolRows = cfg?.pistolRows || 1;
-          const frameW = s.p1PistolSheet.naturalWidth / pistolCols;
-          const frameH = s.p1PistolSheet.naturalHeight / pistolRows;
+          const frameW = activePistolSheet.naturalWidth / pistolCols;
+          const frameH = activePistolSheet.naturalHeight / pistolRows;
 
           const safeCol = Math.max(0, Math.min(pistolCols - 1, p.pistolAnimFrame || 0));
           const sx = safeCol * frameW;
           const sy = 0;
 
-          ctx.drawImage(s.p1PistolSheet, sx, sy, frameW, frameH, drawX, drawY, charW, charH);
+          ctx.drawImage(activePistolSheet, sx, sy, frameW, frameH, drawX, drawY, charW, charH);
 
           const currentF = p.pistolAnimFrame || 0;
 
@@ -5708,20 +6640,20 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           }
         } else if (
           p.isTwoHandAttacking &&
-          s.p1TwoHandSheet &&
-          s.p1TwoHandSheet.complete &&
-          s.p1TwoHandSheet.naturalWidth > 0
+          activeTwoHandSheet &&
+          activeTwoHandSheet.complete &&
+          activeTwoHandSheet.naturalWidth > 0
         ) {
           const twoHandCols = cfg?.twoHandCols || 6;
           const twoHandRows = cfg?.twoHandRows || 1;
-          const frameW = s.p1TwoHandSheet.naturalWidth / twoHandCols;
-          const frameH = s.p1TwoHandSheet.naturalHeight / twoHandRows;
+          const frameW = activeTwoHandSheet.naturalWidth / twoHandCols;
+          const frameH = activeTwoHandSheet.naturalHeight / twoHandRows;
 
           const safeCol = Math.max(0, Math.min(twoHandCols - 1, p.twoHandAnimFrame || 0));
           const sx = safeCol * frameW;
           const sy = 0;
 
-          ctx.drawImage(s.p1TwoHandSheet, sx, sy, frameW, frameH, drawX, drawY, charW, charH);
+          ctx.drawImage(activeTwoHandSheet, sx, sy, frameW, frameH, drawX, drawY, charW, charH);
 
           const currentF = p.twoHandAnimFrame || 0;
           // Estela pesada de impacto / onda expansiva
@@ -5772,20 +6704,20 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           }
         } else if (
           p.isOneHandAttacking &&
-          s.p1OneHandSheet &&
-          s.p1OneHandSheet.complete &&
-          s.p1OneHandSheet.naturalWidth > 0
+          activeOneHandSheet &&
+          activeOneHandSheet.complete &&
+          activeOneHandSheet.naturalWidth > 0
         ) {
           const oneHandCols = cfg?.oneHandCols || 5;
           const oneHandRows = cfg?.oneHandRows || 1;
-          const frameW = s.p1OneHandSheet.naturalWidth / oneHandCols;
-          const frameH = s.p1OneHandSheet.naturalHeight / oneHandRows;
+          const frameW = activeOneHandSheet.naturalWidth / oneHandCols;
+          const frameH = activeOneHandSheet.naturalHeight / oneHandRows;
 
           const safeCol = Math.max(0, Math.min(oneHandCols - 1, p.oneHandAnimFrame || 0));
           const sx = safeCol * frameW;
           const sy = 0;
 
-          ctx.drawImage(s.p1OneHandSheet, sx, sy, frameW, frameH, drawX, drawY, charW, charH);
+          ctx.drawImage(activeOneHandSheet, sx, sy, frameW, frameH, drawX, drawY, charW, charH);
 
           // Estela dinámica de corte/impacto veloz en frames activos (frames 1, 2, 3)
           if ((p.oneHandAnimFrame || 0) >= 1 && (p.oneHandAnimFrame || 0) <= 3) {
@@ -5826,14 +6758,14 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           }
         } else if (
           p.isMeleeComboAttacking &&
-          s.p1MeleeSheet &&
-          s.p1MeleeSheet.complete &&
-          s.p1MeleeSheet.naturalWidth > 0
+          activeMeleeSheet &&
+          activeMeleeSheet.complete &&
+          activeMeleeSheet.naturalWidth > 0
         ) {
           const meleeCols = cfg?.meleeCols || 6;
           const meleeRows = cfg?.meleeRows || 3;
-          const frameW = s.p1MeleeSheet.naturalWidth / meleeCols;
-          const frameH = s.p1MeleeSheet.naturalHeight / meleeRows;
+          const frameW = activeMeleeSheet.naturalWidth / meleeCols;
+          const frameH = activeMeleeSheet.naturalHeight / meleeRows;
 
           const safeRow = Math.max(0, Math.min(2, p.meleeComboStep));
           const safeCol = Math.max(0, Math.min(5, p.meleeAnimFrame));
@@ -5841,7 +6773,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           const sx = safeCol * frameW;
           const sy = safeRow * frameH;
 
-          ctx.drawImage(s.p1MeleeSheet, sx, sy, frameW, frameH, drawX, drawY, charW, charH);
+          ctx.drawImage(activeMeleeSheet, sx, sy, frameW, frameH, drawX, drawY, charW, charH);
 
           // Estelas dinámicas de impacto (frames activos 2 y 3)
           if (p.meleeAnimFrame >= 2 && p.meleeAnimFrame <= 3) {

@@ -5,8 +5,7 @@
 
 import Phaser from 'phaser';
 import { NINJA_CONFIG, NinjaState } from '../game/NinjaController';
-import { PlayerInput } from './Player';
-import { isOneHandWeapon, isPistolWeapon, isRifleWeapon, isThrowableWeapon, isTwoHandWeapon, WeaponType } from '../game/WeaponData';
+import { isOneHandWeapon, isPistolWeapon, isRifleWeapon, isSwordWeapon, isThrowableWeapon, isTwoHandWeapon, WeaponType } from '../game/WeaponData';
 
 export interface NinjaPlayerOptions {
   textureKey?: string;
@@ -86,7 +85,10 @@ export class NinjaPlayer extends Phaser.Physics.Arcade.Sprite {
 
   public equipWeapon(weaponName: string): void {
     this.currentWeapon = weaponName;
-    if (isRifleWeapon(weaponName as WeaponType)) {
+    if (isSwordWeapon(weaponName as WeaponType)) {
+      this.characterState = 'espada';
+      this.hasHeavyRifleEquipped = false;
+    } else if (isRifleWeapon(weaponName as WeaponType)) {
       this.characterState = 'arma_dos_manos';
       this.hasHeavyRifleEquipped = true;
     } else if (isTwoHandWeapon(weaponName as WeaponType)) {
@@ -235,15 +237,18 @@ export class NinjaPlayer extends Phaser.Physics.Arcade.Sprite {
       this.setVelocityX(0);
       this.attackTimer -= delta;
 
+      const isSword = this.currentWeapon && isSwordWeapon(this.currentWeapon as WeaponType);
       const isTwoHand = this.currentWeapon && isTwoHandWeapon(this.currentWeapon as WeaponType);
       const isOneHand = this.currentWeapon && isOneHandWeapon(this.currentWeapon as WeaponType);
-      const animKey = isTwoHand
+      const animKey = isSword
+        ? 'one_hand_attack'
+        : isTwoHand
         ? 'two_hand_attack'
         : isOneHand
         ? 'one_hand_attack'
         : (this.comboStep === 0 ? 'ninja_punch' : this.comboStep === 1 ? 'ninja_kick' : 'ninja_uppercut');
 
-      if (!isTwoHand && !isOneHand && input.meleePressed && this.comboStep < 2) {
+      if ((isSword || (!isTwoHand && !isOneHand)) && input.meleePressed && this.comboStep < 2) {
         this.comboBuffered = true;
       }
 
@@ -252,12 +257,14 @@ export class NinjaPlayer extends Phaser.Physics.Arcade.Sprite {
       }
 
       if (this.attackTimer <= 0) {
-        if (!isTwoHand && !isOneHand && this.comboBuffered && this.comboStep < 2) {
+        if ((isSword || (!isTwoHand && !isOneHand)) && this.comboBuffered && this.comboStep < 2) {
           this.comboStep++;
-          this.attackTimer = 330;
+          this.attackTimer = isSword ? 220 : 330;
           this.comboBuffered = false;
           this.comboWindowTimer = 450;
-          const nextAnimKey = this.comboStep === 1 ? 'ninja_kick' : 'ninja_uppercut';
+          const nextAnimKey = isSword
+            ? 'one_hand_attack'
+            : (this.comboStep === 1 ? 'ninja_kick' : 'ninja_uppercut');
           if (this.anims?.animationManager?.exists(nextAnimKey)) {
             this.anims.play(nextAnimKey, true);
           }
@@ -265,7 +272,7 @@ export class NinjaPlayer extends Phaser.Physics.Arcade.Sprite {
           this.state = onFloor ? NinjaState.Idle : NinjaState.Fall;
           this.anims?.stop();
           this.setTexture('ninja_sprite');
-          if (isTwoHand || isOneHand || this.comboStep >= 2) {
+          if ((!isSword && (isTwoHand || isOneHand)) || this.comboStep >= 2) {
             this.comboStep = 0;
             this.comboWindowTimer = 0;
           } else {

@@ -1069,13 +1069,25 @@ export function isBladeWeapon(type: WeaponType): boolean {
 }
 
 /**
+ * Espadas exclusivas del Ninja (Katana, Espada, Machete).
+ * Tienen máxima prioridad de combate, activando el estilo único y fluido
+ * de combate con espada del Ninja (combo de 3 tajos mortales).
+ */
+export function isSwordWeapon(type: WeaponType): boolean {
+  return (
+    type === WeaponType.Katana ||
+    type === WeaponType.Sword ||
+    type === WeaponType.Machete
+  );
+}
+
+/**
  * Armas de la categoría "Una mano" (One Hand):
- * Katana, Machete, Cuchillo, Baton, ShockBaton, Whip y CueStick.
+ * Baton, ShockBaton, Cuchillo, Whip y CueStick.
+ * (Las espadas tienen su propio estilo exclusivo y están blindadas aparte).
  * Utilizan el set de animación de ataque rápido 'one_hand_attack' (5 frames).
  */
 export const ONE_HAND_WEAPONS: ReadonlySet<WeaponType> = new Set([
-  WeaponType.Katana,
-  WeaponType.Machete,
   WeaponType.Knife,
   WeaponType.Baton,
   WeaponType.ShockBaton,
@@ -1084,7 +1096,7 @@ export const ONE_HAND_WEAPONS: ReadonlySet<WeaponType> = new Set([
 ]);
 
 export function isOneHandWeapon(type: WeaponType): boolean {
-  return ONE_HAND_WEAPONS.has(type);
+  return ONE_HAND_WEAPONS.has(type) && !isSwordWeapon(type);
 }
 
 /**

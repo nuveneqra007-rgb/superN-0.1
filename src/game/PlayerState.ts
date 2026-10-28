@@ -114,6 +114,15 @@ export interface PlayerState {
   oneHandAnimTimer?: number;
   oneHandHasHit?: boolean;
 
+  // Set exclusivo de combate con Espada del Ninja (one_hand_attack - 3 tajos mortales y fluidos)
+  isSwordAttacking?: boolean;
+  swordComboStep?: number;
+  swordAnimFrame?: number;
+  swordAnimTimer?: number;
+  swordHasHit?: boolean;
+  swordComboBuffered?: boolean;
+  swordComboWindowTicks?: number;
+
   // Set de animación de Ataque a dos manos (two_hand_attack - 6 frames pesados)
   isTwoHandAttacking?: boolean;
   twoHandAnimFrame?: number;
@@ -211,6 +220,13 @@ export function createPlayerState(
     oneHandAnimFrame: 0,
     oneHandAnimTimer: 0,
     oneHandHasHit: false,
+    isSwordAttacking: false,
+    swordComboStep: 0,
+    swordAnimFrame: 0,
+    swordAnimTimer: 0,
+    swordHasHit: false,
+    swordComboBuffered: false,
+    swordComboWindowTicks: 0,
     isTwoHandAttacking: false,
     twoHandAnimFrame: 0,
     twoHandAnimTimer: 0,

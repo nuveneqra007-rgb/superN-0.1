@@ -11,7 +11,7 @@ import { GameConstants } from '../game/GameConstants';
 import { PhysicsRect, PhysicsStep } from '../game/PhysicsStep';
 import { PlayerFSM } from '../game/PlayerFSM';
 import { createPlayerState, PlayerFSMState, PlayerState } from '../game/PlayerState';
-import { getWeapon, isBladeWeapon, isOneHandWeapon, isPistolWeapon, isRifleWeapon, isThrowableWeapon, isTwoHandWeapon, SpawnableWeaponsList, WeaponCategory, WeaponDatabase, WeaponType } from '../game/WeaponData';
+import { getWeapon, isBladeWeapon, isOneHandWeapon, isPistolWeapon, isRifleWeapon, isSwordWeapon, isThrowableWeapon, isTwoHandWeapon, SpawnableWeaponsList, WeaponCategory, WeaponDatabase, WeaponType } from '../game/WeaponData';
 import { PlayerController, PlayerInput, PlayerState as ControllerState, PLAYER_CONFIG } from '../game/PlayerController';
 import { sounds } from '../game/SoundEffects';
 import { getWorldConfig, WorldConfig, HazardCfg, PlatformRect } from '../game/WorldData';
@@ -771,6 +771,13 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     p1.meleeForceModifier = pArch.meleeForceModifier;
     p1.equippedWeapon = WeaponType.Fists;
     p1.ammo = 0;
+    p1.isSwordAttacking = false;
+    p1.swordComboStep = 0;
+    p1.swordAnimFrame = 0;
+    p1.swordAnimTimer = 0;
+    p1.swordHasHit = false;
+    p1.swordComboBuffered = false;
+    p1.swordComboWindowTicks = 0;
 
     const bot = createPlayerState(2, p2Label, gameMode !== 'local1v1', spawnBot.x, spawnBot.y);
     bot.maxHealth = arch.maxHealth;
@@ -783,6 +790,13 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     bot.ammo = 0;
     bot.characterState = 'desarmado';
     bot.weaponState = 'desarmado';
+    bot.isSwordAttacking = false;
+    bot.swordComboStep = 0;
+    bot.swordAnimFrame = 0;
+    bot.swordAnimTimer = 0;
+    bot.swordHasHit = false;
+    bot.swordComboBuffered = false;
+    bot.swordComboWindowTicks = 0;
     bot.isTwoHandAttacking = false;
     bot.twoHandAnimFrame = 0;
     bot.twoHandAnimTimer = 0;
@@ -1627,7 +1641,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           ? !!(keys['s'] || keys['S'] || (!is1v1 && keys['arrowdown']))
           : !!(keys['arrowdown'] || (!is1v1 && (keys['s'] || keys['S'])));
 
-        const isNinjaComboLocked = !!p1.isMeleeComboAttacking || !!p1.isOneHandAttacking || !!p1.isTwoHandAttacking;
+        const isNinjaComboLocked = !!p1.isSwordAttacking || !!p1.isMeleeComboAttacking || !!p1.isOneHandAttacking || !!p1.isTwoHandAttacking;
 
         const p1Input: PlayerInput = {
           moveDir: isNinjaComboLocked ? 0 : moveDir,
@@ -1955,7 +1969,47 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           !p1.isGrappling &&
           !p1.isThrowing
         ) {
-          if (isTwoHandWeapon(p1.equippedWeapon)) {
+          // ── PRIORIDAD ABSOLUTA: COMBATE CON ESPADA EXCLUSIVO DEL NINJA ──
+          if (isSwordWeapon(p1.equippedWeapon)) {
+            if (p1.isSwordAttacking) {
+              if ((p1.swordComboStep || 0) < 2) {
+                p1.swordComboBuffered = true;
+                p1.swordComboWindowTicks = 32;
+
+                if ((p1.swordAnimFrame || 0) >= 3) {
+                  p1.swordComboStep = (p1.swordComboStep || 0) + 1;
+                  p1.swordAnimFrame = 0;
+                  p1.swordAnimTimer = 0;
+                  p1.swordHasHit = false;
+                  p1.swordComboBuffered = false;
+                  p1.swordComboWindowTicks = 32;
+                  sounds.playSwordSwing();
+                }
+              }
+            } else {
+              let nextStep = 0;
+              if ((p1.swordComboWindowTicks || 0) > 0 && (p1.swordComboStep || 0) > 0 && (p1.swordComboStep || 0) <= 2) {
+                nextStep = p1.swordComboStep || 0;
+              } else {
+                nextStep = 0;
+              }
+
+              p1.isSwordAttacking = true;
+              p1.swordComboStep = nextStep;
+              p1.swordAnimFrame = 0;
+              p1.swordAnimTimer = 0;
+              p1.swordHasHit = false;
+              p1.swordComboBuffered = false;
+              p1.swordComboWindowTicks = 32;
+
+              p1.velocityX = 0;
+              s.p1Controller.vx = 0;
+              s.p1Controller.state = ControllerState.Idle;
+              PlayerFSM.tryTransition(p1, PlayerFSMState.MeleeAttack);
+
+              sounds.playSwordSwing();
+            }
+          } else if (isTwoHandWeapon(p1.equippedWeapon)) {
             // Ataque a dos manos (Golpe pesado): animación One Shot de 6 frames, más lenta y pesada
             if (!p1.isTwoHandAttacking) {
               p1.isTwoHandAttacking = true;
@@ -2296,6 +2350,164 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                 life: 55,
               });
             }
+          }
+        }
+
+        // ─────────────────────────────────────────────────────────
+        // LÓGICA DE AVANCE Y RESOLUCIÓN DEL COMBATE CON ESPADA DEL NINJA
+        // 3 Tajos Fluidos, Rápidos y Letales (one_hand_attack de 5 frames)
+        // Bloqueo estricto de movimiento + combo ágil y letal contra el rival
+        // ─────────────────────────────────────────────────────────
+        if (p1.isSwordAttacking) {
+          p1.velocityX = 0;
+          s.p1Controller.vx = 0;
+          s.p1Controller.state = ControllerState.Idle;
+          p1.fsm = PlayerFSMState.MeleeAttack;
+
+          p1.swordAnimTimer = (p1.swordAnimTimer || 0) + 1;
+          if (p1.swordAnimTimer >= 2) {
+            p1.swordAnimTimer = 0;
+            p1.swordAnimFrame = (p1.swordAnimFrame || 0) + 1;
+
+            if (p1.swordComboBuffered && (p1.swordAnimFrame || 0) >= 3 && (p1.swordComboStep || 0) < 2) {
+              p1.swordComboStep = (p1.swordComboStep || 0) + 1;
+              p1.swordAnimFrame = 0;
+              p1.swordAnimTimer = 0;
+              p1.swordHasHit = false;
+              p1.swordComboBuffered = false;
+              p1.swordComboWindowTicks = 32;
+              sounds.playSwordSwing();
+            } else if ((p1.swordAnimFrame || 0) >= 5) {
+              if (p1.swordComboBuffered && (p1.swordComboStep || 0) < 2) {
+                p1.swordComboStep = (p1.swordComboStep || 0) + 1;
+                p1.swordAnimFrame = 0;
+                p1.swordAnimTimer = 0;
+                p1.swordHasHit = false;
+                p1.swordComboBuffered = false;
+                p1.swordComboWindowTicks = 32;
+                sounds.playSwordSwing();
+              } else {
+                p1.isSwordAttacking = false;
+                p1.swordAnimFrame = 0;
+                p1.swordAnimTimer = 0;
+                p1.swordHasHit = false;
+                p1.fsm = PlayerFSMState.Idle;
+
+                if ((p1.swordComboStep || 0) >= 2) {
+                  p1.swordComboStep = 0;
+                  p1.swordComboWindowTicks = 0;
+                } else {
+                  p1.swordComboStep = (p1.swordComboStep || 0) + 1;
+                  p1.swordComboWindowTicks = 26;
+                }
+              }
+            }
+          }
+
+          if (!p1.swordHasHit && (p1.swordAnimFrame || 0) >= 2) {
+            p1.swordHasHit = true;
+            const p1FacingDir = p1.facingRight ? 1 : -1;
+            const currentStep = p1.swordComboStep || 0;
+            const hitReach = currentStep === 0 ? 68 : currentStep === 1 ? 74 : 84;
+            const isBotInReach =
+              bot.isAlive &&
+              !bot.isGrabbed &&
+              !s.p2Controller.isInvulnerable &&
+              bot.fsm !== PlayerFSMState.Roll &&
+              ((p1FacingDir > 0 && bot.x >= p1.x - 10 && bot.x <= p1.x + hitReach) ||
+               (p1FacingDir < 0 && bot.x <= p1.x + 10 && bot.x >= p1.x - hitReach)) &&
+              Math.abs(bot.y - p1.y) < 42;
+
+            const wpn = getWeapon(p1.equippedWeapon);
+            const wpnName = wpn.name || 'ESPADA';
+
+            if (isBotInReach) {
+              sounds.playBladeHit();
+              let damage = 22;
+              let shake = 6;
+              let text = '¡TAJO I!';
+              let textColor = '#38bdf8';
+
+              if (currentStep === 0) {
+                damage = 22 * p1.damageDealtModifier;
+                shake = 6;
+                text = `¡TAJO I (${wpnName.toUpperCase()})! -${Math.round(damage)}`;
+                textColor = '#38bdf8';
+                bot.velocityX = p1FacingDir * 190;
+                bot.hitstunTicks = 16;
+                PlayerFSM.tryTransition(bot, PlayerFSMState.Hitstun);
+                addSparks(bot.x, bot.y, '#38bdf8', 16);
+                addSparks(bot.x, bot.y, '#ffffff', 10);
+              } else if (currentStep === 1) {
+                damage = 30 * p1.damageDealtModifier;
+                shake = 9;
+                text = `¡TAJO II (${wpnName.toUpperCase()})! -${Math.round(damage)}`;
+                textColor = '#38bdf8';
+                bot.velocityX = p1FacingDir * 270;
+                bot.hitstunTicks = 20;
+                PlayerFSM.tryTransition(bot, PlayerFSMState.Hitstun);
+                addSparks(bot.x, bot.y, '#38bdf8', 22);
+                addSparks(bot.x, bot.y, '#ffffff', 14);
+              } else {
+                damage = 44 * p1.damageDealtModifier;
+                shake = 14;
+                text = `¡REMATE NINJA (${wpnName.toUpperCase()})! -${Math.round(damage)}`;
+                textColor = '#06b6d4';
+                bot.velocityX = p1FacingDir * 390;
+                bot.velocityY = -270;
+                s.p2Controller.vy = -270;
+                bot.onGround = false;
+                bot.knockdownTicks = 45;
+                PlayerFSM.tryTransition(bot, PlayerFSMState.KnockedDown);
+                sounds.playHeavyBladeSlash();
+                addSparks(bot.x, bot.y - 10, '#38bdf8', 28);
+                addSparks(bot.x, bot.y - 10, '#e0f2fe', 22);
+                addSparks(bot.x, bot.y - 10, '#ffffff', 16);
+                CombatSystem.disarmPlayer(bot);
+              }
+
+              s.screenShake = shake;
+              bot.health = Math.max(0, bot.health - damage);
+              if (bot.health <= 0) {
+                bot.health = 0;
+                bot.isAlive = false;
+                PlayerFSM.tryTransition(bot, PlayerFSMState.Dead);
+                sounds.playHit();
+              }
+
+              s.floatingTexts.push({
+                id: s.nextEntityId++,
+                text,
+                x: bot.x,
+                y: bot.y - 32,
+                color: textColor,
+                life: 38,
+              });
+            }
+
+            s.crates.forEach((c) => {
+              if (Math.hypot(p1.x + p1FacingDir * 32 - (c.x + c.w / 2), p1.y - (c.y + c.h / 2)) < 52) {
+                c.health -= 35;
+                c.vx = p1FacingDir * 340;
+                sounds.playBladeHit();
+                addSparks(c.x + 16, c.y + 16, '#38bdf8', 12);
+              }
+            });
+            s.barrels.forEach((b) => {
+              if (Math.hypot(p1.x + p1FacingDir * 32 - (b.x + b.w / 2), p1.y - (b.y + b.h / 2)) < 52) {
+                b.health -= 30;
+                b.vx = p1FacingDir * 380;
+                sounds.playBladeHit();
+                addSparks(b.x + 12, b.y + 16, '#ef4444', 12);
+              }
+            });
+          }
+        }
+
+        if ((p1.swordComboWindowTicks || 0) > 0) {
+          p1.swordComboWindowTicks = (p1.swordComboWindowTicks || 0) - 1;
+          if (p1.swordComboWindowTicks <= 0 && !p1.isSwordAttacking) {
+            p1.swordComboStep = 0;
           }
         }
 
@@ -3092,7 +3304,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             ? !!keys['arrowdown']
             : !!(keys['s'] || keys['S']);
 
-          const isNinjaComboLocked = !!bot.isMeleeComboAttacking || !!bot.isOneHandAttacking || !!bot.isTwoHandAttacking;
+          const isNinjaComboLocked = !!bot.isSwordAttacking || !!bot.isMeleeComboAttacking || !!bot.isOneHandAttacking || !!bot.isTwoHandAttacking;
 
           const p2Input: PlayerInput = {
             moveDir: isNinjaComboLocked ? 0 : moveDir,
@@ -3395,7 +3607,46 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             !bot.isGrappling &&
             !bot.isThrowing
           ) {
-            if (isTwoHand) {
+            if (isSwordWeapon(bot.equippedWeapon)) {
+              if (bot.isSwordAttacking) {
+                if ((bot.swordComboStep || 0) < 2) {
+                  bot.swordComboBuffered = true;
+                  bot.swordComboWindowTicks = 32;
+
+                  if ((bot.swordAnimFrame || 0) >= 3) {
+                    bot.swordComboStep = (bot.swordComboStep || 0) + 1;
+                    bot.swordAnimFrame = 0;
+                    bot.swordAnimTimer = 0;
+                    bot.swordHasHit = false;
+                    bot.swordComboBuffered = false;
+                    bot.swordComboWindowTicks = 32;
+                    sounds.playSwordSwing();
+                  }
+                }
+              } else {
+                let nextStep = 0;
+                if ((bot.swordComboWindowTicks || 0) > 0 && (bot.swordComboStep || 0) > 0 && (bot.swordComboStep || 0) <= 2) {
+                  nextStep = bot.swordComboStep || 0;
+                } else {
+                  nextStep = 0;
+                }
+
+                bot.isSwordAttacking = true;
+                bot.swordComboStep = nextStep;
+                bot.swordAnimFrame = 0;
+                bot.swordAnimTimer = 0;
+                bot.swordHasHit = false;
+                bot.swordComboBuffered = false;
+                bot.swordComboWindowTicks = 32;
+
+                bot.velocityX = 0;
+                s.p2Controller.vx = 0;
+                s.p2Controller.state = ControllerState.Idle;
+                PlayerFSM.tryTransition(bot, PlayerFSMState.MeleeAttack);
+
+                sounds.playSwordSwing();
+              }
+            } else if (isTwoHand) {
               if (!bot.isTwoHandAttacking) {
                 bot.isTwoHandAttacking = true;
                 bot.twoHandAnimFrame = 0;
@@ -3734,6 +3985,141 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                   addSparks(b.x + 12, b.y + 16, '#ef4444', 14);
                 }
               });
+            }
+          }
+
+          // ── COMBATE CON ESPADA EXCLUSIVO DEL NINJA (J2) ──
+          if (bot.isSwordAttacking) {
+            bot.velocityX = 0;
+            s.p2Controller.vx = 0;
+            s.p2Controller.state = ControllerState.Idle;
+            bot.fsm = PlayerFSMState.MeleeAttack;
+
+            bot.swordAnimTimer = (bot.swordAnimTimer || 0) + 1;
+            if (bot.swordAnimTimer >= 2) {
+              bot.swordAnimTimer = 0;
+              bot.swordAnimFrame = (bot.swordAnimFrame || 0) + 1;
+
+              if (bot.swordComboBuffered && (bot.swordAnimFrame || 0) >= 3 && (bot.swordComboStep || 0) < 2) {
+                bot.swordComboStep = (bot.swordComboStep || 0) + 1;
+                bot.swordAnimFrame = 0;
+                bot.swordAnimTimer = 0;
+                bot.swordHasHit = false;
+                bot.swordComboBuffered = false;
+                bot.swordComboWindowTicks = 32;
+                sounds.playSwordSwing();
+              } else if ((bot.swordAnimFrame || 0) >= 5) {
+                if (bot.swordComboBuffered && (bot.swordComboStep || 0) < 2) {
+                  bot.swordComboStep = (bot.swordComboStep || 0) + 1;
+                  bot.swordAnimFrame = 0;
+                  bot.swordAnimTimer = 0;
+                  bot.swordHasHit = false;
+                  bot.swordComboBuffered = false;
+                  bot.swordComboWindowTicks = 32;
+                  sounds.playSwordSwing();
+                } else {
+                  bot.isSwordAttacking = false;
+                  bot.swordAnimFrame = 0;
+                  bot.swordAnimTimer = 0;
+                  bot.swordHasHit = false;
+                  bot.fsm = PlayerFSMState.Idle;
+
+                  if ((bot.swordComboStep || 0) >= 2) {
+                    bot.swordComboStep = 0;
+                    bot.swordComboWindowTicks = 0;
+                  } else {
+                    bot.swordComboStep = (bot.swordComboStep || 0) + 1;
+                    bot.swordComboWindowTicks = 26;
+                  }
+                }
+              }
+            }
+
+            if (!bot.swordHasHit && (bot.swordAnimFrame || 0) >= 2) {
+              bot.swordHasHit = true;
+              const currentStep = bot.swordComboStep || 0;
+              const hitReach = currentStep === 0 ? 68 : currentStep === 1 ? 74 : 84;
+              const isP1InReach =
+                p1.isAlive &&
+                !p1.isGrabbed &&
+                !s.p1Controller.isInvulnerable &&
+                p1.fsm !== PlayerFSMState.Roll &&
+                ((p2FacingDir > 0 && p1.x >= bot.x - 10 && p1.x <= bot.x + hitReach) ||
+                 (p2FacingDir < 0 && p1.x <= bot.x + 10 && p1.x >= bot.x - hitReach)) &&
+                Math.abs(p1.y - bot.y) < 42;
+
+              const wpn = getWeapon(bot.equippedWeapon);
+              const wpnName = wpn.name || 'ESPADA';
+
+              if (isP1InReach) {
+                sounds.playBladeHit();
+                let damage = 22;
+                let shake = 6;
+                let text = '¡TAJO I!';
+                let textColor = '#f43f5e';
+
+                if (currentStep === 0) {
+                  damage = 22 * bot.damageDealtModifier;
+                  shake = 6;
+                  text = `¡TAJO I (${wpnName.toUpperCase()})! -${Math.round(damage)}`;
+                  textColor = '#f43f5e';
+                  p1.velocityX = p2FacingDir * 190;
+                  p1.hitstunTicks = 16;
+                  PlayerFSM.tryTransition(p1, PlayerFSMState.Hitstun);
+                  addSparks(p1.x, p1.y, '#f43f5e', 16);
+                  addSparks(p1.x, p1.y, '#ffffff', 10);
+                } else if (currentStep === 1) {
+                  damage = 30 * bot.damageDealtModifier;
+                  shake = 9;
+                  text = `¡TAJO II (${wpnName.toUpperCase()})! -${Math.round(damage)}`;
+                  textColor = '#f43f5e';
+                  p1.velocityX = p2FacingDir * 270;
+                  p1.hitstunTicks = 20;
+                  PlayerFSM.tryTransition(p1, PlayerFSMState.Hitstun);
+                  addSparks(p1.x, p1.y, '#f43f5e', 22);
+                  addSparks(p1.x, p1.y, '#ffffff', 14);
+                } else {
+                  damage = 44 * bot.damageDealtModifier;
+                  shake = 14;
+                  text = `¡REMATE NINJA (${wpnName.toUpperCase()})! -${Math.round(damage)}`;
+                  textColor = '#e11d48';
+                  p1.velocityX = p2FacingDir * 390;
+                  p1.velocityY = -270;
+                  s.p1Controller.vy = -270;
+                  p1.onGround = false;
+                  p1.knockdownTicks = 45;
+                  PlayerFSM.tryTransition(p1, PlayerFSMState.KnockedDown);
+                  sounds.playHeavyBladeSlash();
+                  addSparks(p1.x, p1.y - 10, '#f43f5e', 28);
+                  addSparks(p1.x, p1.y - 10, '#ffffff', 16);
+                  CombatSystem.disarmPlayer(p1);
+                }
+
+                s.screenShake = shake;
+                p1.health = Math.max(0, p1.health - damage);
+                if (p1.health <= 0) {
+                  p1.health = 0;
+                  p1.isAlive = false;
+                  PlayerFSM.tryTransition(p1, PlayerFSMState.Dead);
+                  sounds.playHit();
+                }
+
+                s.floatingTexts.push({
+                  id: s.nextEntityId++,
+                  text,
+                  x: p1.x,
+                  y: p1.y - 32,
+                  color: textColor,
+                  life: 38,
+                });
+              }
+            }
+          }
+
+          if ((bot.swordComboWindowTicks || 0) > 0) {
+            bot.swordComboWindowTicks = (bot.swordComboWindowTicks || 0) - 1;
+            if (bot.swordComboWindowTicks <= 0 && !bot.isSwordAttacking) {
+              bot.swordComboStep = 0;
             }
           }
 
@@ -6435,7 +6821,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         if (p.isChargingHeavy) {
           const pulse = Math.sin(p.heavyChargeTicks * 0.45) * 0.5 + 0.5;
           ctx.save();
-          ctx.strokeStyle = isHuman
+          ctx.strokeStyle = isP1
             ? `rgba(56, 189, 248, ${0.45 + pulse * 0.55})`
             : `rgba(244, 63, 94, ${0.45 + pulse * 0.55})`;
           ctx.lineWidth = 3 + pulse * 3;
@@ -6863,7 +7249,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           const rollFrameH = rollSheet.naturalHeight / rollRows;
 
           // Progreso continuo de 0 a 1 durante la rodada (ejecuta los 7 frames una sola vez sin loop)
-          const rollProgress = isHuman
+          const rollProgress = isP1
             ? s.p1Controller.rollProgress
             : is1v1
             ? s.p2Controller.rollProgress
@@ -7005,7 +7391,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         } else if (sprite && sprite.complete && sprite.naturalWidth > 0) {
           ctx.drawImage(sprite, drawX, drawY, charW, charH);
         } else {
-          ctx.fillStyle = isHuman ? '#0284c7' : '#e11d48';
+          ctx.fillStyle = isP1 ? '#0284c7' : '#e11d48';
           ctx.fillRect(drawX, drawY, charW, charH);
           ctx.fillStyle = '#f8fafc';
           ctx.fillRect(drawX + 18, drawY + 10, 8, 8);
@@ -7021,7 +7407,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         }
 
         // Granada táctica activa visible en el cinturón / funda del combatiente
-        const fighterGrenades = isHuman ? s.p1Grenades : s.botGrenades;
+        const fighterGrenades = isP1 ? s.p1Grenades : s.botGrenades;
         const activeGType = fighterGrenades.activeType;
         const activeCount = fighterGrenades.ammo[activeGType] || 0;
         if (activeCount > 0) {
@@ -7060,8 +7446,8 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         ctx.fillText(p.name, p.x, p.y - 54);
       };
 
-      renderFighter(s.p1, s.p1Sprite, '#38bdf8', true);
-      renderFighter(s.bot, s.botSprite, '#f87171', gameMode === 'local1v1');
+      renderFighter(s.p1, s.p1Sprite, '#38bdf8', 1);
+      renderFighter(s.bot, s.botSprite, '#f87171', 2);
 
       // 11. PROYECTILES
       for (const pr of s.projectiles) {

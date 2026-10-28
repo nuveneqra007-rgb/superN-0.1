@@ -11,7 +11,7 @@ import { GameConstants } from '../game/GameConstants';
 import { PhysicsRect, PhysicsStep } from '../game/PhysicsStep';
 import { PlayerFSM } from '../game/PlayerFSM';
 import { createPlayerState, PlayerFSMState, PlayerState } from '../game/PlayerState';
-import { getWeapon, isBladeWeapon, isOneHandWeapon, isTwoHandWeapon, SpawnableWeaponsList, WeaponCategory, WeaponDatabase, WeaponType } from '../game/WeaponData';
+import { getWeapon, isBladeWeapon, isOneHandWeapon, isPistolWeapon, isRifleWeapon, isTwoHandWeapon, SpawnableWeaponsList, WeaponCategory, WeaponDatabase, WeaponType } from '../game/WeaponData';
 import { PlayerController, PlayerInput, PlayerState as ControllerState, PLAYER_CONFIG } from '../game/PlayerController';
 import { sounds } from '../game/SoundEffects';
 import { getWorldConfig, WorldConfig, HazardCfg, PlatformRect } from '../game/WorldData';
@@ -87,6 +87,16 @@ export interface SpritesheetDef {
   twoHandCols?: number;
   twoHandRows?: number;
   twoHandTotalFrames?: number;
+  hasPistolShootSheet?: boolean;
+  pistolShootSheetUrl?: string;
+  pistolCols?: number;
+  pistolRows?: number;
+  pistolTotalFrames?: number;
+  hasRifleShootSheet?: boolean;
+  rifleShootSheetUrl?: string;
+  rifleCols?: number;
+  rifleRows?: number;
+  rifleTotalFrames?: number;
 }
 
 export const CHARACTER_SPRITESHEETS: Record<string, SpritesheetDef> = {
@@ -100,6 +110,8 @@ export const CHARACTER_SPRITESHEETS: Record<string, SpritesheetDef> = {
   //   Fila 1: Puñetazo | Fila 2: Patada | Fila 3: Uppercut
   // Set de animación de Ataque a una mano de 5 frames (/assets/sprites/player/one_hand_attack.png)
   // Set oficial de Ataque a dos manos (Golpe pesado) de 6 frames (/assets/sprites/player/two_hand_attack.png)
+  // Set oficial de Ataque a una mano (Pistolas) de 4 frames (/assets/sprites/player/pistol_shoot.png)
+  // Set oficial de Ataque a dos manos (Rifles/Escopetas) de 4 frames (/assets/sprites/player/rifle_shoot.png)
   [BotFaction.Ninja]: {
     idleUrl: '/assets/sprites/player/ninja.png',
     walkSheetUrl: '/assets/sprites/player/ninja_walk.png',
@@ -109,6 +121,8 @@ export const CHARACTER_SPRITESHEETS: Record<string, SpritesheetDef> = {
     meleeSheetUrl: '/assets/sprites/player/ninja_melee.png',
     oneHandAttackSheetUrl: '/assets/sprites/player/one_hand_attack.png',
     twoHandAttackSheetUrl: '/assets/sprites/player/two_hand_attack.png',
+    pistolShootSheetUrl: '/assets/sprites/player/pistol_shoot.png',
+    rifleShootSheetUrl: '/assets/sprites/player/rifle_shoot.png',
     cols: 6,
     rows: 1,
     totalFrames: 6,
@@ -119,6 +133,8 @@ export const CHARACTER_SPRITESHEETS: Record<string, SpritesheetDef> = {
     hasMeleeSheet: true,
     hasOneHandAttackSheet: true,
     hasTwoHandAttackSheet: true,
+    hasPistolShootSheet: true,
+    hasRifleShootSheet: true,
     runCols: 6,
     runRows: 1,
     runTotalFrames: 6,
@@ -137,6 +153,12 @@ export const CHARACTER_SPRITESHEETS: Record<string, SpritesheetDef> = {
     twoHandCols: 6,
     twoHandRows: 1,
     twoHandTotalFrames: 6,
+    pistolCols: 4,
+    pistolRows: 1,
+    pistolTotalFrames: 4,
+    rifleCols: 4,
+    rifleRows: 1,
+    rifleTotalFrames: 4,
   },
   // ── 1. ASESINO (ASSASSIN) ──
   // Utiliza la imagen oficial prevista (/assets/sprites/player/Assassin_2.png)
@@ -453,6 +475,8 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     p1MeleeSheet: HTMLImageElement | null;
     p1OneHandSheet: HTMLImageElement | null;
     p1TwoHandSheet: HTMLImageElement | null;
+    p1PistolSheet: HTMLImageElement | null;
+    p1RifleSheet: HTMLImageElement | null;
     p1IdleSprite: HTMLImageElement | null;
     p1SheetConfig: SpritesheetDef;
     botWalkSheet: HTMLImageElement | null;
@@ -801,6 +825,24 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       p1TwoHandSheet.src = '/assets/sprites/player/two_hand_attack.png';
     }
 
+    let p1PistolSheet: HTMLImageElement | null = null;
+    if (p1Cfg.hasPistolShootSheet && p1Cfg.pistolShootSheetUrl) {
+      p1PistolSheet = new Image();
+      p1PistolSheet.src = p1Cfg.pistolShootSheetUrl;
+    } else if (effectiveP1Faction === BotFaction.Ninja) {
+      p1PistolSheet = new Image();
+      p1PistolSheet.src = '/assets/sprites/player/pistol_shoot.png';
+    }
+
+    let p1RifleSheet: HTMLImageElement | null = null;
+    if (p1Cfg.hasRifleShootSheet && p1Cfg.rifleShootSheetUrl) {
+      p1RifleSheet = new Image();
+      p1RifleSheet.src = p1Cfg.rifleShootSheetUrl;
+    } else if (effectiveP1Faction === BotFaction.Ninja) {
+      p1RifleSheet = new Image();
+      p1RifleSheet.src = '/assets/sprites/player/rifle_shoot.png';
+    }
+
     const p1IdleSprite = new Image();
     p1IdleSprite.src = p1Cfg.idleUrl || pArch.spriteUrl || '/assets/sprites/player/Assassin_2.png';
 
@@ -921,6 +963,8 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       p1MeleeSheet,
       p1OneHandSheet,
       p1TwoHandSheet,
+      p1PistolSheet,
+      p1RifleSheet,
       p1IdleSprite,
       p1SheetConfig: p1Cfg,
       botWalkSheet,
@@ -988,9 +1032,20 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     s.p1.twoHandAnimFrame = 0;
     s.p1.twoHandAnimTimer = 0;
     s.p1.twoHandHasHit = false;
+    s.p1.isPistolShooting = false;
+    s.p1.pistolAnimFrame = 0;
+    s.p1.pistolAnimTimer = 0;
+    s.p1.pistolHasFired = false;
+    s.p1.isRifleShooting = false;
+    s.p1.rifleAnimFrame = 0;
+    s.p1.rifleAnimTimer = 0;
+    s.p1.rifleHasFired = false;
     if (s.p1Controller) {
       s.p1Controller.setPosition(spawnP1.x, spawnP1.y);
       s.p1Controller.facingRight = true;
+      s.p1Controller.isShootingPistol = false;
+      s.p1Controller.isShootingRifle = false;
+      s.p1Controller.hasHeavyRifleEquipped = false;
     }
 
     s.bot = createPlayerState(2, p2Label, gameMode !== 'local1v1', spawnBot.x, spawnBot.y);
@@ -1705,15 +1760,23 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
         // ─────────────────────────────────────────────────────────
         // SISTEMA DE ATAQUE (TECLA ÚNICA "N")
+        // - Si porta arma "Pistolas" (Pistol, Pistol45, Revolver, Magnum, SilencedPistol, MachinePistol, Uzi, SilencedUzi, FlareGun):
+        //   Reproduce el set de animación 'pistol_shoot' de 4 frames (Frame 3: retroceso/recarga).
+        //   Dispara siempre hacia la dirección en la que está mirando (flip_h). Si está quieto, mantiene la última dirección.
+        //   Permite moverse a velocidad de caminar mientras dispara (no puede correr).
+        // - Si porta arma "Dos manos" (Hacha, Bat, LeadPipe, Hammer, Chair, Pipe, Bottle, Teapot, Pillow):
+        //   Reproduce la animación 'two_hand_attack' de 6 frames.
         // - Si porta arma "Una mano" (Katana, Machete, Cuchillo, Baton, ShockBaton, Whip, CueStick):
         //   Reproduce la animación 'one_hand_attack' de 5 frames (One Shot, veloz, bloqueo de movimiento).
         // - Si está desarmado o con puños:
         //   Reproduce el combo melee de 3 filas (1: Puñetazo | 2: Patada | 3: Uppercut).
         // ─────────────────────────────────────────────────────────
         const nJustPressed = !!s.keysJustPressed['n'] || !!s.keysJustPressed['N'];
+        const isPistol = isPistolWeapon(p1.equippedWeapon);
+        const isRifle = isRifleWeapon(p1.equippedWeapon);
 
         if (
-          nJustPressed &&
+          (nJustPressed || (firePressed && (isPistol || isRifle))) &&
           p1.isAlive &&
           s.roundActive &&
           p1.fsm !== PlayerFSMState.KnockedDown &&
@@ -1722,7 +1785,107 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           p1.fsm !== PlayerFSMState.Roll &&
           !p1.isGrappling
         ) {
-          if (isTwoHandWeapon(p1.equippedWeapon)) {
+          if (isRifle) {
+            // Disparo de rifles/escopetas a dos manos (rifle_shoot - 4 frames con retroceso en frame 3)
+            if (p1.attackCooldown <= 0) {
+              if (p1.ammo > 0) {
+                const wpn = getWeapon(p1.equippedWeapon);
+                p1.isRifleShooting = true;
+                p1.rifleAnimFrame = 0;
+                p1.rifleAnimTimer = 0;
+                p1.rifleHasFired = true;
+                s.p1Controller.isShootingRifle = true;
+
+                p1.attackCooldown = Math.max(wpn.cooldownTicks, 10);
+                p1.ammo--;
+                PlayerFSM.tryTransition(p1, PlayerFSMState.RangedFire);
+                sounds.playGunshot(wpn.soundType || wpn.type.toLowerCase());
+
+                const dir = p1.facingRight ? 1 : -1;
+                const muzzleX = p1.x + dir * 32;
+                const muzzleY = p1.y - 7;
+
+                // Destellos y chispas de retroceso potente
+                addSparks(muzzleX, muzzleY, '#fde047', 12);
+                addSparks(muzzleX, muzzleY, '#ffffff', 6);
+                s.screenShake = Math.min(14, Math.max(5, (wpn.damage || 25) / 3));
+
+                const count = wpn.pelletCount || 1;
+                for (let i = 0; i < count; i++) {
+                  const spreadAngle = ((Math.random() - 0.5) * ((wpn.accuracyDeg || 4) * Math.PI / 180)) / 2;
+                  const speed = wpn.projectileSpeed || 950;
+                  s.projectiles.push({
+                    id: s.nextEntityId++,
+                    x: muzzleX,
+                    y: muzzleY,
+                    vx: dir * speed * Math.cos(spreadAngle),
+                    vy: speed * Math.sin(spreadAngle),
+                    damage: (wpn.damage / count) * p1.damageDealtModifier,
+                    onFireDuration: wpn.onFireDuration || 0,
+                    explosionRadius: wpn.explosionRadius || 0,
+                    shooterId: p1.id,
+                    weaponType: p1.equippedWeapon,
+                    pelletCount: count,
+                    lifeTicks: 0,
+                    maxLifeTicks: 60,
+                    color: wpn.color || '#facc15',
+                  });
+                }
+              } else {
+                p1.attackCooldown = 15;
+                sounds.playDryFire();
+              }
+            }
+          } else if (isPistol) {
+            // Disparo de pistolas a una mano (pistol_shoot - 4 frames)
+            if (p1.attackCooldown <= 0) {
+              if (p1.ammo > 0) {
+                const wpn = getWeapon(p1.equippedWeapon);
+                p1.isPistolShooting = true;
+                p1.pistolAnimFrame = 0;
+                p1.pistolAnimTimer = 0;
+                p1.pistolHasFired = true;
+                s.p1Controller.isShootingPistol = true;
+
+                p1.attackCooldown = Math.max(wpn.cooldownTicks, 14);
+                p1.ammo--;
+                PlayerFSM.tryTransition(p1, PlayerFSMState.RangedFire);
+                sounds.playGunshot(wpn.type.toLowerCase());
+
+                const dir = p1.facingRight ? 1 : -1;
+                const muzzleX = p1.x + dir * 28;
+                const muzzleY = p1.y - 6;
+
+                addSparks(muzzleX, muzzleY, '#fde047', 8);
+                s.screenShake = Math.min(10, Math.max(3, (wpn.damage || 20) / 4));
+
+                const count = wpn.pelletCount || 1;
+                for (let i = 0; i < count; i++) {
+                  const spreadAngle = ((Math.random() - 0.5) * ((wpn.accuracyDeg || 3) * Math.PI / 180)) / 2;
+                  const speed = wpn.projectileSpeed || 900;
+                  s.projectiles.push({
+                    id: s.nextEntityId++,
+                    x: muzzleX,
+                    y: muzzleY,
+                    vx: dir * speed * Math.cos(spreadAngle),
+                    vy: speed * Math.sin(spreadAngle),
+                    damage: (wpn.damage / count) * p1.damageDealtModifier,
+                    onFireDuration: wpn.onFireDuration || 0,
+                    explosionRadius: wpn.explosionRadius || 0,
+                    shooterId: p1.id,
+                    weaponType: p1.equippedWeapon,
+                    pelletCount: count,
+                    lifeTicks: 0,
+                    maxLifeTicks: 60,
+                    color: '#facc15',
+                  });
+                }
+              } else {
+                p1.attackCooldown = 15;
+                sounds.playDryFire();
+              }
+            }
+          } else if (isTwoHandWeapon(p1.equippedWeapon)) {
             // Ataque a dos manos (Golpe pesado): animación One Shot de 6 frames, más lenta y pesada
             if (!p1.isTwoHandAttacking) {
               p1.isTwoHandAttacking = true;
@@ -1995,6 +2158,202 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           }
         }
 
+        // ─────────────────────────────────────────────────────────
+        // LÓGICA DE AVANCE Y RETROCESO DE DISPARO CON PISTOLA (pistol_shoot)
+        // 4 Fotogramas:
+        // Frame 0: Apuntado frontal y disparo con fogonazo
+        // Frame 1: Empuje de disparo
+        // Frame 2: (Frame 3) Mano levantada hacia arriba: Retroceso / Recarga
+        // Frame 3: Retorno a la posición de guardia
+        // Permite moverse a velocidad de caminar mientras dispara (no puede correr)
+        // ─────────────────────────────────────────────────────────
+        if (p1.isPistolShooting) {
+          if (p1.fsm === PlayerFSMState.KnockedDown || p1.fsm === PlayerFSMState.Hitstun || !p1.isAlive) {
+            p1.isPistolShooting = false;
+            p1.pistolAnimFrame = 0;
+            p1.pistolAnimTimer = 0;
+            s.p1Controller.isShootingPistol = false;
+          } else {
+            s.p1Controller.isShootingPistol = true;
+
+            // Orientación del apuntado (Superfighters):
+            // Si se mueve, orienta hacia la dirección del movimiento; si está quieto, mantiene última dirección
+            const moveDir = (keys['arrowleft'] || (gameMode === 'vsBot' && keys['a']))
+              ? -1
+              : (keys['arrowright'] || (gameMode === 'vsBot' && keys['d']))
+              ? 1
+              : 0;
+
+            if (moveDir !== 0) {
+              p1.facingRight = moveDir > 0;
+              s.p1Controller.facingRight = p1.facingRight;
+            }
+
+            p1.pistolAnimTimer = (p1.pistolAnimTimer || 0) + 1;
+            // 4 ticks por frame (~66ms por frame)
+            if (p1.pistolAnimTimer >= 4) {
+              p1.pistolAnimTimer = 0;
+              p1.pistolAnimFrame = (p1.pistolAnimFrame || 0) + 1;
+
+              if (p1.pistolAnimFrame >= 4) {
+                // Ciclo continuo si mantiene 'N' o disparo con arma automática (Uzi, SilencedUzi, MachinePistol)
+                const isAuto =
+                  p1.equippedWeapon === WeaponType.Uzi ||
+                  p1.equippedWeapon === WeaponType.SilencedUzi ||
+                  p1.equippedWeapon === WeaponType.MachinePistol;
+                const nHeld = !!keys['n'] || !!keys['N'] || !!keys['m'] || !!keys['M'];
+
+                if (isAuto && nHeld && p1.ammo > 0 && p1.attackCooldown <= 0) {
+                  p1.pistolAnimFrame = 0;
+                  p1.ammo--;
+                  const wpn = getWeapon(p1.equippedWeapon);
+                  p1.attackCooldown = Math.max(wpn.cooldownTicks, 10);
+                  sounds.playGunshot(wpn.type.toLowerCase());
+
+                  const dir = p1.facingRight ? 1 : -1;
+                  const muzzleX = p1.x + dir * 28;
+                  const muzzleY = p1.y - 6;
+
+                  addSparks(muzzleX, muzzleY, '#fde047', 8);
+                  s.screenShake = 3;
+
+                  const speed = wpn.projectileSpeed || 900;
+                  const spreadAngle = ((Math.random() - 0.5) * ((wpn.accuracyDeg || 4) * Math.PI / 180)) / 2;
+                  s.projectiles.push({
+                    id: s.nextEntityId++,
+                    x: muzzleX,
+                    y: muzzleY,
+                    vx: dir * speed * Math.cos(spreadAngle),
+                    vy: speed * Math.sin(spreadAngle),
+                    damage: wpn.damage * p1.damageDealtModifier,
+                    onFireDuration: 0,
+                    explosionRadius: 0,
+                    shooterId: p1.id,
+                    weaponType: p1.equippedWeapon,
+                    pelletCount: 1,
+                    lifeTicks: 0,
+                    maxLifeTicks: 60,
+                    color: '#facc15',
+                  });
+                } else {
+                  p1.isPistolShooting = false;
+                  p1.pistolAnimFrame = 0;
+                  p1.pistolAnimTimer = 0;
+                  s.p1Controller.isShootingPistol = false;
+                  if (p1.fsm === PlayerFSMState.RangedFire) {
+                    p1.fsm = PlayerFSMState.Idle;
+                  }
+                }
+              }
+            }
+          }
+        } else if (s.p1Controller) {
+          s.p1Controller.isShootingPistol = false;
+        }
+
+        // ─────────────────────────────────────────────────────────
+        // LÓGICA DE AVANCE Y RETROCESO DE DISPARO CON RIFLE/ESCOPETA (rifle_shoot)
+        // 4 Fotogramas:
+        // Frame 0: Apuntado frontal y disparo con gran fogonazo
+        // Frame 1: Empuje de disparo y retroceso
+        // Frame 2: (Frame 3) Sacudida hacia atrás: Fuerte retroceso del disparo
+        // Frame 3: Recuperación y vuelta al apuntado
+        // Permite moverse a velocidad de caminar mientras dispara (no puede correr)
+        // ─────────────────────────────────────────────────────────
+        if (p1.isRifleShooting) {
+          if (p1.fsm === PlayerFSMState.KnockedDown || p1.fsm === PlayerFSMState.Hitstun || !p1.isAlive) {
+            p1.isRifleShooting = false;
+            p1.rifleAnimFrame = 0;
+            p1.rifleAnimTimer = 0;
+            s.p1Controller.isShootingRifle = false;
+          } else {
+            s.p1Controller.isShootingRifle = true;
+
+            // Orientación del apuntado (Superfighters):
+            // Si se mueve, orienta hacia la dirección del movimiento; si está quieto, mantiene última dirección
+            const moveDir = (keys['arrowleft'] || (gameMode === 'vsBot' && keys['a']))
+              ? -1
+              : (keys['arrowright'] || (gameMode === 'vsBot' && keys['d']))
+              ? 1
+              : 0;
+
+            if (moveDir !== 0) {
+              p1.facingRight = moveDir > 0;
+              s.p1Controller.facingRight = p1.facingRight;
+            }
+
+            p1.rifleAnimTimer = (p1.rifleAnimTimer || 0) + 1;
+            // 4 ticks por frame (~66ms por frame)
+            if (p1.rifleAnimTimer >= 4) {
+              p1.rifleAnimTimer = 0;
+              p1.rifleAnimFrame = (p1.rifleAnimFrame || 0) + 1;
+
+              if (p1.rifleAnimFrame >= 4) {
+                // Ciclo continuo si mantiene 'N' o disparo con arma automática (M60, Assault, TommyGun, SMG, Carbine, MP50)
+                const isAuto =
+                  p1.equippedWeapon === WeaponType.M60 ||
+                  p1.equippedWeapon === WeaponType.Assault ||
+                  p1.equippedWeapon === WeaponType.Rifle ||
+                  p1.equippedWeapon === WeaponType.TommyGun ||
+                  p1.equippedWeapon === WeaponType.SMG ||
+                  p1.equippedWeapon === WeaponType.Carbine ||
+                  p1.equippedWeapon === WeaponType.MP50;
+                const nHeld = !!keys['n'] || !!keys['N'] || !!keys['m'] || !!keys['M'];
+
+                if (isAuto && nHeld && p1.ammo > 0 && p1.attackCooldown <= 0) {
+                  p1.rifleAnimFrame = 0;
+                  p1.ammo--;
+                  const wpn = getWeapon(p1.equippedWeapon);
+                  p1.attackCooldown = Math.max(wpn.cooldownTicks, 8);
+                  sounds.playGunshot(wpn.soundType || wpn.type.toLowerCase());
+
+                  const dir = p1.facingRight ? 1 : -1;
+                  const muzzleX = p1.x + dir * 32;
+                  const muzzleY = p1.y - 7;
+
+                  addSparks(muzzleX, muzzleY, '#fde047', 10);
+                  addSparks(muzzleX, muzzleY, '#ffffff', 5);
+                  s.screenShake = 4;
+
+                  const speed = wpn.projectileSpeed || 950;
+                  const spreadAngle = ((Math.random() - 0.5) * ((wpn.accuracyDeg || 4) * Math.PI / 180)) / 2;
+                  s.projectiles.push({
+                    id: s.nextEntityId++,
+                    x: muzzleX,
+                    y: muzzleY,
+                    vx: dir * speed * Math.cos(spreadAngle),
+                    vy: speed * Math.sin(spreadAngle),
+                    damage: wpn.damage * p1.damageDealtModifier,
+                    onFireDuration: wpn.onFireDuration || 0,
+                    explosionRadius: wpn.explosionRadius || 0,
+                    shooterId: p1.id,
+                    weaponType: p1.equippedWeapon,
+                    pelletCount: 1,
+                    lifeTicks: 0,
+                    maxLifeTicks: 60,
+                    color: wpn.color || '#facc15',
+                  });
+                } else {
+                  p1.isRifleShooting = false;
+                  p1.rifleAnimFrame = 0;
+                  p1.rifleAnimTimer = 0;
+                  s.p1Controller.isShootingRifle = false;
+                  if (p1.fsm === PlayerFSMState.RangedFire) {
+                    p1.fsm = PlayerFSMState.Idle;
+                  }
+                }
+              }
+            }
+          }
+        } else if (s.p1Controller) {
+          s.p1Controller.isShootingRifle = false;
+        }
+
+        // Sincronizar flag de arma pesada para reducción de velocidad y bloqueo de carrera
+        if (s.p1Controller) {
+          s.p1Controller.hasHeavyRifleEquipped = isRifleWeapon(p1.equippedWeapon);
+        }
+
         // Cuenta regresiva de la ventana de combo: si pasa el tiempo sin presionar 'N', se reinicia a 0
         if (p1.comboWindowTicks > 0) {
           p1.comboWindowTicks--;
@@ -2178,7 +2537,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           p1.fsm !== PlayerFSMState.Roll
         ) {
           const wpn = getWeapon(p1.equippedWeapon);
-          if (wpn.category === 'Firearm') {
+          if (wpn.category === 'Firearm' && !isPistolWeapon(p1.equippedWeapon) && !isRifleWeapon(p1.equippedWeapon)) {
             p1.attackCooldown = wpn.cooldownTicks;
             p1.ammo--;
             PlayerFSM.tryTransition(p1, PlayerFSMState.RangedFire);
@@ -3816,25 +4175,44 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           p1.ammo = wData.magSize;
           sounds.playPickup();
 
-          // Lógica de Equipamiento: cambia el estado del personaje a arma_dos_manos
+          // Lógica de Equipamiento: cambia el estado del personaje según el arma
+          const isRifle = isRifleWeapon(w.weaponType);
           const isTwoHand = isTwoHandWeapon(w.weaponType);
-          if (isTwoHand) {
+          const isPistol = isPistolWeapon(w.weaponType);
+          if (isRifle) {
+            p1.characterState = 'arma_dos_manos';
+            p1.weaponState = 'rifle';
+            s.p1Controller.hasHeavyRifleEquipped = true;
+          } else if (isTwoHand) {
             p1.characterState = 'arma_dos_manos';
             p1.weaponState = 'arma_dos_manos';
+            s.p1Controller.hasHeavyRifleEquipped = false;
+          } else if (isPistol) {
+            p1.characterState = 'arma_una_mano';
+            p1.weaponState = 'pistola';
+            s.p1Controller.hasHeavyRifleEquipped = false;
           } else if (isOneHandWeapon(w.weaponType)) {
             p1.characterState = 'arma_una_mano';
             p1.weaponState = 'arma_una_mano';
+            s.p1Controller.hasHeavyRifleEquipped = false;
           } else {
             p1.characterState = 'desarmado';
             p1.weaponState = 'desarmado';
+            s.p1Controller.hasHeavyRifleEquipped = false;
           }
 
           s.floatingTexts.push({
             id: s.nextEntityId++,
-            text: isTwoHand ? `¡${wData.name}! (arma_dos_manos)` : `¡${wData.name}!`,
+            text: isRifle
+              ? `¡${wData.name}! (rifle)`
+              : isTwoHand
+              ? `¡${wData.name}! (arma_dos_manos)`
+              : isPistol
+              ? `¡${wData.name}! (pistola)`
+              : `¡${wData.name}!`,
             x: p1.x,
             y: p1.y - 35,
-            color: isTwoHand ? '#f97316' : '#38bdf8',
+            color: isRifle ? '#eab308' : isTwoHand ? '#f97316' : '#38bdf8',
             life: 45,
           });
 
@@ -4771,8 +5149,134 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           isBlade &&
           (p.fsm === PlayerFSMState.MeleeAttack || p.isSliding || p.isChargingHeavy);
 
-        // 0. Animación de Ataque a dos manos (two_hand_attack - 6 frames pesados) para Hacha, Bat, LeadPipe, Hammer, Chair, Pipe, Bottle, Teapot, Pillow
+        // -1. Animación de Ataque a dos manos (Rifles/Escopetas) (rifle_shoot - 4 frames)
         if (
+          p.isRifleShooting &&
+          s.p1RifleSheet &&
+          s.p1RifleSheet.complete &&
+          s.p1RifleSheet.naturalWidth > 0
+        ) {
+          const rifleCols = cfg?.rifleCols || 4;
+          const rifleRows = cfg?.rifleRows || 1;
+          const frameW = s.p1RifleSheet.naturalWidth / rifleCols;
+          const frameH = s.p1RifleSheet.naturalHeight / rifleRows;
+
+          const safeCol = Math.max(0, Math.min(rifleCols - 1, p.rifleAnimFrame || 0));
+          const sx = safeCol * frameW;
+          const sy = 0;
+
+          ctx.drawImage(s.p1RifleSheet, sx, sy, frameW, frameH, drawX, drawY, charW, charH);
+
+          const currentF = p.rifleAnimFrame || 0;
+
+          // Rifle / arma pesada en dos manos orientada y sacudida según el retroceso
+          const wImg = s.weaponImages[p.equippedWeapon];
+          if (wImg && wImg.complete && wImg.naturalWidth > 0) {
+            ctx.save();
+            if (currentF === 0) {
+              // Frame 1: Apuntado frontal y disparo inicial
+              ctx.translate(22, 0);
+              ctx.rotate(-0.02);
+            } else if (currentF === 1) {
+              // Frame 2: Inicio del retroceso
+              ctx.translate(20, -3);
+              ctx.rotate(-0.15);
+            } else if (currentF === 2) {
+              // Frame 3: Fuerte retroceso / sacudida hacia atrás
+              ctx.translate(14, -18);
+              ctx.rotate(-0.65);
+            } else {
+              // Frame 4: Recuperación y re-alineación
+              ctx.translate(22, -2);
+              ctx.rotate(-0.05);
+            }
+            ctx.drawImage(wImg, -6, -8, 36, 18);
+            ctx.restore();
+          }
+
+          // Fogonazo pesado / Destello frontal (Muzzle Flash) en el primer frame
+          if (currentF === 0) {
+            ctx.save();
+            ctx.fillStyle = '#fde047';
+            ctx.shadowColor = '#f97316';
+            ctx.shadowBlur = 18;
+            ctx.beginPath();
+            ctx.arc(44, 0, 8, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.moveTo(38, -6);
+            ctx.lineTo(56, 0);
+            ctx.lineTo(38, 6);
+            ctx.closePath();
+            ctx.fill();
+            ctx.restore();
+          }
+        } else if (
+          p.isPistolShooting &&
+          s.p1PistolSheet &&
+          s.p1PistolSheet.complete &&
+          s.p1PistolSheet.naturalWidth > 0
+        ) {
+          const pistolCols = cfg?.pistolCols || 4;
+          const pistolRows = cfg?.pistolRows || 1;
+          const frameW = s.p1PistolSheet.naturalWidth / pistolCols;
+          const frameH = s.p1PistolSheet.naturalHeight / pistolRows;
+
+          const safeCol = Math.max(0, Math.min(pistolCols - 1, p.pistolAnimFrame || 0));
+          const sx = safeCol * frameW;
+          const sy = 0;
+
+          ctx.drawImage(s.p1PistolSheet, sx, sy, frameW, frameH, drawX, drawY, charW, charH);
+
+          const currentF = p.pistolAnimFrame || 0;
+
+          // Arma equipada en la mano orientada y posicionada según el frame de la animación
+          const wImg = s.weaponImages[p.equippedWeapon];
+          if (wImg && wImg.complete && wImg.naturalWidth > 0) {
+            ctx.save();
+            if (currentF === 0) {
+              // Apuntado horizontal directo
+              ctx.translate(22, -3);
+              ctx.rotate(0);
+            } else if (currentF === 1) {
+              // Comienzo de retroceso
+              ctx.translate(23, -5);
+              ctx.rotate(-0.15);
+            } else if (currentF === 2) {
+              // Frame 3 (donde levanta la mano): retroceso/recarga hacia arriba
+              ctx.translate(20, -18);
+              ctx.rotate(-0.75);
+            } else {
+              // Frame 4: recuperación y retorno al apuntado
+              ctx.translate(22, -3);
+              ctx.rotate(-0.05);
+            }
+            ctx.drawImage(wImg, -4, -6, 24, 14);
+            ctx.restore();
+          }
+
+          // Fogonazo / Destello frontal (Muzzle Flash) en el primer frame
+          if (currentF === 0) {
+            ctx.save();
+            ctx.fillStyle = '#fde047';
+            ctx.shadowColor = '#f59e0b';
+            ctx.shadowBlur = 14;
+            ctx.beginPath();
+            ctx.arc(36, -3, 6, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.moveTo(34, -6);
+            ctx.lineTo(44, -3);
+            ctx.lineTo(34, 0);
+            ctx.closePath();
+            ctx.fill();
+            ctx.restore();
+          }
+        } else if (
           p.isTwoHandAttacking &&
           s.p1TwoHandSheet &&
           s.p1TwoHandSheet.complete &&
@@ -5146,8 +5650,8 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         }
 
         // Arma equipada en mano (proporcional al personaje aumentado)
-        // Si está ejecutando el ataque de filo, el ataque a una mano, el ataque a dos manos o el combo melee del Ninja, las manos muestran la animación
-        if (p.equippedWeapon !== WeaponType.Fists && !isBladeAttacking && !p.isMeleeComboAttacking && !p.isOneHandAttacking && !p.isTwoHandAttacking) {
+        // Si está ejecutando el ataque de filo, el ataque a una mano, el ataque a dos manos, pistolas, rifles o el combo melee del Ninja, las manos muestran la animación
+        if (p.equippedWeapon !== WeaponType.Fists && !isBladeAttacking && !p.isMeleeComboAttacking && !p.isOneHandAttacking && !p.isTwoHandAttacking && !p.isPistolShooting && !p.isRifleShooting) {
           const wImg = s.weaponImages[p.equippedWeapon];
           if (wImg && wImg.complete && wImg.naturalWidth > 0) {
             ctx.drawImage(wImg, 8, -6, 32, 16);

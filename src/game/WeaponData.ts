@@ -42,6 +42,7 @@ export enum WeaponType {
   SMG = 'SMG',
   MP50 = 'MP50',
   Rifle = 'Rifle',
+  Assault = 'Assault',
   Carbine = 'Carbine',
   M60 = 'M60',
   Shotgun = 'Shotgun',
@@ -656,6 +657,23 @@ export const WeaponDatabase: Record<WeaponType, WeaponData> = {
     range: 'Largo',
     soundType: 'pistol',
   },
+  [WeaponType.Assault]: {
+    type: WeaponType.Assault,
+    name: 'Rifle de Asalto Militar',
+    category: 'Firearm',
+    damage: GameConstants.RifleDamage,
+    magSize: GameConstants.RifleMag,
+    cooldownTicks: GameConstants.RifleCooldown,
+    projectileSpeed: GameConstants.RifleSpeed,
+    accuracyDeg: GameConstants.RifleAccuracy,
+    color: '#3b82f6',
+    iconUrl: '/assets/weapons/Assault.png',
+    description: 'Fusil de asalto calibre 5.56 OTAN. El arma estándar de los soldados de élite.',
+    tacticalTip: 'Penetra defensas y castiga severamente a enemigos a media y larga distancia.',
+    features: ['Penetración Balística', 'Daño Constante', '30 Tiros Fusil'],
+    range: 'Largo',
+    soundType: 'pistol',
+  },
   [WeaponType.Carbine]: {
     type: WeaponType.Carbine,
     name: 'Carabina Táctica M4',
@@ -1111,4 +1129,33 @@ export const PISTOL_WEAPONS: ReadonlySet<WeaponType> = new Set([
 
 export function isPistolWeapon(type: WeaponType): boolean {
   return PISTOL_WEAPONS.has(type);
+}
+
+/**
+ * Armas de la categoría "Ataque a dos manos (Rifles/Escopetas)" (rifle_shoot):
+ * Assault, Carbine, M60, Sniper, Shotgun, SawedOff, DarkShotgun, SMG, MP50, TommyGun, Lazer, Flamethrower, Bow.
+ * Utilizan el set oficial de animación 'rifle_shoot' (4 frames), con fuerte retroceso en frame 3,
+ * sensación de peso mayor (velocidad reducida) y disparo en movimiento de Superfighters (sin correr).
+ */
+export const RIFLE_WEAPONS: ReadonlySet<string> = new Set([
+  'Assault',
+  'Rifle',
+  WeaponType.Rifle,
+  WeaponType.Assault,
+  WeaponType.Carbine,
+  WeaponType.M60,
+  WeaponType.Sniper,
+  WeaponType.Shotgun,
+  WeaponType.SawedOff,
+  WeaponType.DarkShotgun,
+  WeaponType.SMG,
+  WeaponType.MP50,
+  WeaponType.TommyGun,
+  WeaponType.Lazer,
+  WeaponType.Flamethrower,
+  WeaponType.Bow,
+]);
+
+export function isRifleWeapon(type: string | WeaponType): boolean {
+  return RIFLE_WEAPONS.has(type as string);
 }

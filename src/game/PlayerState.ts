@@ -120,9 +120,21 @@ export interface PlayerState {
   twoHandAnimTimer?: number;
   twoHandHasHit?: boolean;
 
-  // Estado del personaje según arma equipada ('arma_dos_manos' | 'arma_una_mano' | 'desarmado')
+  // Set de animación de Ataque a una mano (Pistolas) (pistol_shoot - 4 frames con retroceso en frame 3)
+  isPistolShooting?: boolean;
+  pistolAnimFrame?: number;
+  pistolAnimTimer?: number;
+  pistolHasFired?: boolean;
+
+  // Set de animación de Ataque a dos manos (Rifles/Escopetas) (rifle_shoot - 4 frames con retroceso en frame 3)
+  isRifleShooting?: boolean;
+  rifleAnimFrame?: number;
+  rifleAnimTimer?: number;
+  rifleHasFired?: boolean;
+
+  // Estado del personaje según arma equipada ('arma_dos_manos' | 'arma_una_mano' | 'pistola' | 'rifle' | 'desarmado')
   characterState?: string;
-  weaponState?: 'arma_dos_manos' | 'arma_una_mano' | 'desarmado';
+  weaponState?: 'arma_dos_manos' | 'arma_una_mano' | 'pistola' | 'rifle' | 'desarmado';
 }
 
 export function createPlayerState(

@@ -52,6 +52,14 @@ export class MainScene extends Phaser.Scene {
       frameWidth: 220,
       frameHeight: 290,
     });
+    this.load.spritesheet('pistol_shoot', '/assets/sprites/player/pistol_shoot.png', {
+      frameWidth: 220,
+      frameHeight: 290,
+    });
+    this.load.spritesheet('rifle_shoot', '/assets/sprites/player/rifle_shoot.png', {
+      frameWidth: 256,
+      frameHeight: 290,
+    });
     this.load.image('bot_sprite', '/assets/sprites/bot/thug.png');
     this.load.image('platform_block', '/assets/backgrounds/warehouse.jpg');
   }
@@ -156,6 +164,26 @@ export class MainScene extends Phaser.Scene {
         key: 'two_hand_attack',
         frames: this.anims.generateFrameNumbers('two_hand_attack', { start: 0, end: 5 }),
         frameRate: 14, // Más lento por ser golpe pesado
+        repeat: 0,
+      });
+    }
+
+    // Animación de Ataque a una mano (Pistolas) de 4 fotogramas (Frame 3: retroceso/recarga)
+    if (!this.anims.exists('pistol_shoot')) {
+      this.anims.create({
+        key: 'pistol_shoot',
+        frames: this.anims.generateFrameNumbers('pistol_shoot', { start: 0, end: 3 }),
+        frameRate: 12,
+        repeat: 0,
+      });
+    }
+
+    // Animación de Ataque a dos manos (Rifles/Escopetas) de 4 fotogramas (Frame 3: fuerte retroceso)
+    if (!this.anims.exists('rifle_shoot')) {
+      this.anims.create({
+        key: 'rifle_shoot',
+        frames: this.anims.generateFrameNumbers('rifle_shoot', { start: 0, end: 3 }),
+        frameRate: 12,
         repeat: 0,
       });
     }

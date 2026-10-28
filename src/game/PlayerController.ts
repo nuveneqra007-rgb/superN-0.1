@@ -98,6 +98,14 @@ export class PlayerController {
   // Flag opcional de invulnerabilidad (durante los primeros frames de Roll)
   public isInvulnerable: boolean = false;
 
+  // Flag de disparo con pistolas a una mano (limita la velocidad a caminar y no correr)
+  public isShootingPistol: boolean = false;
+
+  // Flag de arma pesada equipada (Rifle / Escopeta): reduce velocidad y desactiva carrera
+  public hasHeavyRifleEquipped: boolean = false;
+  // Flag de disparo activo con rifle
+  public isShootingRifle: boolean = false;
+
   // Altura actual interna del collider
   private _hitboxHeight: number = PLAYER_CONFIG.HITBOX_HEIGHT_STAND;
 
@@ -286,6 +294,33 @@ export class PlayerController {
    * Al soltar: frena gradualmente (inercia) de Run a Walk y a Idle.
    */
   private handleHorizontalMovement(input: PlayerInput, dt: number): void {
+    if (this.hasHeavyRifleEquipped || this.isShootingRifle) {
+      if (input.moveDir === 0) {
+        this.vx = 0;
+      } else {
+        const targetDir = input.moveDir;
+        this.facingRight = targetDir > 0;
+        this.rollDirection = targetDir;
+        // Velocidad reducida por peso del arma (se siente más pesado, 130 px/s vs 160 px/s) y no puede correr
+        const heavyWalkSpeed = PLAYER_CONFIG.WALK_SPEED * 0.82;
+        this.vx = targetDir * heavyWalkSpeed;
+      }
+      return;
+    }
+
+    if (this.isShootingPistol) {
+      if (input.moveDir === 0) {
+        this.vx = 0;
+      } else {
+        const targetDir = input.moveDir;
+        this.facingRight = targetDir > 0;
+        this.rollDirection = targetDir;
+        // Velocidad limitada estrictamente a caminar: no puede correr
+        this.vx = targetDir * PLAYER_CONFIG.WALK_SPEED;
+      }
+      return;
+    }
+
     if (input.moveDir === 0) {
       // Al soltar la tecla: frena gradualmente (inercia)
       if (Math.abs(this.vx) > 0) {
@@ -513,6 +548,8 @@ export class PlayerController {
     const currentSpeed = Math.abs(this.vx);
     if (currentSpeed <= 10) {
       this.state = PlayerState.Idle;
+    } else if (this.hasHeavyRifleEquipped || this.isShootingRifle || this.isShootingPistol) {
+      this.state = PlayerState.Walk;
     } else if (currentSpeed >= PLAYER_CONFIG.RUN_THRESHOLD) {
       this.state = PlayerState.Run;
     } else {

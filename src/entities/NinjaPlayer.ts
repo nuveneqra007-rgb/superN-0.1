@@ -6,7 +6,7 @@
 import Phaser from 'phaser';
 import { NINJA_CONFIG, NinjaState } from '../game/NinjaController';
 import { PlayerInput } from './Player';
-import { isOneHandWeapon, isTwoHandWeapon, WeaponType } from '../game/WeaponData';
+import { isOneHandWeapon, isPistolWeapon, isRifleWeapon, isTwoHandWeapon, WeaponType } from '../game/WeaponData';
 
 export interface NinjaPlayerOptions {
   textureKey?: string;
@@ -25,6 +25,9 @@ export class NinjaPlayer extends Phaser.Physics.Arcade.Sprite {
   public hp: number;
   public maxHp: number;
   public isInvulnerable: boolean = false;
+  public isPistolShooting: boolean = false;
+  public isRifleShooting: boolean = false;
+  public hasHeavyRifleEquipped: boolean = false;
   public state: NinjaState = NinjaState.Idle;
   public characterState: string = 'desarmado';
   public facing: 'left' | 'right' = 'right';
@@ -40,6 +43,8 @@ export class NinjaPlayer extends Phaser.Physics.Arcade.Sprite {
   private coyoteTimer: number = 0;
   private jumpBufferTimer: number = 0;
   private shootCooldownTimer: number = 0;
+  private pistolShootTimer: number = 0;
+  private rifleShootTimer: number = 0;
 
   // Combo melee Ninja (3 Filas: Puñetazo, Patada, Uppercut)
   private attackTimer: number = 0;
@@ -78,12 +83,21 @@ export class NinjaPlayer extends Phaser.Physics.Arcade.Sprite {
 
   public equipWeapon(weaponName: string): void {
     this.currentWeapon = weaponName;
-    if (isTwoHandWeapon(weaponName as WeaponType)) {
+    if (isRifleWeapon(weaponName as WeaponType)) {
       this.characterState = 'arma_dos_manos';
+      this.hasHeavyRifleEquipped = true;
+    } else if (isTwoHandWeapon(weaponName as WeaponType)) {
+      this.characterState = 'arma_dos_manos';
+      this.hasHeavyRifleEquipped = false;
+    } else if (isPistolWeapon(weaponName as WeaponType)) {
+      this.characterState = 'arma_una_mano';
+      this.hasHeavyRifleEquipped = false;
     } else if (isOneHandWeapon(weaponName as WeaponType)) {
       this.characterState = 'arma_una_mano';
+      this.hasHeavyRifleEquipped = false;
     } else {
       this.characterState = 'desarmado';
+      this.hasHeavyRifleEquipped = false;
     }
   }
 
@@ -119,6 +133,73 @@ export class NinjaPlayer extends Phaser.Physics.Arcade.Sprite {
       if (this.comboWindowTimer <= 0 && this.state !== NinjaState.Attack) {
         this.comboStep = 0;
       }
+    }
+
+    // Lógica de disparo con pistolas a una mano (pistol_shoot - 4 frames)
+    // Permite disparar caminando (velocidad de caminar, no correr) y orienta según dirección
+    if (this.isPistolShooting) {
+      this.pistolShootTimer -= delta;
+
+      const moveDir = input.left && !input.right ? -1 : input.right && !input.left ? 1 : 0;
+      if (moveDir !== 0) {
+        this.facing = moveDir > 0 ? 'right' : 'left';
+        this.setVelocityX(moveDir * NINJA_CONFIG.WALK_SPEED * this.speedMultiplier);
+      } else {
+        this.setVelocityX(0);
+      }
+      this.setFlipX(this.facing === 'left');
+
+      if (this.anims?.animationManager?.exists('pistol_shoot') && this.anims.currentAnim?.key !== 'pistol_shoot') {
+        this.anims.play('pistol_shoot', true);
+      }
+
+      if (this.pistolShootTimer <= 0) {
+        this.isPistolShooting = false;
+        if (moveDir !== 0 && onFloor) {
+          this.state = NinjaState.Walk;
+          if (this.anims?.animationManager?.exists('ninja_walk')) {
+            this.anims.play('ninja_walk', true);
+          }
+        } else {
+          this.state = onFloor ? NinjaState.Idle : NinjaState.Fall;
+          this.anims?.stop();
+          this.setTexture('ninja_sprite');
+        }
+      }
+      return;
+    }
+
+    // Lógica de disparo con rifles/escopetas a dos manos (rifle_shoot - 4 frames con retroceso en frame 3)
+    if (this.isRifleShooting) {
+      this.rifleShootTimer -= delta;
+
+      const moveDir = input.left && !input.right ? -1 : input.right && !input.left ? 1 : 0;
+      if (moveDir !== 0) {
+        this.facing = moveDir > 0 ? 'right' : 'left';
+        this.setVelocityX(moveDir * NINJA_CONFIG.WALK_SPEED * 0.82 * this.speedMultiplier);
+      } else {
+        this.setVelocityX(0);
+      }
+      this.setFlipX(this.facing === 'left');
+
+      if (this.anims?.animationManager?.exists('rifle_shoot') && this.anims.currentAnim?.key !== 'rifle_shoot') {
+        this.anims.play('rifle_shoot', true);
+      }
+
+      if (this.rifleShootTimer <= 0) {
+        this.isRifleShooting = false;
+        if (moveDir !== 0 && onFloor) {
+          this.state = NinjaState.Walk;
+          if (this.anims?.animationManager?.exists('ninja_walk')) {
+            this.anims.play('ninja_walk', true);
+          }
+        } else {
+          this.state = onFloor ? NinjaState.Idle : NinjaState.Fall;
+          this.anims?.stop();
+          this.setTexture('ninja_sprite');
+        }
+      }
+      return;
     }
 
     // Lógica de ataque melee / arma a una mano / arma a dos manos Ninja (One-Shot, bloqueo de movimiento)
@@ -170,9 +251,44 @@ export class NinjaPlayer extends Phaser.Physics.Arcade.Sprite {
 
     // Iniciar ataque Ninja si se presiona la tecla de ataque (N) en el suelo
     if (input.meleePressed && onFloor && this.state !== NinjaState.Roll) {
-      this.state = NinjaState.Attack;
       const isTwoHand = this.currentWeapon && isTwoHandWeapon(this.currentWeapon as WeaponType);
+      const isRifle = this.currentWeapon && isRifleWeapon(this.currentWeapon as WeaponType);
+      const isPistol = this.currentWeapon && isPistolWeapon(this.currentWeapon as WeaponType);
       const isOneHand = this.currentWeapon && isOneHandWeapon(this.currentWeapon as WeaponType);
+
+      if (isRifle) {
+        // Ataque a dos manos (Rifles/Escopetas): animación rifle_shoot de 4 frames
+        this.isRifleShooting = true;
+        this.rifleShootTimer = 340;
+        const moveDir = input.left && !input.right ? -1 : input.right && !input.left ? 1 : 0;
+        if (moveDir !== 0) {
+          this.facing = moveDir > 0 ? 'right' : 'left';
+          this.setVelocityX(moveDir * NINJA_CONFIG.WALK_SPEED * 0.82 * this.speedMultiplier);
+        }
+        this.setFlipX(this.facing === 'left');
+        if (this.anims?.animationManager?.exists('rifle_shoot')) {
+          this.anims.play('rifle_shoot', true);
+        }
+        return;
+      }
+
+      if (isPistol) {
+        // Ataque a una mano (Pistolas): animación pistol_shoot de 4 frames
+        this.isPistolShooting = true;
+        this.pistolShootTimer = 330;
+        const moveDir = input.left && !input.right ? -1 : input.right && !input.left ? 1 : 0;
+        if (moveDir !== 0) {
+          this.facing = moveDir > 0 ? 'right' : 'left';
+          this.setVelocityX(moveDir * NINJA_CONFIG.WALK_SPEED * this.speedMultiplier);
+        }
+        this.setFlipX(this.facing === 'left');
+        if (this.anims?.animationManager?.exists('pistol_shoot')) {
+          this.anims.play('pistol_shoot', true);
+        }
+        return;
+      }
+
+      this.state = NinjaState.Attack;
 
       if (isTwoHand) {
         // Ataque a dos manos (Golpe pesado): One Shot, más lento (450ms) y contundente
@@ -299,7 +415,7 @@ export class NinjaPlayer extends Phaser.Physics.Arcade.Sprite {
               this.setVelocityX(moveDir * NINJA_CONFIG.INITIAL_WALK_SPEED * this.speedMultiplier);
             }
             const currentSpeed = Math.abs(this.body?.velocity.x ?? 0);
-            const targetSpeed = NINJA_CONFIG.RUN_SPEED * this.speedMultiplier;
+            const targetSpeed = (this.hasHeavyRifleEquipped ? NINJA_CONFIG.WALK_SPEED * 0.82 : NINJA_CONFIG.RUN_SPEED) * this.speedMultiplier;
             const nextSpeed = Math.min(targetSpeed, currentSpeed + NINJA_CONFIG.ACCELERATION * dt);
             this.setVelocityX(moveDir * nextSpeed);
           }
@@ -342,7 +458,7 @@ export class NinjaPlayer extends Phaser.Physics.Arcade.Sprite {
           }
         }
       } else if (currentSpeed > 10) {
-        if (currentSpeed >= runThreshold) {
+        if (!this.hasHeavyRifleEquipped && currentSpeed >= runThreshold) {
           this.state = NinjaState.Run;
           // Reproducir animación 'ninja_run' de 6 fotogramas
           if (this.anims?.animationManager?.exists('ninja_run')) {

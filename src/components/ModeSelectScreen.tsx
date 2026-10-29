@@ -1,11 +1,13 @@
 // =============================================================
-// ModeSelectScreen.tsx — Pantalla de selección de modo de juego
-// Contra el Bot (1J) o 1 vs 1 Local (2J en el mismo teclado)
+// ModeSelectScreen.tsx — Selección de Modo de Juego Retro Superfighters
+// Estética Arcade minimalista: cajas rectangulares oscuras con bordes
+// blancos sólidos, resaltado amarillo, tipografía pixelada en mayúsculas,
+// fondo técnico industrial con rejilla, y navegación completa con teclado.
 // =============================================================
 
-import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Bot, Users, CheckCircle2, Keyboard, ShieldAlert, Play } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { sounds } from '../game/SoundEffects';
+import { Volume2, VolumeX, Swords } from 'lucide-react';
 
 export type GameMode = 'vsBot' | 'local1v1';
 
@@ -22,206 +24,247 @@ export const ModeSelectScreen: React.FC<ModeSelectScreenProps> = ({
   onConfirmMode,
   onBackToLanding,
 }) => {
-  const [isTouchDevice, setIsTouchDevice] = useState<boolean>(false);
+  const [muted, setMuted] = useState<boolean>(sounds.getMuted());
 
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const isCoarse = window.matchMedia('(pointer: coarse)').matches;
-      setIsTouchDevice(isCoarse);
-    }
-  }, []);
-
-  const handleModeClick = (mode: GameMode) => {
-    if (mode === 'local1v1' && isTouchDevice) return;
-    sounds.playPickup();
-    onSelectMode(mode);
-    onConfirmMode();
+  const toggleSound = () => {
+    const next = !muted;
+    sounds.setMuted(next);
+    setMuted(next);
   };
 
-  return (
-    <div className="relative w-full h-screen flex flex-col justify-between items-center bg-neutral-950 text-neutral-100 overflow-y-auto p-4 select-none">
-      {/* Fondo ambiental */}
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-sky-950/40 via-neutral-950 to-neutral-950 -z-10 pointer-events-none" />
+  const handleSelect = useCallback((mode: GameMode) => {
+    sounds.playPickup();
+    onSelectMode(mode);
+  }, [onSelectMode]);
 
-      {/* Barra superior con botón Volver */}
-      <div className="w-full max-w-4xl flex items-center justify-between mb-2 px-1">
+  const handleConfirm = useCallback(() => {
+    sounds.playPickup();
+    onConfirmMode();
+  }, [onConfirmMode]);
+
+  // Navegación con teclado estilo Arcade clásico (Flechas, Enter/Espacio, ESC)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const key = e.key;
+
+      if (key === 'Escape') {
+        e.preventDefault();
+        sounds.playPickup();
+        onBackToLanding();
+        return;
+      }
+
+      if (key === ' ' || key === 'Enter') {
+        e.preventDefault();
+        handleConfirm();
+        return;
+      }
+
+      if (key === 'ArrowUp' || key === 'ArrowLeft' || key === 'w' || key === 'W' || key === 'a' || key === 'A') {
+        e.preventDefault();
+        handleSelect('vsBot');
+      } else if (key === 'ArrowDown' || key === 'ArrowRight' || key === 's' || key === 'S' || key === 'd' || key === 'D') {
+        e.preventDefault();
+        handleSelect('local1v1');
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleSelect, handleConfirm, onBackToLanding]);
+
+  return (
+    <div className="relative w-full h-full max-h-screen flex flex-col justify-between items-center bg-black text-white font-pixel overflow-hidden p-3 select-none">
+      {/* ── FONDO PLANO TÉCNICO / BLUEPRINT INDUSTRIAL AZUL SUPERFIGHTERS ── */}
+      <div
+        className="absolute inset-0 pointer-events-none -z-20 opacity-30"
+        style={{
+          backgroundImage: `
+            linear-gradient(to right, rgba(37, 99, 235, 0.28) 1px, transparent 1px),
+            linear-gradient(to bottom, rgba(37, 99, 235, 0.28) 1px, transparent 1px)
+          `,
+          backgroundSize: '32px 32px',
+        }}
+      />
+      {/* Resplandor radial oscuro en los bordes */}
+      <div className="absolute inset-0 pointer-events-none -z-10 bg-[radial-gradient(circle_at_center,rgba(29,78,216,0.18)_0%,rgba(0,0,0,0.92)_78%)]" />
+
+      {/* ── BARRA SUPERIOR ── */}
+      <header className="w-full max-w-4xl flex items-center justify-between px-2 pt-1 pb-1 shrink-0">
         <button
           onClick={() => {
             sounds.playPickup();
             onBackToLanding();
           }}
-          className="flex items-center gap-1.5 px-4 min-h-[48px] bg-neutral-900/90 hover:bg-neutral-800 border border-neutral-800 hover:border-neutral-700 rounded-xl text-xs sm:text-sm font-bold text-neutral-300 hover:text-white transition shadow-sm cursor-pointer touch-manipulation"
-          title="Volver a la portada"
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-black border-2 border-white hover:bg-white hover:text-black transition text-[10px] cursor-pointer"
+          title="Volver a la portada (ESC)"
         >
-          <ArrowLeft className="w-4 h-4 text-cyan-400" />
-          <span>Volver</span>
+          <span>[ESC] BACK</span>
         </button>
 
-        <span className="text-xs font-mono-code text-neutral-500">
-          superN • Modo de Juego
-        </span>
-      </div>
-
-      {/* Encabezado */}
-      <div className="text-center my-3">
-        <h1 className="text-3xl sm:text-4xl md:text-5xl font-black tracking-tight bg-gradient-to-r from-sky-400 via-cyan-200 to-emerald-300 bg-clip-text text-transparent drop-shadow-[0_0_20px_rgba(6,182,212,0.4)]">
-          ELIGE CÓMO JUGAR
-        </h1>
-        <p className="mt-1.5 text-xs sm:text-sm text-neutral-400 tracking-wide font-medium">
-          Selecciona tu experiencia de combate: individual contra IA o duelo en el mismo teclado
-        </p>
-      </div>
-
-      {/* Grilla con 2 tarjetas de modo */}
-      <div className="w-full max-w-4xl grid grid-cols-1 md:grid-cols-2 gap-5 my-auto py-2">
-        {/* Modo 1: Contra el Bot */}
-        <div
-          onClick={() => handleModeClick('vsBot')}
-          className={`relative flex flex-col justify-between rounded-2xl border transition-all duration-200 cursor-pointer overflow-hidden p-6 group touch-manipulation ${
-            selectedMode === 'vsBot'
-              ? 'bg-neutral-900/90 border-cyan-400 ring-2 ring-cyan-500/50 shadow-[0_0_30px_rgba(6,182,212,0.35)] -translate-y-1'
-              : 'bg-neutral-900/70 border-neutral-800 hover:border-neutral-700 hover:bg-neutral-900/90 hover:-translate-y-0.5'
-          }`}
-        >
-          {selectedMode === 'vsBot' && (
-            <div className="absolute top-4 right-4 z-10 bg-cyan-500 text-neutral-950 rounded-full p-1 shadow-lg animate-bounce-short">
-              <CheckCircle2 className="w-5 h-5 stroke-[2.5]" />
-            </div>
-          )}
-
-          <div>
-            <div className="w-14 h-14 rounded-2xl bg-cyan-950/80 border border-cyan-500/30 flex items-center justify-center mb-4 text-cyan-400 group-hover:scale-105 transition-transform shadow-[0_0_20px_rgba(6,182,212,0.2)]">
-              <Bot className="w-7 h-7" />
-            </div>
-
-            <h3 className="text-xl sm:text-2xl font-black text-white group-hover:text-cyan-300 transition-colors mb-2">
-              Contra el Bot
-            </h3>
-
-            <p className="text-xs sm:text-sm text-neutral-400 leading-relaxed mb-4">
-              Enfréntate a la IA táctica con múltiples arquetipos y estilos de combate en duelos multironda.
-            </p>
+        {/* Título superN */}
+        <div className="text-center">
+          <div className="border-t-2 border-b-2 border-white py-0.5 px-6 tracking-[0.25em] text-lg sm:text-2xl font-black text-white drop-shadow-[0_2px_4px_rgba(255,255,255,0.25)]">
+            super<span className="text-red-500">N</span>
           </div>
-
-          <div className="space-y-2 pt-3 border-t border-neutral-800/80">
-            <span className="text-[11px] font-mono-code font-bold uppercase text-neutral-400 block">
-              Controles J1:
-            </span>
-            <div className="flex flex-wrap gap-1.5 text-[11px] font-mono-code">
-              <span className="px-2 py-1 rounded-md bg-neutral-950 border border-neutral-800 text-cyan-300">
-                WASD / Flechas
-              </span>
-              <span className="px-2 py-1 rounded-md bg-neutral-950 border border-neutral-800 text-cyan-300">
-                N / J: Melee
-              </span>
-              <span className="px-2 py-1 rounded-md bg-neutral-950 border border-neutral-800 text-cyan-300">
-                M / K: Disparo
-              </span>
-              <span className="px-2 py-1 rounded-md bg-neutral-950 border border-neutral-800 text-cyan-300">
-                G: Granada
-              </span>
-            </div>
+          <div className="text-[8px] text-blue-400 tracking-[0.3em] mt-0.5 font-bold uppercase">
+            GAME MODE SELECT
           </div>
         </div>
 
-        {/* Modo 2: 1 vs 1 Local */}
-        <div
-          onClick={() => handleModeClick('local1v1')}
-          className={`relative flex flex-col justify-between rounded-2xl border transition-all duration-200 overflow-hidden p-6 group ${
-            isTouchDevice
-              ? 'bg-neutral-950/60 border-neutral-900 opacity-60 cursor-not-allowed'
-              : selectedMode === 'local1v1'
-              ? 'bg-neutral-900/90 border-cyan-400 ring-2 ring-cyan-500/50 shadow-[0_0_30px_rgba(6,182,212,0.35)] -translate-y-1 cursor-pointer touch-manipulation'
-              : 'bg-neutral-900/70 border-neutral-800 hover:border-neutral-700 hover:bg-neutral-900/90 hover:-translate-y-0.5 cursor-pointer touch-manipulation'
-          }`}
-        >
-          {selectedMode === 'local1v1' && !isTouchDevice && (
-            <div className="absolute top-4 right-4 z-10 bg-cyan-500 text-neutral-950 rounded-full p-1 shadow-lg animate-bounce-short">
-              <CheckCircle2 className="w-5 h-5 stroke-[2.5]" />
-            </div>
-          )}
-
-          <div>
-            <div className="w-14 h-14 rounded-2xl bg-amber-950/80 border border-amber-500/30 flex items-center justify-center mb-4 text-amber-400 group-hover:scale-105 transition-transform shadow-[0_0_20px_rgba(245,158,11,0.2)]">
-              <Users className="w-7 h-7" />
-            </div>
-
-            <div className="flex items-center gap-2 mb-2">
-              <h3 className="text-xl sm:text-2xl font-black text-white group-hover:text-amber-300 transition-colors">
-                1 vs 1 Local
-              </h3>
-              {isTouchDevice && (
-                <span className="px-2 py-0.5 rounded bg-rose-950/80 border border-rose-800 text-[10px] font-mono-code font-bold text-rose-300 flex items-center gap-1">
-                  <ShieldAlert className="w-3 h-3" />
-                  Requiere teclado
-                </span>
-              )}
-            </div>
-
-            <p className="text-xs sm:text-sm text-neutral-400 leading-relaxed mb-4">
-              Dos jugadores cara a cara compartiendo el mismo teclado. Ambos eligen sus combatientes y se enfrentan en la arena.
-            </p>
-          </div>
-
-          <div className="space-y-2 pt-3 border-t border-neutral-800/80">
-            <span className="text-[11px] font-mono-code font-bold uppercase text-neutral-400 block">
-              Controles Compartidos:
-            </span>
-            <div className="space-y-1.5 text-[11px] font-mono-code">
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <span className="text-cyan-400 font-bold">J1:</span>
-                <span className="px-1.5 py-0.5 rounded bg-neutral-950 border border-neutral-800 text-neutral-300">
-                  Flechas
-                </span>
-                <span className="px-1.5 py-0.5 rounded bg-neutral-950 border border-neutral-800 text-neutral-300">
-                  N (Melee)
-                </span>
-                <span className="px-1.5 py-0.5 rounded bg-neutral-950 border border-neutral-800 text-neutral-300">
-                  M (Tiro)
-                </span>
-                <span className="px-1.5 py-0.5 rounded bg-neutral-950 border border-neutral-800 text-neutral-300">
-                  , (Granada)
-                </span>
-                <span className="px-1.5 py-0.5 rounded bg-neutral-950 border border-neutral-800 text-neutral-300">
-                  . (Correr)
-                </span>
-              </div>
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <span className="text-amber-400 font-bold">J2:</span>
-                <span className="px-1.5 py-0.5 rounded bg-neutral-950 border border-neutral-800 text-neutral-300">
-                  WASD
-                </span>
-                <span className="px-1.5 py-0.5 rounded bg-neutral-950 border border-neutral-800 text-neutral-300">
-                  J (Melee)
-                </span>
-                <span className="px-1.5 py-0.5 rounded bg-neutral-950 border border-neutral-800 text-neutral-300">
-                  K (Tiro)
-                </span>
-                <span className="px-1.5 py-0.5 rounded bg-neutral-950 border border-neutral-800 text-neutral-300">
-                  L (Granada)
-                </span>
-                <span className="px-1.5 py-0.5 rounded bg-neutral-950 border border-neutral-800 text-neutral-300">
-                  Q (Correr)
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Botón inferior Continuar */}
-      <div className="w-full max-w-4xl mt-3 flex justify-center">
         <button
-          onClick={() => {
-            sounds.playPickup();
-            onConfirmMode();
-          }}
-          className="w-full max-w-sm min-h-[48px] h-12 sm:h-14 py-3.5 px-8 bg-gradient-to-r from-cyan-500 via-sky-400 to-emerald-400 hover:from-cyan-400 hover:to-emerald-300 text-neutral-950 font-black text-sm sm:text-base tracking-widest uppercase rounded-xl shadow-[0_0_20px_rgba(6,182,212,0.35)] hover:shadow-[0_0_30px_rgba(6,182,212,0.6)] transition-all duration-200 transform hover:-translate-y-0.5 active:translate-y-0 flex items-center justify-center gap-2 cursor-pointer touch-manipulation"
+          onClick={toggleSound}
+          className="p-1.5 bg-black border-2 border-white hover:bg-white hover:text-black transition text-white cursor-pointer"
+          title={muted ? 'Activar sonido' : 'Silenciar'}
         >
-          <span>CONTINUAR A LA SELECCIÓN</span>
-          <Play className="w-4 h-4 fill-current shrink-0" />
+          {muted ? <VolumeX className="w-3.5 h-3.5 text-red-400" /> : <Volume2 className="w-3.5 h-3.5 text-green-400" />}
         </button>
-      </div>
+      </header>
+
+      {/* ── CUERPO PRINCIPAL: TÍTULO Y CAJAS RECTANGULARES DE SELECCIÓN ── */}
+      <main className="w-full max-w-4xl flex-1 flex flex-col justify-center items-center py-2 px-1 min-h-0">
+        {/* Título de sección rudimentario en mayúsculas */}
+        <div className="mb-4 text-center">
+          <div className="text-xs sm:text-sm font-black tracking-widest text-white uppercase border-b-2 border-white/60 pb-1 inline-block">
+            ELIGE CÓMO JUGAR
+          </div>
+          <div className="text-[8px] text-neutral-400 tracking-wider mt-1 uppercase">
+            USA LAS FLECHAS ◄ ► ▲ ▼ PARA SELECCIONAR
+          </div>
+        </div>
+
+        {/* Cajas Rectangulares de los 2 Modos */}
+        <div className="w-full max-w-2xl grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+          {/* MODO 1: CONTRA EL BOT (1 PLAYER) */}
+          <div
+            onClick={() => handleSelect('vsBot')}
+            onDoubleClick={handleConfirm}
+            className={`bg-[#0a0a0f] border-2 p-4 flex flex-col justify-between transition cursor-pointer text-left ${
+              selectedMode === 'vsBot'
+                ? 'border-yellow-400 shadow-[0_0_18px_rgba(250,204,21,0.45)] ring-1 ring-yellow-400'
+                : 'border-white hover:border-neutral-300'
+            }`}
+          >
+            <div>
+              {/* Indicador flecha clásica */}
+              <div className="flex items-center justify-between border-b border-white/20 pb-2 mb-3">
+                <span className={`text-xs font-black tracking-wider ${
+                  selectedMode === 'vsBot' ? 'text-yellow-300' : 'text-white'
+                }`}>
+                  {selectedMode === 'vsBot' ? '> 1 PLAYER' : '  1 PLAYER'}
+                </span>
+                <span className="text-[8px] border border-neutral-600 px-1 py-0.5 text-neutral-400">
+                  SOLO
+                </span>
+              </div>
+
+              <div className="text-sm font-black text-white tracking-wide mb-2 uppercase">
+                CONTRA EL BOT
+              </div>
+
+              <p className="text-[9px] text-neutral-400 leading-relaxed uppercase mb-3">
+                DUELO INDIVIDUAL CONTRA LA IA TÁCTICA. ENFRÉNTATE A LOS 15 BOTS CANÓNICOS O RIVAL RANDOM.
+              </p>
+            </div>
+
+            <div className="border-t border-white/20 pt-2 flex items-center justify-between text-[8px] text-neutral-400">
+              <span>PROTAGONISTA: NINJA</span>
+              <span className={`font-bold ${selectedMode === 'vsBot' ? 'text-yellow-300' : 'text-neutral-500'}`}>
+                {selectedMode === 'vsBot' ? '[ SELECCIONADO ]' : '[ SELECCIONAR ]'}
+              </span>
+            </div>
+          </div>
+
+          {/* MODO 2: 1 VS 1 LOCAL (2 PLAYERS) */}
+          <div
+            onClick={() => handleSelect('local1v1')}
+            onDoubleClick={handleConfirm}
+            className={`bg-[#0a0a0f] border-2 p-4 flex flex-col justify-between transition cursor-pointer text-left ${
+              selectedMode === 'local1v1'
+                ? 'border-yellow-400 shadow-[0_0_18px_rgba(250,204,21,0.45)] ring-1 ring-yellow-400'
+                : 'border-white hover:border-neutral-300'
+            }`}
+          >
+            <div>
+              {/* Indicador flecha clásica */}
+              <div className="flex items-center justify-between border-b border-white/20 pb-2 mb-3">
+                <span className={`text-xs font-black tracking-wider ${
+                  selectedMode === 'local1v1' ? 'text-yellow-300' : 'text-white'
+                }`}>
+                  {selectedMode === 'local1v1' ? '> 2 PLAYERS' : '  2 PLAYERS'}
+                </span>
+                <span className="text-[8px] border border-neutral-600 px-1 py-0.5 text-neutral-400">
+                  VERSUS
+                </span>
+              </div>
+
+              <div className="text-sm font-black text-white tracking-wide mb-2 uppercase">
+                1 VS 1 LOCAL
+              </div>
+
+              <p className="text-[9px] text-neutral-400 leading-relaxed uppercase mb-3">
+                DOS JUGADORES COMPARTIENDO EL MISMO TECLADO FÍSICO. DUELO CARA A CARA DE NINJAS.
+              </p>
+            </div>
+
+            <div className="border-t border-white/20 pt-2 flex items-center justify-between text-[8px] text-neutral-400">
+              <span>DUELO EN TECLADO</span>
+              <span className={`font-bold ${selectedMode === 'local1v1' ? 'text-yellow-300' : 'text-neutral-500'}`}>
+                {selectedMode === 'local1v1' ? '[ SELECCIONADO ]' : '[ SELECCIONAR ]'}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Botón de Confirmación Principal */}
+        <button
+          onClick={handleConfirm}
+          className="px-6 py-2.5 bg-black border-2 border-white hover:bg-white hover:text-black transition uppercase text-xs sm:text-sm font-black tracking-[0.2em] cursor-pointer shadow-[0_0_12px_rgba(255,255,255,0.3)] active:scale-95"
+        >
+          <span>[ SPACE ] ACCEPT : SELECCIONAR MODO ➔</span>
+        </button>
+
+        {/* ── CUADRO DE CONTROLES (BOTTOM) EN FORMA DE LISTA DE TEXTO SIMPLE ── */}
+        <div className="w-full max-w-2xl bg-black border-2 border-white/80 p-2.5 mt-3 text-left">
+          <div className="text-[9px] font-black text-yellow-300 tracking-widest uppercase mb-1.5 border-b border-white/20 pb-1">
+            CONTROLES DE COMBATE:
+          </div>
+          <div className="space-y-1 text-[8px] sm:text-[9px] font-mono-code text-neutral-200 uppercase leading-relaxed">
+            <div>
+              <strong className="text-cyan-400 font-pixel">J1:</strong> WASD - N (MELEE) - M (DISPARO) - G (GRANADA)
+            </div>
+            <div>
+              <strong className="text-amber-400 font-pixel">J2:</strong> FLECHAS - J (MELEE) - K (DISPARO) - L (GRANADA)
+            </div>
+          </div>
+        </div>
+      </main>
+
+      {/* ── BARRA INFERIOR DE NAVEGACIÓN Y TECLAS (IMAGEN DE REFERENCIA) ── */}
+      <footer className="w-full max-w-4xl border-t-2 border-white/60 pt-2 pb-1 px-2 flex flex-wrap items-center justify-between gap-3 text-[9px] text-neutral-300 shrink-0">
+        <div className="flex items-center gap-2">
+          <span className="border border-yellow-400 bg-black text-yellow-300 px-1.5 py-0.5 font-black">
+            ◄ ► ▲ ▼
+          </span>
+          <span className="tracking-widest uppercase">NAVIGATE</span>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <span className="border border-yellow-400 bg-black text-yellow-300 px-1.5 py-0.5 font-black">
+            SPACE
+          </span>
+          <span className="tracking-widest uppercase">ACCEPT</span>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <span className="border border-yellow-400 bg-black text-yellow-300 px-1.5 py-0.5 font-black">
+            ESC
+          </span>
+          <span className="tracking-widest uppercase">BACK</span>
+        </div>
+      </footer>
     </div>
   );
 };
+
+export default ModeSelectScreen;

@@ -52,6 +52,19 @@ export const App: React.FC = () => {
     transitionTo('world');
   };
 
+  const handleStartFightWithConfig = (
+    player: BotFaction,
+    bot: BotFaction,
+    worldId: string,
+    numRounds: number
+  ) => {
+    setPlayerFaction(player);
+    setBotFaction(bot);
+    setSelectedWorldId(worldId);
+    setRounds(numRounds);
+    transitionTo('arena');
+  };
+
   const handleBackToSelect = () => {
     transitionTo('select');
   };
@@ -63,7 +76,7 @@ export const App: React.FC = () => {
   };
 
   const handleExitToWorldSelect = () => {
-    transitionTo('world');
+    transitionTo('select');
   };
 
   const handleOpenArsenal = () => {
@@ -95,7 +108,7 @@ export const App: React.FC = () => {
             onConfirmMode={handleConfirmMode}
             onBackToLanding={handleBackToLanding}
           />
-        ) : screen === 'select' ? (
+        ) : screen === 'select' || screen === 'world' ? (
           <MainMenu
             gameMode={gameMode}
             selectedPlayerFaction={playerFaction}
@@ -105,18 +118,10 @@ export const App: React.FC = () => {
             rounds={rounds}
             onSelectRounds={setRounds}
             onGoToWorldSelect={handleGoToWorldSelect}
+            onStartFightWithConfig={handleStartFightWithConfig}
+            initialShowMatchSetup={screen === 'world'}
             onOpenArsenal={handleOpenArsenal}
             onBackToLanding={handleBackToMode}
-          />
-        ) : screen === 'world' ? (
-          <WorldSelectScreen
-            selectedWorldId={selectedWorldId}
-            onSelectWorld={setSelectedWorldId}
-            onStartGame={handleStartArena}
-            onBackToSelect={handleBackToSelect}
-            playerFactionName={pArch.name}
-            botFactionName={bArch.name}
-            rounds={rounds}
           />
         ) : (
           <ArenaCanvas

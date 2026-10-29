@@ -1551,6 +1551,25 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       const bot = s.bot;
       const keys = s.keys;
 
+      // Destello blanco de golpe (Hit Flash Feedback)
+      if (p1.hitFlashTicks > 0) p1.hitFlashTicks--;
+      if (bot.hitFlashTicks > 0) bot.hitFlashTicks--;
+
+      // Detección reactiva de daño para destello inmediato y partículas de impacto
+      if ((p1 as any)._prevHealth !== undefined && p1.health < (p1 as any)._prevHealth) {
+        p1.hitFlashTicks = 5;
+        addSparks(p1.x, p1.y, '#ffffff', 8);
+        addSparks(p1.x, p1.y, '#38bdf8', 6);
+      }
+      (p1 as any)._prevHealth = p1.health;
+
+      if ((bot as any)._prevHealth !== undefined && bot.health < (bot as any)._prevHealth) {
+        bot.hitFlashTicks = 5;
+        addSparks(bot.x, bot.y, '#ffffff', 8);
+        addSparks(bot.x, bot.y, '#f87171', 6);
+      }
+      (bot as any)._prevHealth = bot.health;
+
       // Anuncios
       if (s.announcementTicks > 0) {
         s.announcementTicks--;
@@ -1969,8 +1988,46 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           !p1.isGrappling &&
           !p1.isThrowing
         ) {
-          // ── PRIORIDAD ABSOLUTA: COMBATE CON ESPADA EXCLUSIVO DEL NINJA ──
-          if (isSwordWeapon(p1.equippedWeapon)) {
+          // ── PRIORIDAD OFICIAL: ARMAS DE AGARRE A UNA MANO (one_hand_attack - 5 frames) ──
+          if (isOneHandWeapon(p1.equippedWeapon)) {
+            // Ataque a una mano: animación One Shot de 5 frames rápida
+            if (!p1.isOneHandAttacking) {
+              p1.isOneHandAttacking = true;
+              p1.oneHandAnimFrame = 0;
+              p1.oneHandAnimTimer = 0;
+              p1.oneHandHasHit = false;
+
+              p1.velocityX = 0;
+              s.p1Controller.vx = 0;
+              s.p1Controller.state = ControllerState.Idle;
+              PlayerFSM.tryTransition(p1, PlayerFSMState.MeleeAttack);
+
+              if (isBladeWeapon(p1.equippedWeapon)) {
+                sounds.playSwordSwing();
+              } else {
+                sounds.playPunch();
+              }
+            }
+          } else if (isTwoHandWeapon(p1.equippedWeapon)) {
+            // Ataque a dos manos (Golpe pesado): animación One Shot de 6 frames, más lenta y pesada
+            if (!p1.isTwoHandAttacking) {
+              p1.isTwoHandAttacking = true;
+              p1.twoHandAnimFrame = 0;
+              p1.twoHandAnimTimer = 0;
+              p1.twoHandHasHit = false;
+
+              p1.velocityX = 0;
+              s.p1Controller.vx = 0;
+              s.p1Controller.state = ControllerState.Idle;
+              PlayerFSM.tryTransition(p1, PlayerFSMState.MeleeAttack);
+
+              if (isBladeWeapon(p1.equippedWeapon)) {
+                sounds.playSwordSwing();
+              } else {
+                sounds.playPunch();
+              }
+            }
+          } else if (isSwordWeapon(p1.equippedWeapon)) {
             if (p1.isSwordAttacking) {
               if ((p1.swordComboStep || 0) < 2) {
                 p1.swordComboBuffered = true;
@@ -2008,44 +2065,6 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
               PlayerFSM.tryTransition(p1, PlayerFSMState.MeleeAttack);
 
               sounds.playSwordSwing();
-            }
-          } else if (isTwoHandWeapon(p1.equippedWeapon)) {
-            // Ataque a dos manos (Golpe pesado): animación One Shot de 6 frames, más lenta y pesada
-            if (!p1.isTwoHandAttacking) {
-              p1.isTwoHandAttacking = true;
-              p1.twoHandAnimFrame = 0;
-              p1.twoHandAnimTimer = 0;
-              p1.twoHandHasHit = false;
-
-              p1.velocityX = 0;
-              s.p1Controller.vx = 0;
-              s.p1Controller.state = ControllerState.Idle;
-              PlayerFSM.tryTransition(p1, PlayerFSMState.MeleeAttack);
-
-              if (isBladeWeapon(p1.equippedWeapon)) {
-                sounds.playSwordSwing();
-              } else {
-                sounds.playPunch();
-              }
-            }
-          } else if (isOneHandWeapon(p1.equippedWeapon)) {
-            // Ataque a una mano: animación One Shot de 5 frames rápida
-            if (!p1.isOneHandAttacking) {
-              p1.isOneHandAttacking = true;
-              p1.oneHandAnimFrame = 0;
-              p1.oneHandAnimTimer = 0;
-              p1.oneHandHasHit = false;
-
-              p1.velocityX = 0;
-              s.p1Controller.vx = 0;
-              s.p1Controller.state = ControllerState.Idle;
-              PlayerFSM.tryTransition(p1, PlayerFSMState.MeleeAttack);
-
-              if (isBladeWeapon(p1.equippedWeapon)) {
-                sounds.playSwordSwing();
-              } else {
-                sounds.playPunch();
-              }
             }
           } else {
             // Sistema de combo melee desarmado (Puños / Golpes cuerpo a cuerpo)
@@ -3607,7 +3626,43 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             !bot.isGrappling &&
             !bot.isThrowing
           ) {
-            if (isSwordWeapon(bot.equippedWeapon)) {
+            if (isOneHand) {
+              if (!bot.isOneHandAttacking) {
+                bot.isOneHandAttacking = true;
+                bot.oneHandAnimFrame = 0;
+                bot.oneHandAnimTimer = 0;
+                bot.oneHandHasHit = false;
+
+                bot.velocityX = 0;
+                s.p2Controller.vx = 0;
+                s.p2Controller.state = ControllerState.Idle;
+                PlayerFSM.tryTransition(bot, PlayerFSMState.MeleeAttack);
+
+                if (isBladeWeapon(bot.equippedWeapon)) {
+                  sounds.playSwordSwing();
+                } else {
+                  sounds.playPunch();
+                }
+              }
+            } else if (isTwoHand) {
+              if (!bot.isTwoHandAttacking) {
+                bot.isTwoHandAttacking = true;
+                bot.twoHandAnimFrame = 0;
+                bot.twoHandAnimTimer = 0;
+                bot.twoHandHasHit = false;
+
+                bot.velocityX = 0;
+                s.p2Controller.vx = 0;
+                s.p2Controller.state = ControllerState.Idle;
+                PlayerFSM.tryTransition(bot, PlayerFSMState.MeleeAttack);
+
+                if (isBladeWeapon(bot.equippedWeapon)) {
+                  sounds.playSwordSwing();
+                } else {
+                  sounds.playPunch();
+                }
+              }
+            } else if (isSwordWeapon(bot.equippedWeapon)) {
               if (bot.isSwordAttacking) {
                 if ((bot.swordComboStep || 0) < 2) {
                   bot.swordComboBuffered = true;
@@ -3645,42 +3700,6 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                 PlayerFSM.tryTransition(bot, PlayerFSMState.MeleeAttack);
 
                 sounds.playSwordSwing();
-              }
-            } else if (isTwoHand) {
-              if (!bot.isTwoHandAttacking) {
-                bot.isTwoHandAttacking = true;
-                bot.twoHandAnimFrame = 0;
-                bot.twoHandAnimTimer = 0;
-                bot.twoHandHasHit = false;
-
-                bot.velocityX = 0;
-                s.p2Controller.vx = 0;
-                s.p2Controller.state = ControllerState.Idle;
-                PlayerFSM.tryTransition(bot, PlayerFSMState.MeleeAttack);
-
-                if (isBladeWeapon(bot.equippedWeapon)) {
-                  sounds.playSwordSwing();
-                } else {
-                  sounds.playPunch();
-                }
-              }
-            } else if (isOneHand) {
-              if (!bot.isOneHandAttacking) {
-                bot.isOneHandAttacking = true;
-                bot.oneHandAnimFrame = 0;
-                bot.oneHandAnimTimer = 0;
-                bot.oneHandHasHit = false;
-
-                bot.velocityX = 0;
-                s.p2Controller.vx = 0;
-                s.p2Controller.state = ControllerState.Idle;
-                PlayerFSM.tryTransition(bot, PlayerFSMState.MeleeAttack);
-
-                if (isBladeWeapon(bot.equippedWeapon)) {
-                  sounds.playSwordSwing();
-                } else {
-                  sounds.playPunch();
-                }
               }
             } else {
               // Combo Melee desarmado J2 (3 golpes idénticos al protagonista)
@@ -5754,11 +5773,16 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           sounds.playPickup();
 
           // Lógica de Equipamiento: cambia el estado del personaje según el arma
+          const isOneHand = isOneHandWeapon(w.weaponType);
           const isThrowable = isThrowableWeapon(w.weaponType);
           const isRifle = isRifleWeapon(w.weaponType);
           const isTwoHand = isTwoHandWeapon(w.weaponType);
           const isPistol = isPistolWeapon(w.weaponType);
-          if (isThrowable) {
+          if (isOneHand) {
+            p1.characterState = 'arma_una_mano';
+            p1.weaponState = 'arma_una_mano';
+            s.p1Controller.hasHeavyRifleEquipped = false;
+          } else if (isThrowable) {
             p1.characterState = 'arrojadiza';
             p1.weaponState = 'arrojadiza';
             s.p1Controller.hasHeavyRifleEquipped = false;
@@ -5773,10 +5797,6 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           } else if (isPistol) {
             p1.characterState = 'arma_una_mano';
             p1.weaponState = 'pistola';
-            s.p1Controller.hasHeavyRifleEquipped = false;
-          } else if (isOneHandWeapon(w.weaponType)) {
-            p1.characterState = 'arma_una_mano';
-            p1.weaponState = 'arma_una_mano';
             s.p1Controller.hasHeavyRifleEquipped = false;
           } else {
             p1.characterState = 'desarmado';
@@ -5826,11 +5846,16 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           sounds.playPickup();
 
           // Lógica de Equipamiento J2 / Bot: cambia el estado del personaje según el arma
+          const isOneHand = isOneHandWeapon(w.weaponType);
           const isThrowable = isThrowableWeapon(w.weaponType);
           const isRifle = isRifleWeapon(w.weaponType);
           const isTwoHand = isTwoHandWeapon(w.weaponType);
           const isPistol = isPistolWeapon(w.weaponType);
-          if (isThrowable) {
+          if (isOneHand) {
+            bot.characterState = 'arma_una_mano';
+            bot.weaponState = 'arma_una_mano';
+            if (s.p2Controller) s.p2Controller.hasHeavyRifleEquipped = false;
+          } else if (isThrowable) {
             bot.characterState = 'arrojadiza';
             bot.weaponState = 'arrojadiza';
             if (s.p2Controller) s.p2Controller.hasHeavyRifleEquipped = false;
@@ -5845,10 +5870,6 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           } else if (isPistol) {
             bot.characterState = 'arma_una_mano';
             bot.weaponState = 'pistola';
-            if (s.p2Controller) s.p2Controller.hasHeavyRifleEquipped = false;
-          } else if (isOneHandWeapon(w.weaponType)) {
-            bot.characterState = 'arma_una_mano';
-            bot.weaponState = 'arma_una_mano';
             if (s.p2Controller) s.p2Controller.hasHeavyRifleEquipped = false;
           } else {
             bot.characterState = 'desarmado';
@@ -6394,17 +6415,60 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           ctx.stroke();
         }
       } else {
-        // Mundo clásico (Warehouse)
-        if (s.bgImage && s.bgImage.complete && s.bgImage.naturalWidth > 0) {
-          ctx.drawImage(s.bgImage, 0, 0, ARENA_WIDTH, ARENA_HEIGHT);
-        } else {
-          const grad = ctx.createLinearGradient(0, 0, 0, ARENA_HEIGHT);
-          grad.addColorStop(0, '#111827');
-          grad.addColorStop(0.7, '#1f2937');
-          grad.addColorStop(1, '#0f172a');
-          ctx.fillStyle = grad;
-          ctx.fillRect(0, 0, ARENA_WIDTH, ARENA_HEIGHT);
+        // Warehouse: Almacén industrial oscuro con ladrillos
+        const bgGrad = ctx.createLinearGradient(0, 0, 0, ARENA_HEIGHT);
+        bgGrad.addColorStop(0, '#0a0e17');
+        bgGrad.addColorStop(0.7, '#131b29');
+        bgGrad.addColorStop(1, '#1a2333');
+        ctx.fillStyle = bgGrad;
+        ctx.fillRect(0, 0, ARENA_WIDTH, ARENA_HEIGHT);
+
+        // Pared de ladrillos tenues
+        ctx.strokeStyle = '#1e293b';
+        ctx.lineWidth = 1;
+        for (let y = 0; y < ARENA_HEIGHT; y += 20) {
+          const isOffset = (y / 20) % 2 === 1;
+          for (let x = isOffset ? -20 : 0; x < ARENA_WIDTH; x += 40) {
+            ctx.strokeRect(x, y, 40, 20);
+          }
         }
+
+        // Lámparas colgantes
+        const drawLamp = (lx: number) => {
+          ctx.strokeStyle = '#475569';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.moveTo(lx, 0);
+          ctx.lineTo(lx, 70);
+          ctx.stroke();
+
+          // Campana de lámpara
+          ctx.fillStyle = '#334155';
+          ctx.beginPath();
+          ctx.moveTo(lx - 12, 85);
+          ctx.lineTo(lx + 12, 85);
+          ctx.lineTo(lx + 6, 70);
+          ctx.lineTo(lx - 6, 70);
+          ctx.closePath();
+          ctx.fill();
+
+          // Cono de luz tenue
+          const lightGrad = ctx.createRadialGradient(lx, 85, 2, lx, 220, 150);
+          lightGrad.addColorStop(0, 'rgba(250, 204, 21, 0.18)');
+          lightGrad.addColorStop(1, 'rgba(250, 204, 21, 0)');
+          ctx.fillStyle = lightGrad;
+          ctx.beginPath();
+          ctx.moveTo(lx - 12, 85);
+          ctx.lineTo(lx - 90, 320);
+          ctx.lineTo(lx + 90, 320);
+          ctx.lineTo(lx + 12, 85);
+          ctx.closePath();
+          ctx.fill();
+        };
+
+        drawLamp(220);
+        drawLamp(480);
+        drawLamp(740);
       }
 
       // 2. PROPS DECORATIVOS SIN COLISIÓN
@@ -6549,20 +6613,22 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             ctx.fill();
           }
         } else {
-          // Tema almacén clásico
-          if (plat.h >= 30) {
-            ctx.fillStyle = '#27201c';
-            ctx.fillRect(plat.x, plat.y, plat.w, plat.h);
-            ctx.fillStyle = '#45382b';
-            ctx.fillRect(plat.x, plat.y, plat.w, 4);
-          } else if (plat.w <= 25) {
-            ctx.fillStyle = '#1e293b';
-            ctx.fillRect(plat.x, plat.y, plat.w, plat.h);
-          } else {
-            ctx.fillStyle = '#524332';
-            ctx.fillRect(plat.x, plat.y, plat.w, plat.h);
-            ctx.fillStyle = '#786249';
-            ctx.fillRect(plat.x, plat.y, plat.w, 3);
+          // Warehouse: Plataformas de hormigón oscuro y vigas
+          ctx.fillStyle = '#1e293b';
+          ctx.fillRect(plat.x, plat.y, plat.w, plat.h);
+
+          // Borde superior de hormigón
+          ctx.fillStyle = '#334155';
+          ctx.fillRect(plat.x, plat.y, plat.w, 4);
+
+          // Textura de bloques de hormigón
+          ctx.strokeStyle = '#0f172a';
+          ctx.lineWidth = 1;
+          for (let bx = plat.x + 30; bx < plat.x + plat.w; bx += 30) {
+            ctx.beginPath();
+            ctx.moveTo(bx, plat.y);
+            ctx.lineTo(bx, plat.y + plat.h);
+            ctx.stroke();
           }
         }
       }
@@ -6769,19 +6835,19 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
         const isP1 = playerId === 1;
         const controller = isP1 ? s.p1Controller : s.p2Controller;
-        const sheet = isP1 ? s.p1WalkSheet : (s.botWalkSheet || s.p1WalkSheet);
-        const runSheet = isP1 ? s.p1RunSheet : (s.botRunSheet || s.p1RunSheet);
-        const rollSheet = isP1 ? s.p1RollSheet : (s.botRollSheet || s.p1RollSheet);
-        const jumpSheet = isP1 ? s.p1JumpSheet : (s.botJumpSheet || s.p1JumpSheet);
-        const idleImg = isP1 ? s.p1IdleSprite : (s.botIdleSprite || s.p1IdleSprite);
-        const cfg = isP1 ? s.p1SheetConfig : (s.botSheetConfig || s.p1SheetConfig);
         const is1v1 = gameMode === 'local1v1';
-        const activeThrowSheet = isP1 ? s.p1ThrowUpSheet : (s.botThrowUpSheet || s.p1ThrowUpSheet);
-        const activeRifleSheet = isP1 ? s.p1RifleSheet : (s.botRifleSheet || s.p1RifleSheet);
-        const activePistolSheet = isP1 ? s.p1PistolSheet : (s.botPistolSheet || s.p1PistolSheet);
-        const activeTwoHandSheet = isP1 ? s.p1TwoHandSheet : (s.botTwoHandSheet || s.p1TwoHandSheet);
-        const activeOneHandSheet = isP1 ? s.p1OneHandSheet : (s.botOneHandSheet || s.p1OneHandSheet);
-        const activeMeleeSheet = isP1 ? s.p1MeleeSheet : (s.botMeleeSheet || s.p1MeleeSheet);
+        const sheet = isP1 ? s.p1WalkSheet : (is1v1 ? s.botWalkSheet : null);
+        const runSheet = isP1 ? s.p1RunSheet : (is1v1 ? s.botRunSheet : null);
+        const rollSheet = isP1 ? s.p1RollSheet : (is1v1 ? s.botRollSheet : null);
+        const jumpSheet = isP1 ? s.p1JumpSheet : (is1v1 ? s.botJumpSheet : null);
+        const idleImg = isP1 ? s.p1IdleSprite : (s.botIdleSprite || s.p1IdleSprite);
+        const cfg = isP1 ? s.p1SheetConfig : (is1v1 ? s.botSheetConfig : null);
+        const activeThrowSheet = isP1 ? s.p1ThrowUpSheet : (is1v1 ? s.botThrowUpSheet : null);
+        const activeRifleSheet = isP1 ? s.p1RifleSheet : (is1v1 ? s.botRifleSheet : null);
+        const activePistolSheet = isP1 ? s.p1PistolSheet : (is1v1 ? s.botPistolSheet : null);
+        const activeTwoHandSheet = isP1 ? s.p1TwoHandSheet : (is1v1 ? s.botTwoHandSheet : null);
+        const activeOneHandSheet = isP1 ? s.p1OneHandSheet : (is1v1 ? s.botOneHandSheet : null);
+        const activeMeleeSheet = isP1 ? s.p1MeleeSheet : (is1v1 ? s.botMeleeSheet : null);
 
         if (!p.isAlive) {
           ctx.save();
@@ -7430,6 +7496,15 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           ctx.restore();
         }
 
+        // Destello blanco rápido en impacto (Hit Flash Feedback retro)
+        if (p.hitFlashTicks > 0) {
+          ctx.save();
+          ctx.globalCompositeOperation = 'source-atop';
+          ctx.fillStyle = `rgba(255, 255, 255, ${Math.min(0.92, p.hitFlashTicks * 0.25)})`;
+          ctx.fillRect(drawX - 2, drawY - 2, charW + 4, charH + 4);
+          ctx.restore();
+        }
+
         ctx.restore();
 
         // Barra de salud sobre cabeza (ajustada a la nueva escala del personaje)
@@ -7445,6 +7520,43 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         ctx.textAlign = 'center';
         ctx.fillText(p.name, p.x, p.y - 54);
       };
+
+      // 9.5 SOMBRA BAJO LOS PIES (CONTACTO Y PESO VISUAL EN EL SUELO / PLATAFORMAS)
+      const renderGroundedShadow = (p: PlayerState) => {
+        if (!p.isAlive) return;
+        const isBigFighter =
+          p.name.includes('TANQUE') ||
+          p.name.includes('MUTANTE') ||
+          p.name.includes('BERSERKER');
+        const charHalfH = isBigFighter ? 41 : 37;
+        const baseW = isBigFighter ? 24 : 18;
+        const baseH = 5;
+
+        // Encontrar plataforma más cercana debajo de los pies
+        let groundY = 501; // Superficie por defecto del suelo
+        for (const plat of s.platforms) {
+          if (p.x >= plat.x - 10 && p.x <= plat.x + plat.w + 10 && plat.y >= p.y - 5) {
+            if (plat.y < groundY) groundY = plat.y;
+          }
+        }
+
+        const feetY = p.y + charHalfH;
+        const dist = Math.max(0, groundY - feetY);
+
+        if (dist < 220) {
+          const shadowScale = Math.max(0.35, 1 - dist / 220);
+          ctx.save();
+          ctx.fillStyle = `rgba(0, 0, 0, ${0.48 * shadowScale})`;
+          ctx.beginPath();
+          const targetY = p.onGround ? feetY - 2 : groundY - 1;
+          ctx.ellipse(p.x, targetY, baseW * shadowScale, baseH * shadowScale, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+      };
+
+      renderGroundedShadow(s.p1);
+      renderGroundedShadow(s.bot);
 
       renderFighter(s.p1, s.p1Sprite, '#38bdf8', 1);
       renderFighter(s.bot, s.botSprite, '#f87171', 2);
@@ -7530,6 +7642,132 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         ctx.fillText(s.announcement, ARENA_WIDTH / 2, ARENA_HEIGHT / 2 + 10);
       }
 
+      // 14.5. HUD ARCADE RETRO (ESQUINA SUPERIOR IZQUIERDA CON FICHAS AMARILLAS DE SUPERFIGHTERS)
+      const drawRetroHUD = () => {
+        ctx.save();
+
+        // Renderizado de ficha circular pixelada amarilla idéntica a image_47d361d8.png
+        const drawYellowToken = (cx: number, cy: number, isFilled: boolean, tokenType: number = 0) => {
+          ctx.save();
+          const radius = 9;
+
+          // Borde exterior negro sólido
+          ctx.beginPath();
+          ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+          ctx.fillStyle = isFilled ? '#facc15' : '#27272a';
+          ctx.fill();
+          ctx.lineWidth = 1.5;
+          ctx.strokeStyle = isFilled ? '#713f12' : '#18181b';
+          ctx.stroke();
+
+          if (isFilled) {
+            // Relieve brillante pixelado
+            ctx.fillStyle = '#fef08a';
+            ctx.beginPath();
+            ctx.arc(cx - 2.5, cy - 2.5, 3, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Hendidura / glifo interno pixelado (variantes de las fichas de Superfighters)
+            ctx.fillStyle = '#78350f';
+            if (tokenType === 0) {
+              // Variante reloj / ranura tipo Pacman/Superfighters
+              ctx.fillRect(cx - 1, cy - 5, 2, 6);
+              ctx.fillRect(cx - 1, cy, 5, 2);
+            } else {
+              // Variante ranura de cruceta / moneda arcade
+              ctx.fillRect(cx - 4, cy - 1, 8, 2);
+              ctx.fillRect(cx - 1, cy - 4, 2, 8);
+            }
+          } else {
+            // Ficha vacía / pendiente
+            ctx.fillStyle = '#52525b';
+            ctx.fillRect(cx - 3, cy - 1, 6, 2);
+          }
+          ctx.restore();
+        };
+
+        // ── CAJA RETRO PLAYER 1 (SUPERIOR IZQUIERDA) ──
+        const p1X = 18;
+        const p1Y = 16;
+        const boxW = 168;
+        const boxH = 54;
+
+        // Caja negra con borde blanco sólido retro de alto contraste
+        ctx.fillStyle = '#05070a';
+        ctx.fillRect(p1X, p1Y, boxW, boxH);
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(p1X, p1Y, boxW, boxH);
+
+        // Título del combatiente P1
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '900 11px monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText('P1: NINJA', p1X + 8, p1Y + 13);
+
+        // Barra de salud P1
+        const p1HpRatio = Math.max(0, s.p1.health / s.p1.maxHealth);
+        const hpBarW = 96;
+        const hpBarH = 7;
+        ctx.fillStyle = '#18181b';
+        ctx.fillRect(p1X + 8, p1Y + 18, hpBarW, hpBarH);
+        ctx.fillStyle = p1HpRatio > 0.5 ? '#22c55e' : p1HpRatio > 0.25 ? '#eab308' : '#ef4444';
+        ctx.fillRect(p1X + 8, p1Y + 18, hpBarW * p1HpRatio, hpBarH);
+        ctx.strokeStyle = '#52525b';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(p1X + 8, p1Y + 18, hpBarW, hpBarH);
+
+        // Iconos pixelados amarillos de vidas / rondas ganadas (image_47d361d8.png)
+        const roundTokensCount = Math.max(2, maxRounds);
+        for (let i = 0; i < roundTokensCount; i++) {
+          const isWon = i < s.p1Score;
+          drawYellowToken(p1X + 16 + i * 22, p1Y + 39, isWon, i % 2);
+        }
+
+        // Arma y munición en la esquina derecha de la caja P1
+        const p1Wpn = getWeapon(s.p1.equippedWeapon);
+        ctx.fillStyle = '#38bdf8';
+        ctx.font = 'bold 9px monospace';
+        ctx.fillText(p1Wpn.name.slice(0, 7).toUpperCase(), p1X + 112, p1Y + 23);
+        ctx.fillStyle = '#94a3b8';
+        ctx.fillText(s.p1.ammo > 0 ? `x${s.p1.ammo}` : 'MELEE', p1X + 112, p1Y + 33);
+
+        // ── CAJA RETRO RIVAL / BOT / P2 (SUPERIOR DERECHA) ──
+        const p2X = ARENA_WIDTH - 186;
+        const p2Y = 16;
+        ctx.fillStyle = '#05070a';
+        ctx.fillRect(p2X, p2Y, boxW, boxH);
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(p2X, p2Y, boxW, boxH);
+
+        const is1v1 = gameMode === 'local1v1';
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '900 11px monospace';
+        ctx.textAlign = 'right';
+        ctx.fillText(is1v1 ? 'P2: NINJA' : `COM: ${s.bot.name.slice(0, 8)}`, p2X + boxW - 8, p2Y + 13);
+
+        // Barra de salud Rival
+        const botHpRatio = Math.max(0, s.bot.health / s.bot.maxHealth);
+        ctx.fillStyle = '#18181b';
+        ctx.fillRect(p2X + boxW - 8 - hpBarW, p2Y + 18, hpBarW, hpBarH);
+        ctx.fillStyle = botHpRatio > 0.5 ? '#22c55e' : botHpRatio > 0.25 ? '#eab308' : '#ef4444';
+        ctx.fillRect(p2X + boxW - 8 - hpBarW * botHpRatio, p2Y + 18, hpBarW * botHpRatio, hpBarH);
+        ctx.strokeStyle = '#52525b';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(p2X + boxW - 8 - hpBarW, p2Y + 18, hpBarW, hpBarH);
+
+        // Fichas amarillas para el rival
+        for (let i = 0; i < roundTokensCount; i++) {
+          const isWon = i < s.botScore;
+          drawYellowToken(p2X + boxW - 16 - (roundTokensCount - 1 - i) * 22, p2Y + 39, isWon, (i + 1) % 2);
+        }
+
+        ctx.restore();
+      };
+
+      drawRetroHUD();
+
       ctx.restore();
     };
 
@@ -7545,25 +7783,56 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
   return (
     <div className="relative w-full h-full flex flex-col items-center justify-center p-2 select-none overflow-hidden bg-neutral-950">
-      {/* HUD Superior: Marcador y Nombre del Mundo */}
-      <div className="w-full max-w-[960px] bg-neutral-900/90 border border-neutral-800 rounded-t-xl px-4 py-2 flex items-center justify-between text-xs font-mono-code">
-        <div className="flex items-center gap-2">
-          <span className="text-cyan-400 font-bold">{hudState.worldName}</span>
-          <span className="text-neutral-500">|</span>
-          <span className="text-neutral-300">Ronda {hudState.round} / {hudState.maxRounds}</span>
+      {/* HUD Superior: Marcador con Fichas Amarillas Superfighters y Nombre del Mundo */}
+      <div className="w-full max-w-[960px] bg-black border border-white/20 border-b-0 px-4 py-2 flex items-center justify-between text-xs font-mono-code shadow-lg">
+        <div className="flex items-center gap-3">
+          <span className="text-cyan-400 font-black tracking-wider uppercase">{hudState.worldName}</span>
+          <span className="text-neutral-600">|</span>
+          <span className="text-neutral-300 font-bold">RONDA {hudState.round} / {hudState.maxRounds}</span>
         </div>
 
-        <div className="flex items-center gap-3 text-sm font-extrabold">
-          <span className="text-cyan-400">{hudState.p1Score}</span>
-          <span className="text-neutral-500">-</span>
-          <span className="text-rose-400">{hudState.botScore}</span>
+        {/* Fichas Amarillas Superfighters (P1 vs RIVAL) */}
+        <div className="flex items-center gap-4 text-xs font-black">
+          <div className="flex items-center gap-1.5">
+            <span className="text-cyan-400 mr-1">P1</span>
+            {Array.from({ length: hudState.maxRounds }).map((_, i) => (
+              <div
+                key={i}
+                className={`w-4 h-4 rounded-full border flex items-center justify-center transition-all ${
+                  i < hudState.p1Score
+                    ? 'bg-yellow-400 border-amber-800 shadow-[0_0_8px_rgba(250,204,21,0.6)] text-[8px] font-black text-amber-950'
+                    : 'bg-neutral-800 border-neutral-700 text-neutral-600'
+                }`}
+              >
+                {i < hudState.p1Score ? '●' : '○'}
+              </div>
+            ))}
+          </div>
+
+          <span className="text-neutral-500 font-bold">VS</span>
+
+          <div className="flex items-center gap-1.5">
+            {Array.from({ length: hudState.maxRounds }).map((_, i) => (
+              <div
+                key={i}
+                className={`w-4 h-4 rounded-full border flex items-center justify-center transition-all ${
+                  i < hudState.botScore
+                    ? 'bg-yellow-400 border-amber-800 shadow-[0_0_8px_rgba(250,204,21,0.6)] text-[8px] font-black text-amber-950'
+                    : 'bg-neutral-800 border-neutral-700 text-neutral-600'
+                }`}
+              >
+                {i < hudState.botScore ? '●' : '○'}
+              </div>
+            ))}
+            <span className="text-rose-400 ml-1">COM</span>
+          </div>
         </div>
 
         <button
           onClick={onExitToMenu}
-          className="px-3 py-1 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white rounded-lg text-xs font-bold transition cursor-pointer"
+          className="px-3 py-1 bg-neutral-900 hover:bg-neutral-800 text-neutral-300 hover:text-white border border-neutral-700 text-xs font-bold transition cursor-pointer"
         >
-          Salir (ESC)
+          SALIR (ESC)
         </button>
       </div>
 

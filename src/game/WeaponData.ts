@@ -1082,12 +1082,14 @@ export function isSwordWeapon(type: WeaponType): boolean {
 }
 
 /**
- * Armas de la categoría "Una mano" (One Hand):
- * Baton, ShockBaton, Cuchillo, Whip y CueStick.
- * (Las espadas tienen su propio estilo exclusivo y están blindadas aparte).
- * Utilizan el set de animación de ataque rápido 'one_hand_attack' (5 frames).
+ * Armas de la categoría "Agarre a una mano (Corte/Impacto rápido)" (one_hand_attack):
+ * Katana, Machete, Cuchillo, Baton, ShockBaton, Whip, CueStick.
+ * Utilizan exclusivamente el set oficial de animación 'one_hand_attack' (5 frames).
+ * Esta animación es la base y prioridad oficial para este tipo de armas.
  */
 export const ONE_HAND_WEAPONS: ReadonlySet<WeaponType> = new Set([
+  WeaponType.Katana,
+  WeaponType.Machete,
   WeaponType.Knife,
   WeaponType.Baton,
   WeaponType.ShockBaton,
@@ -1096,7 +1098,7 @@ export const ONE_HAND_WEAPONS: ReadonlySet<WeaponType> = new Set([
 ]);
 
 export function isOneHandWeapon(type: WeaponType): boolean {
-  return ONE_HAND_WEAPONS.has(type) && !isSwordWeapon(type);
+  return ONE_HAND_WEAPONS.has(type);
 }
 
 /**

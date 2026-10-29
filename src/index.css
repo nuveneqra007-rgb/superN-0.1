@@ -10,6 +10,10 @@
   font-family: 'JetBrains Mono', monospace;
 }
 
+.font-pixel {
+  font-family: 'Press Start 2P', monospace;
+}
+
 @keyframes landingEnter {
   0% {
     opacity: 0;

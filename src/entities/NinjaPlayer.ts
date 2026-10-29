@@ -6,6 +6,7 @@
 import Phaser from 'phaser';
 import { NINJA_CONFIG, NinjaState } from '../game/NinjaController';
 import { isOneHandWeapon, isPistolWeapon, isRifleWeapon, isSwordWeapon, isThrowableWeapon, isTwoHandWeapon, WeaponType } from '../game/WeaponData';
+import { PlayerInput } from './Player';
 
 export interface NinjaPlayerOptions {
   textureKey?: string;
@@ -85,8 +86,8 @@ export class NinjaPlayer extends Phaser.Physics.Arcade.Sprite {
 
   public equipWeapon(weaponName: string): void {
     this.currentWeapon = weaponName;
-    if (isSwordWeapon(weaponName as WeaponType)) {
-      this.characterState = 'espada';
+    if (isOneHandWeapon(weaponName as WeaponType)) {
+      this.characterState = 'arma_una_mano';
       this.hasHeavyRifleEquipped = false;
     } else if (isRifleWeapon(weaponName as WeaponType)) {
       this.characterState = 'arma_dos_manos';
@@ -97,8 +98,8 @@ export class NinjaPlayer extends Phaser.Physics.Arcade.Sprite {
     } else if (isPistolWeapon(weaponName as WeaponType)) {
       this.characterState = 'arma_una_mano';
       this.hasHeavyRifleEquipped = false;
-    } else if (isOneHandWeapon(weaponName as WeaponType)) {
-      this.characterState = 'arma_una_mano';
+    } else if (isSwordWeapon(weaponName as WeaponType)) {
+      this.characterState = 'espada';
       this.hasHeavyRifleEquipped = false;
     } else {
       this.characterState = 'desarmado';

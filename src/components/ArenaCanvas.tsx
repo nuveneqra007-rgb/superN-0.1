@@ -512,6 +512,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     botSheetConfig: SpritesheetDef;
     weaponImages: Record<string, HTMLImageElement>;
     swordComboSheet: HTMLImageElement | null;
+    botQuiet: boolean;
   } | null>(null);
 
   // Helper para generar entidades interactivas del mundo
@@ -769,7 +770,9 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     p1.damageDealtModifier = pArch.damageDealtModifier;
     p1.damageTakenModifier = pArch.damageTakenModifier;
     p1.meleeForceModifier = pArch.meleeForceModifier;
-    p1.equippedWeapon = WeaponType.Fists;
+    p1.equippedWeapon = WeaponType.Katana;
+    p1.characterState = 'arma_una_mano';
+    p1.weaponState = 'arma_una_mano';
     p1.ammo = 0;
     p1.isSwordAttacking = false;
     p1.swordComboStep = 0;
@@ -1024,6 +1027,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       bot,
       p2Controller: new PlayerController(spawnBot.x, spawnBot.y, false, 2),
       botAI: createBotFSMData(arch.aiType),
+      botQuiet: true,
       projectiles: [],
       worldWeapons,
       weaponSlots,
@@ -1133,10 +1137,10 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     s.p1.damageDealtModifier = pArch.damageDealtModifier;
     s.p1.damageTakenModifier = pArch.damageTakenModifier;
     s.p1.meleeForceModifier = pArch.meleeForceModifier;
-    s.p1.equippedWeapon = WeaponType.Fists;
+    s.p1.equippedWeapon = WeaponType.Katana;
     s.p1.ammo = 0;
-    s.p1.characterState = 'desarmado';
-    s.p1.weaponState = 'desarmado';
+    s.p1.characterState = 'arma_una_mano';
+    s.p1.weaponState = 'arma_una_mano';
     s.p1.isTwoHandAttacking = false;
     s.p1.twoHandAnimFrame = 0;
     s.p1.twoHandAnimTimer = 0;
@@ -1289,6 +1293,17 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       }
       if (key === 'y' && gameMode === 'local1v1') {
         cycleGrenadeType(stateRef.current.botGrenades);
+      }
+      if (key === 'b') {
+        stateRef.current.botQuiet = !stateRef.current.botQuiet;
+        stateRef.current.floatingTexts.push({
+          id: stateRef.current.nextEntityId++,
+          text: stateRef.current.botQuiet ? 'BOT: QUIETO (PRÁCTICA)' : 'BOT: IA ACTIVA',
+          x: stateRef.current.bot.x,
+          y: stateRef.current.bot.y - 45,
+          color: stateRef.current.botQuiet ? '#38bdf8' : '#ef4444',
+          life: 45,
+        });
       }
       if (key === 'escape') {
         onExitToMenu();
@@ -2117,7 +2132,6 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         // ═════════════════════════════════════════════════════════
         if (
           (fireJustPressed || (firePressed && (p1.isRifleShooting || p1.isPistolShooting))) &&
-          isFirearm &&
           p1.isAlive &&
           s.roundActive &&
           p1.fsm !== PlayerFSMState.KnockedDown &&
@@ -2127,7 +2141,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           !p1.isGrappling &&
           !p1.isThrowing
         ) {
-          if (isRifle) {
+          if (isFirearm && isRifle) {
             // Disparo de rifles/escopetas a dos manos (rifle_shoot - 4 frames con retroceso en frame 3)
             if (p1.attackCooldown <= 0 && !p1.isRifleShooting) {
               if (p1.ammo > 0) {
@@ -2177,7 +2191,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                 sounds.playDryFire();
               }
             }
-          } else if (isPistol) {
+          } else if (isFirearm && isPistol) {
             // Disparo de pistolas a una mano (pistol_shoot - 4 frames)
             if (p1.attackCooldown <= 0 && !p1.isPistolShooting) {
               if (p1.ammo > 0) {
@@ -2226,6 +2240,43 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                 sounds.playDryFire();
               }
             }
+          } else if (p1.attackCooldown <= 0 && !p1.isPistolShooting) {
+            // Disparo táctico con pistola reglamentaria del Ninja (Tecla M)
+            const wpn = getWeapon(WeaponType.Pistol);
+            p1.isPistolShooting = true;
+            p1.pistolAnimFrame = 0;
+            p1.pistolAnimTimer = 0;
+            p1.pistolHasFired = true;
+            s.p1Controller.isShootingPistol = true;
+
+            p1.attackCooldown = Math.max(wpn.cooldownTicks, 14);
+            PlayerFSM.tryTransition(p1, PlayerFSMState.RangedFire);
+            sounds.playGunshot('pistol');
+
+            const dir = p1.facingRight ? 1 : -1;
+            const muzzleX = p1.x + dir * 28;
+            const muzzleY = p1.y - 6;
+
+            addSparks(muzzleX, muzzleY, '#fde047', 8);
+            s.screenShake = 3;
+
+            const speed = wpn.projectileSpeed || 900;
+            s.projectiles.push({
+              id: s.nextEntityId++,
+              x: muzzleX,
+              y: muzzleY,
+              vx: dir * speed,
+              vy: 0,
+              damage: wpn.damage * p1.damageDealtModifier,
+              onFireDuration: 0,
+              explosionRadius: 0,
+              shooterId: p1.id,
+              weaponType: WeaponType.Pistol,
+              pelletCount: 1,
+              lifeTicks: 0,
+              maxLifeTicks: 60,
+              color: '#facc15',
+            });
           }
         }
 
@@ -4844,7 +4895,16 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           }
 
           const aiState = BotAI.evaluate(bot, s.botAI, p1, projIncoming, nearestWpnDist);
-          const botInput = BotAI.computeInput(bot, s.botAI, p1, aiState, nearestWpnPos);
+          const botInput = s.botQuiet
+            ? { moveX: 0, jump: false, crouch: false, melee: false, fire: false }
+            : BotAI.computeInput(bot, s.botAI, p1, aiState, nearestWpnPos);
+
+          if (s.botQuiet && bot.onGround && bot.fsm !== PlayerFSMState.KnockedDown && bot.fsm !== PlayerFSMState.GetUp && bot.fsm !== PlayerFSMState.Hitstun) {
+            bot.velocityX = 0;
+            if (bot.fsm === PlayerFSMState.Run || bot.fsm === PlayerFSMState.Walk) {
+              PlayerFSM.tryTransition(bot, PlayerFSMState.Idle);
+            }
+          }
 
           // Salto de ayuda si el bot choca contra un escalón del terreno mientras corre
           if (
@@ -6296,6 +6356,9 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
       ctx.save();
       ctx.imageSmoothingEnabled = false;
+      (ctx as any).webkitImageSmoothingEnabled = false;
+      (ctx as any).mozImageSmoothingEnabled = false;
+      (ctx as any).msImageSmoothingEnabled = false;
 
       // Screen Shake
       if (s.screenShake > 0.5) {
@@ -6415,23 +6478,161 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           ctx.stroke();
         }
       } else {
-        // Warehouse: Almacén industrial oscuro con ladrillos
+        // Warehouse: Almacén industrial oscuro con figuras geométricas y sistema de tuberías estilo Superfighters
         const bgGrad = ctx.createLinearGradient(0, 0, 0, ARENA_HEIGHT);
-        bgGrad.addColorStop(0, '#0a0e17');
-        bgGrad.addColorStop(0.7, '#131b29');
-        bgGrad.addColorStop(1, '#1a2333');
+        bgGrad.addColorStop(0, '#060911');
+        bgGrad.addColorStop(0.65, '#0c121e');
+        bgGrad.addColorStop(1, '#111927');
         ctx.fillStyle = bgGrad;
         ctx.fillRect(0, 0, ARENA_WIDTH, ARENA_HEIGHT);
 
-        // Pared de ladrillos tenues
-        ctx.strokeStyle = '#1e293b';
+        // Rejilla técnica de fondo estilo blueprint industrial
+        ctx.strokeStyle = 'rgba(30, 41, 59, 0.35)';
         ctx.lineWidth = 1;
-        for (let y = 0; y < ARENA_HEIGHT; y += 20) {
-          const isOffset = (y / 20) % 2 === 1;
-          for (let x = isOffset ? -20 : 0; x < ARENA_WIDTH; x += 40) {
-            ctx.strokeRect(x, y, 40, 20);
-          }
+        for (let x = 0; x < ARENA_WIDTH; x += 32) {
+          ctx.beginPath();
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x, ARENA_HEIGHT);
+          ctx.stroke();
         }
+        for (let y = 0; y < ARENA_HEIGHT; y += 32) {
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          ctx.lineTo(ARENA_WIDTH, y);
+          ctx.stroke();
+        }
+
+        // Estructuras de vigas metálicas en cruz (X-braces estilo Superfighters)
+        ctx.strokeStyle = 'rgba(51, 65, 85, 0.35)';
+        ctx.lineWidth = 2;
+        for (let bx = 30; bx < ARENA_WIDTH; bx += 150) {
+          ctx.strokeRect(bx, 60, 120, 80);
+          ctx.beginPath();
+          ctx.moveTo(bx, 60);
+          ctx.lineTo(bx + 120, 140);
+          ctx.moveTo(bx + 120, 60);
+          ctx.lineTo(bx, 140);
+          ctx.stroke();
+        }
+
+        // Función de tubería geométrica con sombreado cilíndrico metálico
+        const drawSuperPipe = (px: number, py: number, pw: number, ph: number, isVert: boolean) => {
+          ctx.save();
+          const pGrad = isVert
+            ? ctx.createLinearGradient(px, py, px + pw, py)
+            : ctx.createLinearGradient(px, py, px, py + ph);
+          pGrad.addColorStop(0, '#0f172a');
+          pGrad.addColorStop(0.25, '#334155');
+          pGrad.addColorStop(0.5, '#64748b');
+          pGrad.addColorStop(0.75, '#334155');
+          pGrad.addColorStop(1, '#090d16');
+          ctx.fillStyle = pGrad;
+          ctx.fillRect(px, py, pw, ph);
+
+          ctx.strokeStyle = '#020617';
+          ctx.lineWidth = 1.5;
+          ctx.strokeRect(px, py, pw, ph);
+
+          // Anillos de acople con remaches
+          if (isVert) {
+            for (let ry = py + 30; ry < py + ph - 10; ry += 70) {
+              ctx.fillStyle = '#475569';
+              ctx.fillRect(px - 3, ry, pw + 6, 8);
+              ctx.strokeRect(px - 3, ry, pw + 6, 8);
+              ctx.fillStyle = '#94a3b8';
+              ctx.fillRect(px, ry + 2, 3, 3);
+              ctx.fillRect(px + pw - 3, ry + 2, 3, 3);
+            }
+          } else {
+            for (let rx = px + 40; rx < px + pw - 10; rx += 100) {
+              ctx.fillStyle = '#475569';
+              ctx.fillRect(rx, py - 3, 10, ph + 6);
+              ctx.strokeRect(rx, py - 3, 10, ph + 6);
+              ctx.fillStyle = '#94a3b8';
+              ctx.fillRect(rx + 3, py, 3, 3);
+              ctx.fillRect(rx + 3, py + ph - 3, 3, 3);
+            }
+          }
+          ctx.restore();
+        };
+
+        // Red de tuberías geométricas principales (Superfighters style)
+        drawSuperPipe(0, 110, ARENA_WIDTH, 26, false);
+        drawSuperPipe(0, 255, ARENA_WIDTH, 18, false);
+        drawSuperPipe(140, 30, 22, 290, true);
+        drawSuperPipe(480, 30, 22, 290, true);
+        drawSuperPipe(810, 30, 22, 290, true);
+
+        // Codos geométricos (uniones cuadradas en 90°)
+        const drawPipeJoint = (jx: number, jy: number, jsize: number) => {
+          ctx.fillStyle = '#334155';
+          ctx.strokeStyle = '#020617';
+          ctx.lineWidth = 1.5;
+          ctx.fillRect(jx, jy, jsize, jsize);
+          ctx.strokeRect(jx, jy, jsize, jsize);
+          ctx.fillStyle = '#64748b';
+          ctx.beginPath();
+          ctx.arc(jx + jsize / 2, jy + jsize / 2, jsize * 0.28, 0, Math.PI * 2);
+          ctx.fill();
+        };
+        drawPipeJoint(137, 107, 28);
+        drawPipeJoint(477, 107, 28);
+        drawPipeJoint(807, 107, 28);
+        drawPipeJoint(138, 251, 26);
+        drawPipeJoint(478, 251, 26);
+        drawPipeJoint(808, 251, 26);
+
+        // Manómetros de presión industriales con aguja roja
+        const drawPressureGauge = (gx: number, gy: number) => {
+          ctx.save();
+          ctx.fillStyle = '#b45309';
+          ctx.beginPath();
+          ctx.arc(gx, gy, 14, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = '#f8fafc';
+          ctx.beginPath();
+          ctx.arc(gx, gy, 11, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = '#0f172a';
+          ctx.lineWidth = 1;
+          ctx.stroke();
+          ctx.fillStyle = '#0f172a';
+          ctx.fillRect(gx - 7, gy - 1, 2, 2);
+          ctx.fillRect(gx + 5, gy - 1, 2, 2);
+          ctx.fillRect(gx - 1, gy - 7, 2, 2);
+          ctx.strokeStyle = '#ef4444';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.moveTo(gx, gy);
+          ctx.lineTo(gx + 5, gy - 6);
+          ctx.stroke();
+          ctx.restore();
+        };
+        drawPressureGauge(310, 123);
+        drawPressureGauge(650, 123);
+
+        // Válvulas industriales circulares rojas
+        const drawValve = (vx: number, vy: number) => {
+          ctx.save();
+          ctx.strokeStyle = '#dc2626';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(vx, vy, 11, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(vx - 11, vy);
+          ctx.lineTo(vx + 11, vy);
+          ctx.moveTo(vx, vy - 11);
+          ctx.lineTo(vx, vy + 11);
+          ctx.stroke();
+          ctx.fillStyle = '#fef08a';
+          ctx.beginPath();
+          ctx.arc(vx, vy, 3, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        };
+        drawValve(230, 123);
+        drawValve(730, 123);
 
         // Lámparas colgantes
         const drawLamp = (lx: number) => {
@@ -6442,7 +6643,6 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           ctx.lineTo(lx, 70);
           ctx.stroke();
 
-          // Campana de lámpara
           ctx.fillStyle = '#334155';
           ctx.beginPath();
           ctx.moveTo(lx - 12, 85);
@@ -6452,9 +6652,8 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           ctx.closePath();
           ctx.fill();
 
-          // Cono de luz tenue
           const lightGrad = ctx.createRadialGradient(lx, 85, 2, lx, 220, 150);
-          lightGrad.addColorStop(0, 'rgba(250, 204, 21, 0.18)');
+          lightGrad.addColorStop(0, 'rgba(250, 204, 21, 0.16)');
           lightGrad.addColorStop(1, 'rgba(250, 204, 21, 0)');
           ctx.fillStyle = lightGrad;
           ctx.beginPath();
@@ -6848,6 +7047,26 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         const activeTwoHandSheet = isP1 ? s.p1TwoHandSheet : (is1v1 ? s.botTwoHandSheet : null);
         const activeOneHandSheet = isP1 ? s.p1OneHandSheet : (is1v1 ? s.botOneHandSheet : null);
         const activeMeleeSheet = isP1 ? s.p1MeleeSheet : (is1v1 ? s.botMeleeSheet : null);
+        // Sombra suave proyectada bajo los pies del Ninja y los bots (solo visual, sin colisión)
+        if (p.isAlive) {
+          ctx.save();
+          const feetY = p.y + charH / 2 - 2;
+          const inAirDist = p.onGround ? 0 : Math.min(80, Math.max(0, p.velocityY < 0 ? 22 : 14));
+          const shadowScale = Math.max(0.45, 1 - inAirDist / 95);
+          const shadowAlpha = Math.max(0.18, 0.45 * (1 - inAirDist / 120));
+          ctx.fillStyle = `rgba(0, 0, 0, ${shadowAlpha})`;
+          ctx.beginPath();
+          ctx.ellipse(p.x, feetY, (charW * 0.4) * shadowScale, 5 * shadowScale, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        } else {
+          ctx.save();
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+          ctx.beginPath();
+          ctx.ellipse(p.x, p.y + 16, charW * 0.45, 5, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
 
         if (!p.isAlive) {
           ctx.save();
@@ -7634,133 +7853,167 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
       // 14. ANUNCIO CENTRAL
       if (s.announcement) {
-        ctx.fillStyle = 'rgba(0,0,0,0.7)';
-        ctx.fillRect(0, ARENA_HEIGHT / 2 - 35, ARENA_WIDTH, 70);
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+        ctx.fillRect(0, ARENA_HEIGHT / 2 - 32, ARENA_WIDTH, 64);
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(0, ARENA_HEIGHT / 2 - 32, ARENA_WIDTH, 64);
         ctx.fillStyle = '#facc15';
-        ctx.font = '900 32px "Chakra Petch", sans-serif';
+        ctx.font = '18px "Press Start 2P", monospace';
         ctx.textAlign = 'center';
-        ctx.fillText(s.announcement, ARENA_WIDTH / 2, ARENA_HEIGHT / 2 + 10);
+        ctx.fillText(s.announcement, ARENA_WIDTH / 2, ARENA_HEIGHT / 2 + 7);
       }
 
-      // 14.5. HUD ARCADE RETRO (ESQUINA SUPERIOR IZQUIERDA CON FICHAS AMARILLAS DE SUPERFIGHTERS)
+      // 14.5. HUD RETRO SUPERFIGHTERS (CAJAS P1 Y COM CON BORDES BLANCOS Y FUENTE PIXEL)
       const drawRetroHUD = () => {
         ctx.save();
 
-        // Renderizado de ficha circular pixelada amarilla idéntica a image_47d361d8.png
-        const drawYellowToken = (cx: number, cy: number, isFilled: boolean, tokenType: number = 0) => {
-          ctx.save();
-          const radius = 9;
+        const boxW = 230;
+        const boxH = 68;
 
-          // Borde exterior negro sólido
-          ctx.beginPath();
-          ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-          ctx.fillStyle = isFilled ? '#facc15' : '#27272a';
-          ctx.fill();
-          ctx.lineWidth = 1.5;
-          ctx.strokeStyle = isFilled ? '#713f12' : '#18181b';
-          ctx.stroke();
-
-          if (isFilled) {
-            // Relieve brillante pixelado
-            ctx.fillStyle = '#fef08a';
-            ctx.beginPath();
-            ctx.arc(cx - 2.5, cy - 2.5, 3, 0, Math.PI * 2);
-            ctx.fill();
-
-            // Hendidura / glifo interno pixelado (variantes de las fichas de Superfighters)
-            ctx.fillStyle = '#78350f';
-            if (tokenType === 0) {
-              // Variante reloj / ranura tipo Pacman/Superfighters
-              ctx.fillRect(cx - 1, cy - 5, 2, 6);
-              ctx.fillRect(cx - 1, cy, 5, 2);
-            } else {
-              // Variante ranura de cruceta / moneda arcade
-              ctx.fillRect(cx - 4, cy - 1, 8, 2);
-              ctx.fillRect(cx - 1, cy - 4, 2, 8);
-            }
-          } else {
-            // Ficha vacía / pendiente
-            ctx.fillStyle = '#52525b';
-            ctx.fillRect(cx - 3, cy - 1, 6, 2);
-          }
-          ctx.restore();
-        };
-
-        // ── CAJA RETRO PLAYER 1 (SUPERIOR IZQUIERDA) ──
-        const p1X = 18;
+        // ── CAJA RETRO P1 (ESQUINA SUPERIOR IZQUIERDA) ──
+        const p1X = 16;
         const p1Y = 16;
-        const boxW = 168;
-        const boxH = 54;
 
-        // Caja negra con borde blanco sólido retro de alto contraste
-        ctx.fillStyle = '#05070a';
+        // Fondo semitransparente oscuro y borde blanco sólido
+        ctx.fillStyle = 'rgba(5, 7, 10, 0.88)';
         ctx.fillRect(p1X, p1Y, boxW, boxH);
         ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 2;
+        ctx.lineWidth = 1.5;
         ctx.strokeRect(p1X, p1Y, boxW, boxH);
 
-        // Título del combatiente P1
-        ctx.fillStyle = '#ffffff';
-        ctx.font = '900 11px monospace';
-        ctx.textAlign = 'left';
-        ctx.fillText('P1: NINJA', p1X + 8, p1Y + 13);
-
-        // Barra de salud P1
-        const p1HpRatio = Math.max(0, s.p1.health / s.p1.maxHealth);
-        const hpBarW = 96;
-        const hpBarH = 7;
-        ctx.fillStyle = '#18181b';
-        ctx.fillRect(p1X + 8, p1Y + 18, hpBarW, hpBarH);
-        ctx.fillStyle = p1HpRatio > 0.5 ? '#22c55e' : p1HpRatio > 0.25 ? '#eab308' : '#ef4444';
-        ctx.fillRect(p1X + 8, p1Y + 18, hpBarW * p1HpRatio, hpBarH);
-        ctx.strokeStyle = '#52525b';
+        // Retrato del Ninja
+        const p1AvX = p1X + 8;
+        const p1AvY = p1Y + 12;
+        const p1AvSize = 44;
+        ctx.fillStyle = '#0a0e17';
+        ctx.fillRect(p1AvX, p1AvY, p1AvSize, p1AvSize);
+        ctx.strokeStyle = '#ffffff';
         ctx.lineWidth = 1;
-        ctx.strokeRect(p1X + 8, p1Y + 18, hpBarW, hpBarH);
+        ctx.strokeRect(p1AvX, p1AvY, p1AvSize, p1AvSize);
 
-        // Iconos pixelados amarillos de vidas / rondas ganadas (image_47d361d8.png)
-        const roundTokensCount = Math.max(2, maxRounds);
-        for (let i = 0; i < roundTokensCount; i++) {
-          const isWon = i < s.p1Score;
-          drawYellowToken(p1X + 16 + i * 22, p1Y + 39, isWon, i % 2);
+        const p1Img = (s.p1IdleSprite && s.p1IdleSprite.complete && s.p1IdleSprite.naturalWidth > 0)
+          ? s.p1IdleSprite
+          : (s.p1Sprite && s.p1Sprite.complete && s.p1Sprite.naturalWidth > 0)
+          ? s.p1Sprite
+          : null;
+
+        if (p1Img) {
+          ctx.drawImage(p1Img, p1AvX + 2, p1AvY + 2, p1AvSize - 4, p1AvSize - 4);
+        } else {
+          ctx.fillStyle = '#38bdf8';
+          ctx.fillRect(p1AvX + 6, p1AvY + 6, p1AvSize - 12, p1AvSize - 12);
         }
 
-        // Arma y munición en la esquina derecha de la caja P1
-        const p1Wpn = getWeapon(s.p1.equippedWeapon);
-        ctx.fillStyle = '#38bdf8';
-        ctx.font = 'bold 9px monospace';
-        ctx.fillText(p1Wpn.name.slice(0, 7).toUpperCase(), p1X + 112, p1Y + 23);
-        ctx.fillStyle = '#94a3b8';
-        ctx.fillText(s.p1.ammo > 0 ? `x${s.p1.ammo}` : 'MELEE', p1X + 112, p1Y + 33);
+        // Nombre del Jugador ("NINJA")
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '9px "Press Start 2P", monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText('NINJA', p1X + 60, p1Y + 23);
 
-        // ── CAJA RETRO RIVAL / BOT / P2 (SUPERIOR DERECHA) ──
-        const p2X = ARENA_WIDTH - 186;
+        // Barra de Vida P1 (Verde o Roja)
+        const p1BarX = p1X + 60;
+        const p1BarY = p1Y + 29;
+        const p1BarW = 158;
+        const p1BarH = 10;
+        const p1HpRatio = Math.max(0, s.p1.health / s.p1.maxHealth);
+
+        ctx.fillStyle = '#18181b';
+        ctx.fillRect(p1BarX, p1BarY, p1BarW, p1BarH);
+        ctx.fillStyle = p1HpRatio > 0.35 ? '#22c55e' : '#ef4444';
+        ctx.fillRect(p1BarX, p1BarY, Math.round(p1BarW * p1HpRatio), p1BarH);
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(p1BarX, p1BarY, p1BarW, p1BarH);
+
+        // Icono y Texto del Arma Equipada P1
+        const p1Wpn = getWeapon(s.p1.equippedWeapon);
+        const p1WpnName = (p1Wpn?.name || s.p1.equippedWeapon || 'KATANA').toUpperCase();
+        const p1WImg = s.weaponImages[s.p1.equippedWeapon];
+        const p1HasIcon = p1WImg && p1WImg.complete && p1WImg.naturalWidth > 0;
+
+        if (p1HasIcon) {
+          ctx.drawImage(p1WImg, p1X + 60, p1Y + 45, 24, 14);
+        }
+        ctx.fillStyle = '#fde047';
+        ctx.font = '8px "Press Start 2P", monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText(p1WpnName, p1HasIcon ? p1X + 90 : p1X + 60, p1Y + 56);
+
+        // ── CAJA RETRO BOT / COM (ESQUINA SUPERIOR DERECHA) ──
+        const p2X = ARENA_WIDTH - boxW - 16;
         const p2Y = 16;
-        ctx.fillStyle = '#05070a';
+
+        // Fondo semitransparente oscuro y borde blanco sólido
+        ctx.fillStyle = 'rgba(5, 7, 10, 0.88)';
         ctx.fillRect(p2X, p2Y, boxW, boxH);
         ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 2;
+        ctx.lineWidth = 1.5;
         ctx.strokeRect(p2X, p2Y, boxW, boxH);
 
-        const is1v1 = gameMode === 'local1v1';
-        ctx.fillStyle = '#ffffff';
-        ctx.font = '900 11px monospace';
-        ctx.textAlign = 'right';
-        ctx.fillText(is1v1 ? 'P2: NINJA' : `COM: ${s.bot.name.slice(0, 8)}`, p2X + boxW - 8, p2Y + 13);
-
-        // Barra de salud Rival
-        const botHpRatio = Math.max(0, s.bot.health / s.bot.maxHealth);
-        ctx.fillStyle = '#18181b';
-        ctx.fillRect(p2X + boxW - 8 - hpBarW, p2Y + 18, hpBarW, hpBarH);
-        ctx.fillStyle = botHpRatio > 0.5 ? '#22c55e' : botHpRatio > 0.25 ? '#eab308' : '#ef4444';
-        ctx.fillRect(p2X + boxW - 8 - hpBarW * botHpRatio, p2Y + 18, hpBarW * botHpRatio, hpBarH);
-        ctx.strokeStyle = '#52525b';
+        // Retrato del Bot
+        const botAvSize = 44;
+        const botAvX = p2X + boxW - 8 - botAvSize;
+        const botAvY = p2Y + 12;
+        ctx.fillStyle = '#0a0e17';
+        ctx.fillRect(botAvX, botAvY, botAvSize, botAvSize);
+        ctx.strokeStyle = '#ffffff';
         ctx.lineWidth = 1;
-        ctx.strokeRect(p2X + boxW - 8 - hpBarW, p2Y + 18, hpBarW, hpBarH);
+        ctx.strokeRect(botAvX, botAvY, botAvSize, botAvSize);
 
-        // Fichas amarillas para el rival
-        for (let i = 0; i < roundTokensCount; i++) {
-          const isWon = i < s.botScore;
-          drawYellowToken(p2X + boxW - 16 - (roundTokensCount - 1 - i) * 22, p2Y + 39, isWon, (i + 1) % 2);
+        const botSpriteImg = (s.botIdleSprite && s.botIdleSprite.complete && s.botIdleSprite.naturalWidth > 0)
+          ? s.botIdleSprite
+          : (s.botSprite && s.botSprite.complete && s.botSprite.naturalWidth > 0)
+          ? s.botSprite
+          : null;
+
+        if (botSpriteImg) {
+          ctx.drawImage(botSpriteImg, botAvX + 2, botAvY + 2, botAvSize - 4, botAvSize - 4);
+        } else {
+          ctx.fillStyle = '#ef4444';
+          ctx.fillRect(botAvX + 6, botAvY + 6, botAvSize - 12, botAvSize - 12);
+        }
+
+        // Nombre del Bot ("JEFE TANQUE", "BOT" o su nombre de arquetipo)
+        const is1v1 = gameMode === 'local1v1';
+        const rawBotName = is1v1 ? 'NINJA' : (s.bot?.name || botArch?.name || 'BOT');
+        const botDisplayName = rawBotName.toUpperCase();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '9px "Press Start 2P", monospace';
+        ctx.textAlign = 'right';
+        ctx.fillText(botDisplayName, p2X + boxW - 60, p2Y + 23);
+
+        // Barra de Vida del Bot (Verde o Roja)
+        const botBarW = 158;
+        const botBarH = 10;
+        const botBarX = p2X + boxW - 60 - botBarW;
+        const botBarY = p2Y + 29;
+        const botHpRatio = Math.max(0, s.bot.health / s.bot.maxHealth);
+
+        ctx.fillStyle = '#18181b';
+        ctx.fillRect(botBarX, botBarY, botBarW, botBarH);
+        ctx.fillStyle = botHpRatio > 0.35 ? '#22c55e' : '#ef4444';
+        const botFillW = Math.round(botBarW * botHpRatio);
+        ctx.fillRect(botBarX + botBarW - botFillW, botBarY, botFillW, botBarH);
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(botBarX, botBarY, botBarW, botBarH);
+
+        // Icono y Texto del Arma Equipada del Bot
+        const botWpn = getWeapon(s.bot.equippedWeapon);
+        const botWpnName = (botWpn?.name || s.bot.equippedWeapon || 'FISTS').toUpperCase();
+        const bWImg = s.weaponImages[s.bot.equippedWeapon];
+        const bHasIcon = bWImg && bWImg.complete && bWImg.naturalWidth > 0;
+
+        ctx.textAlign = 'right';
+        ctx.fillStyle = '#fde047';
+        ctx.font = '8px "Press Start 2P", monospace';
+        ctx.fillText(botWpnName, p2X + boxW - 60, p2Y + 56);
+
+        if (bHasIcon) {
+          const textW = ctx.measureText(botWpnName).width;
+          ctx.drawImage(bWImg, p2X + boxW - 60 - textW - 28, p2Y + 45, 24, 14);
         }
 
         ctx.restore();
@@ -7783,188 +8036,100 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
   return (
     <div className="relative w-full h-full flex flex-col items-center justify-center p-2 select-none overflow-hidden bg-neutral-950">
-      {/* HUD Superior: Marcador con Fichas Amarillas Superfighters y Nombre del Mundo */}
-      <div className="w-full max-w-[960px] bg-black border border-white/20 border-b-0 px-4 py-2 flex items-center justify-between text-xs font-mono-code shadow-lg">
-        <div className="flex items-center gap-3">
-          <span className="text-cyan-400 font-black tracking-wider uppercase">{hudState.worldName}</span>
+      {/* HUD Superior: Nombre del Mundo, P1 vs COM central y botón Salir */}
+      <div className="w-full max-w-[960px] bg-black/90 border-2 border-white border-b-0 px-4 py-2.5 flex items-center justify-between text-[10px] font-pixel shadow-lg">
+        <div className="flex items-center gap-2.5 text-neutral-300">
+          <span className="text-cyan-400 font-bold uppercase tracking-wider">{hudState.worldName}</span>
           <span className="text-neutral-600">|</span>
-          <span className="text-neutral-300 font-bold">RONDA {hudState.round} / {hudState.maxRounds}</span>
+          <span className="text-neutral-300">RONDA {hudState.round}/{hudState.maxRounds}</span>
         </div>
 
-        {/* Fichas Amarillas Superfighters (P1 vs RIVAL) */}
-        <div className="flex items-center gap-4 text-xs font-black">
+        {/* Centro de Pantalla: P1 vs COM (o P1 vs P2) con marcador */}
+        <div className="flex items-center gap-3 font-pixel text-[10px]">
           <div className="flex items-center gap-1.5">
-            <span className="text-cyan-400 mr-1">P1</span>
+            <span className="text-cyan-400 font-bold">P1</span>
             {Array.from({ length: hudState.maxRounds }).map((_, i) => (
               <div
                 key={i}
-                className={`w-4 h-4 rounded-full border flex items-center justify-center transition-all ${
+                className={`w-3.5 h-3.5 border border-white flex items-center justify-center ${
                   i < hudState.p1Score
-                    ? 'bg-yellow-400 border-amber-800 shadow-[0_0_8px_rgba(250,204,21,0.6)] text-[8px] font-black text-amber-950'
-                    : 'bg-neutral-800 border-neutral-700 text-neutral-600'
+                    ? 'bg-yellow-400 text-[8px] font-bold text-black'
+                    : 'bg-neutral-900 text-neutral-600'
                 }`}
               >
-                {i < hudState.p1Score ? '●' : '○'}
+                {i < hudState.p1Score ? '■' : ''}
               </div>
             ))}
           </div>
 
-          <span className="text-neutral-500 font-bold">VS</span>
+          <span className="text-neutral-400 font-bold px-1">VS</span>
 
           <div className="flex items-center gap-1.5">
             {Array.from({ length: hudState.maxRounds }).map((_, i) => (
               <div
                 key={i}
-                className={`w-4 h-4 rounded-full border flex items-center justify-center transition-all ${
+                className={`w-3.5 h-3.5 border border-white flex items-center justify-center ${
                   i < hudState.botScore
-                    ? 'bg-yellow-400 border-amber-800 shadow-[0_0_8px_rgba(250,204,21,0.6)] text-[8px] font-black text-amber-950'
-                    : 'bg-neutral-800 border-neutral-700 text-neutral-600'
+                    ? 'bg-yellow-400 text-[8px] font-bold text-black'
+                    : 'bg-neutral-900 text-neutral-600'
                 }`}
               >
-                {i < hudState.botScore ? '●' : '○'}
+                {i < hudState.botScore ? '■' : ''}
               </div>
             ))}
-            <span className="text-rose-400 ml-1">COM</span>
+            <span className="text-rose-400 font-bold">
+              {gameMode === 'local1v1' ? 'P2' : 'COM'}
+            </span>
           </div>
         </div>
 
         <button
           onClick={onExitToMenu}
-          className="px-3 py-1 bg-neutral-900 hover:bg-neutral-800 text-neutral-300 hover:text-white border border-neutral-700 text-xs font-bold transition cursor-pointer"
+          className="px-3 py-1 bg-black hover:bg-neutral-800 text-white border-2 border-white text-[9px] font-pixel transition cursor-pointer active:translate-y-0.5 rounded-none"
         >
           SALIR (ESC)
         </button>
       </div>
 
-      {/* Viewport del Canvas */}
-      <div className="relative border-x border-neutral-800 shadow-2xl bg-black">
+      {/* Viewport del Canvas Retro */}
+      <div className="relative border-2 border-white bg-black">
         <canvas
           ref={canvasRef}
           width={ARENA_WIDTH}
           height={ARENA_HEIGHT}
           onClick={() => sounds.resumeAudio()}
           tabIndex={0}
-          className="w-full max-w-[960px] max-h-[70vh] aspect-[16/9] object-contain block focus:outline-none"
+          className="w-full max-w-[960px] max-h-[78vh] aspect-[16/9] object-contain block focus:outline-none"
+          style={{ imageRendering: 'pixelated' }}
         />
 
-        {/* Modal de Fin de Partida con Revancha */}
+        {/* Modal de Fin de Partida con Revancha (Estilo Retro) */}
         {hudState.isMatchOver && (
-          <div className="absolute inset-0 bg-black/85 flex flex-col items-center justify-center p-6 gap-4 z-20 backdrop-blur-sm animate-fade-in">
-            <h2 className="text-4xl sm:text-5xl font-black tracking-wider text-yellow-400 drop-shadow-[0_0_20px_rgba(250,204,21,0.5)]">
-              {hudState.matchWinner}
-            </h2>
-            <p className="text-neutral-300 text-base sm:text-lg font-mono-code">
-              Marcador Final: {hudState.p1Score} - {hudState.botScore}
-            </p>
-            <div className="flex gap-4 mt-2">
-              <button
-                onClick={() => restartRound(true)}
-                className="px-6 py-3 min-h-[48px] bg-gradient-to-r from-cyan-500 to-emerald-400 hover:from-cyan-400 hover:to-emerald-300 text-neutral-950 font-black rounded-xl shadow-[0_0_20px_rgba(6,182,212,0.4)] transition cursor-pointer touch-manipulation"
-              >
-                Jugar Revancha (R)
-              </button>
-              <button
-                onClick={onExitToMenu}
-                className="px-6 py-3 min-h-[48px] bg-neutral-800 hover:bg-neutral-700 text-neutral-200 font-bold rounded-xl border border-neutral-700 transition cursor-pointer touch-manipulation"
-              >
-                Elegir Otro Mundo / Menú
-              </button>
+          <div className="absolute inset-0 bg-black/90 flex flex-col items-center justify-center p-6 gap-5 z-20 font-pixel">
+            <div className="border-2 border-white bg-black/95 p-6 flex flex-col items-center gap-4 max-w-md w-full shadow-2xl">
+              <h2 className="text-2xl sm:text-3xl font-bold tracking-wider text-yellow-400 text-center leading-relaxed">
+                {hudState.matchWinner}
+              </h2>
+              <p className="text-neutral-300 text-xs text-center font-pixel">
+                MARCADOR FINAL: {hudState.p1Score} - {hudState.botScore}
+              </p>
+              <div className="flex flex-col sm:flex-row gap-3 mt-3 w-full">
+                <button
+                  onClick={() => restartRound(true)}
+                  className="flex-1 px-4 py-3 bg-yellow-400 hover:bg-yellow-300 text-black font-pixel text-[10px] border-2 border-white transition cursor-pointer active:translate-y-0.5"
+                >
+                  REVANCHA (R)
+                </button>
+                <button
+                  onClick={onExitToMenu}
+                  className="flex-1 px-4 py-3 bg-neutral-900 hover:bg-neutral-800 text-white font-pixel text-[10px] border-2 border-white transition cursor-pointer active:translate-y-0.5"
+                >
+                  MENÚ
+                </button>
+              </div>
             </div>
           </div>
         )}
-      </div>
-
-      {/* Barra de Estadísticas de Combatientes */}
-      <div className="w-full max-w-[960px] bg-neutral-900/95 border border-neutral-800 rounded-b-xl p-3 grid grid-cols-3 items-center gap-4 text-xs">
-        {/* P1 Stats */}
-        <div className="flex flex-col gap-1.5">
-          <div className="flex justify-between items-center text-cyan-400 font-bold">
-            <span>P1 ({playerArch.name.toUpperCase()})</span>
-            <span>{Math.ceil(hudState.p1Health)} / {hudState.p1MaxHealth}</span>
-          </div>
-          <div className="w-full h-3 bg-neutral-800 rounded overflow-hidden">
-            <div
-              className={`h-full transition-all duration-75 ${
-                hudState.p1Health > 60
-                  ? 'bg-emerald-500'
-                  : hudState.p1Health > 30
-                  ? 'bg-yellow-500'
-                  : 'bg-red-500'
-              }`}
-              style={{ width: `${Math.max(0, (hudState.p1Health / hudState.p1MaxHealth) * 100)}%` }}
-            />
-          </div>
-
-          <div className="flex justify-between items-center text-neutral-400">
-            <span>STAMINA (Dodge / Salto)</span>
-            <span>{Math.ceil(hudState.p1Stamina)}%</span>
-          </div>
-          <div className="w-full h-1.5 bg-neutral-800 rounded overflow-hidden">
-            <div
-              className="h-full bg-cyan-400 transition-all duration-75"
-              style={{ width: `${Math.max(0, hudState.p1Stamina)}%` }}
-            />
-          </div>
-        </div>
-
-        {/* Current Equipped Weapon */}
-        <div className="flex flex-col items-center justify-center p-2 bg-neutral-950/80 rounded-xl border border-neutral-800 text-center">
-          <span className="text-[10px] text-neutral-400 uppercase font-semibold">Arma P1</span>
-          <div className="flex items-center gap-2 my-0.5">
-            {getWeapon(hudState.p1Weapon)?.iconUrl ? (
-              <img
-                src={getWeapon(hudState.p1Weapon).iconUrl}
-                alt=""
-                className="h-5 w-auto object-contain [image-rendering:pixelated]"
-              />
-            ) : null}
-            <span className="text-sm font-bold text-yellow-400">{hudState.p1Weapon}</span>
-          </div>
-          {isTwoHandWeapon(hudState.p1Weapon) && (
-            <span className="text-[10px] uppercase font-mono-code font-bold text-orange-400 bg-orange-950/80 border border-orange-600/60 rounded px-1.5 py-0.5 my-0.5">
-              arma_dos_manos • Golpe pesado
-            </span>
-          )}
-          <span className="text-xs font-mono-code text-neutral-300">
-            {hudState.p1MaxAmmo === -1
-              ? 'Melee (Infinito)'
-              : `Munición: ${hudState.p1Ammo} / ${hudState.p1MaxAmmo}`}
-          </span>
-        </div>
-
-        {/* Bot / J2 Stats */}
-        <div className="flex flex-col gap-1.5">
-          <div className="flex justify-between items-center text-rose-400 font-bold">
-            <span>{gameMode === 'local1v1' ? 'J2' : 'BOT'} ({botArch.name.toUpperCase()})</span>
-            <span>{Math.ceil(hudState.botHealth)} / {hudState.botMaxHealth}</span>
-          </div>
-          <div className="w-full h-3 bg-neutral-800 rounded overflow-hidden">
-            <div
-              className={`h-full transition-all duration-75 ${
-                hudState.botHealth > 60
-                  ? 'bg-emerald-500'
-                  : hudState.botHealth > 30
-                  ? 'bg-yellow-500'
-                  : 'bg-red-500'
-              }`}
-              style={{ width: `${Math.max(0, (hudState.botHealth / hudState.botMaxHealth) * 100)}%` }}
-            />
-          </div>
-
-          <div className="flex justify-between items-center text-neutral-400">
-            <span>{gameMode === 'local1v1' ? 'ARMA DE J2' : 'ARMA DEL BOT'}</span>
-            <div className="flex items-center gap-1.5 font-bold text-rose-300">
-              {getWeapon(hudState.botWeapon)?.iconUrl ? (
-                <img
-                  src={getWeapon(hudState.botWeapon).iconUrl}
-                  alt=""
-                  className="h-4 w-auto object-contain [image-rendering:pixelated]"
-                />
-              ) : null}
-              <span>{hudState.botWeapon}</span>
-            </div>
-          </div>
-        </div>
       </div>
     </div>
   );

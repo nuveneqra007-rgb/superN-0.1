@@ -74,6 +74,7 @@ export interface PlayerState {
   respawnTicks: number;
   platformDropTicks: number;
   coyoteTicks: number;
+  hitFlashTicks: number;
 
   // Estadísticas
   kills: number;
@@ -193,6 +194,7 @@ export function createPlayerState(
     respawnTicks: 0,
     platformDropTicks: 0,
     coyoteTicks: 0,
+    hitFlashTicks: 0,
     kills: 0,
     deaths: 0,
     speedModifier: GameConstants.Speed_Normal,

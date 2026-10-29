@@ -188,53 +188,21 @@ export class KeyboardInput implements PlayerInput {
 // Implementación: BotInput (Stub simple de IA para pruebas)
 // -------------------------------------------------------------
 export class BotInput implements PlayerInput {
-  private tickCount: number = 0;
-
   constructor(
-    private selfGetter: () => Player | null,
-    private rivalGetter: () => Player | null
+    private selfGetter?: () => Player | null,
+    private rivalGetter?: () => Player | null
   ) {}
 
   public poll(): PlayerInputState {
-    this.tickCount++;
-    const self = this.selfGetter();
-    const rival = this.rivalGetter();
-
-    if (!self || !rival) {
-      return {
-        left: false,
-        right: false,
-        jumpPressed: false,
-        rollPressed: false,
-        run: false,
-        meleePressed: false,
-        shootPressed: false,
-        grenadePressed: false,
-      };
-    }
-
-    const dx = rival.x - self.x;
-    const dy = rival.y - self.y;
-    const dist = Math.abs(dx);
-
-    const left = dx < -25;
-    const right = dx > 25;
-    const run = dist > 180;
-    const jumpPressed = dy < -40 && (this.tickCount % 45 === 0);
-    const meleePressed = dist <= 45 && (this.tickCount % 20 === 0);
-    const shootPressed = dist > 90 && dist < 320 && (this.tickCount % 35 === 0);
-    const rollPressed = dist > 40 && dist < 120 && (this.tickCount % 90 === 0);
-    const grenadePressed = dist > 160 && (this.tickCount % 180 === 0);
-
     return {
-      left,
-      right,
-      jumpPressed,
-      rollPressed,
-      run,
-      meleePressed,
-      shootPressed,
-      grenadePressed,
+      left: false,
+      right: false,
+      jumpPressed: false,
+      rollPressed: false,
+      run: false,
+      meleePressed: false,
+      shootPressed: false,
+      grenadePressed: false,
     };
   }
 }

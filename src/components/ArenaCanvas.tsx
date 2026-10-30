@@ -32,7 +32,7 @@ import {
   consumeGrenade,
   GrenadePickupEntity,
 } from '../game/GrenadeSystem';
-import { CONTROLS_TEXT } from '../game/Controls';
+import { CONTROLS, isAnyPressed, CONTROLS_TEXT } from '../game/Controls';
 
 interface ArenaCanvasProps {
   gameMode?: GameMode;
@@ -464,6 +464,11 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
   useEffect(() => {
     showControlsModalRef.current = showControlsModal;
   }, [showControlsModal]);
+
+  const isMatchOverRef = useRef(false);
+  useEffect(() => {
+    isMatchOverRef.current = hudState.isMatchOver;
+  }, [hudState.isMatchOver]);
 
   const [botPracticeMode, setBotPracticeMode] = useState(false);
 
@@ -1305,7 +1310,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       stateRef.current.keys[code] = true;
       stateRef.current.keys[key] = true;
 
-      // ESC: Toggle Pausa o cerrar sub-modales
+      // ESC: Toggle Pausa o cerrar sub-modales (No debe pausar si la partida terminó)
       if (code === 'Escape' || key === 'escape') {
         if (showExitConfirmRef.current) {
           setShowExitConfirm(false);
@@ -1315,7 +1320,16 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           setShowControlsModal(false);
           return;
         }
-        setIsPaused((prev) => !prev);
+        if (isMatchOverRef.current) {
+          return;
+        }
+        setIsPaused((prev) => {
+          const next = !prev;
+          if (!next && stateRef.current) {
+            stateRef.current.keysJustPressed = {};
+          }
+          return next;
+        });
         return;
       }
 
@@ -1732,9 +1746,8 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         const jumpHeld = p1RawInput.jumpHeld;
         const rollPressed = p1RawInput.roll;
         const dropThrough = !!p1RawInput.dropThrough;
-        const crouchHeld = (scheme === 'wasd_p1')
-          ? !!(keys['s'] || keys['S'] || (!is1v1 && keys['arrowdown']))
-          : !!(keys['arrowdown'] || (!is1v1 && (keys['s'] || keys['S'])));
+        const p1Controls = is1v1 ? CONTROLS.LOCAL_1V1_P1 : CONTROLS.SOLO;
+        const crouchHeld = isAnyPressed(keys, p1Controls.down);
 
         const isNinjaComboLocked = !!p1.isSwordAttacking || !!p1.isMeleeComboAttacking || !!p1.isOneHandAttacking || !!p1.isTwoHandAttacking;
 
@@ -1751,7 +1764,11 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         if (p1.fsm === PlayerFSMState.KnockedDown || p1.fsm === PlayerFSMState.GetUp) {
           const hasDirInput = moveDir !== 0;
           const hasVerticalInput = jumpJustPressed || (hasDirInput && rollPressed) || crouchHeld;
-          const anyMovementPressed = hasDirInput || hasVerticalInput || (is1v1 ? !!keys['n'] || !!keys['m'] : !!keys['n'] || !!keys['j'] || !!keys['m'] || !!keys['k']);
+          const anyMovementPressed =
+            hasDirInput ||
+            hasVerticalInput ||
+            isAnyPressed(keys, p1Controls.melee) ||
+            isAnyPressed(keys, p1Controls.fire);
 
           // Si presiona teclas tras un mínimo amortiguamiento de impacto (4 ticks)
           if (anyMovementPressed && p1.stateTicks >= 4) {
@@ -2763,9 +2780,10 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
             // Orientación del apuntado (Superfighters):
             // Si se mueve, orienta hacia la dirección del movimiento; si está quieto, mantiene última dirección
-            const moveDir = (keys['arrowleft'] || (gameMode === 'vsBot' && keys['a']))
+            const p1Controls = gameMode === 'local1v1' ? CONTROLS.LOCAL_1V1_P1 : CONTROLS.SOLO;
+            const moveDir = isAnyPressed(keys, p1Controls.left)
               ? -1
-              : (keys['arrowright'] || (gameMode === 'vsBot' && keys['d']))
+              : isAnyPressed(keys, p1Controls.right)
               ? 1
               : 0;
 
@@ -2781,12 +2799,12 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
               p1.pistolAnimFrame = (p1.pistolAnimFrame || 0) + 1;
 
               if (p1.pistolAnimFrame >= 4) {
-                // Ciclo continuo si mantiene 'N' o disparo con arma automática (Uzi, SilencedUzi, MachinePistol)
+                // Ciclo continuo si mantiene disparo o golpe con arma automática (Uzi, SilencedUzi, MachinePistol)
                 const isAuto =
                   p1.equippedWeapon === WeaponType.Uzi ||
                   p1.equippedWeapon === WeaponType.SilencedUzi ||
                   p1.equippedWeapon === WeaponType.MachinePistol;
-                const nHeld = !!keys['n'] || !!keys['N'] || !!keys['m'] || !!keys['M'];
+                const nHeld = isAnyPressed(keys, p1Controls.fire) || isAnyPressed(keys, p1Controls.melee);
 
                 if (isAuto && nHeld && p1.ammo > 0 && p1.attackCooldown <= 0) {
                   p1.pistolAnimFrame = 0;
@@ -2856,9 +2874,10 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
             // Orientación del apuntado (Superfighters):
             // Si se mueve, orienta hacia la dirección del movimiento; si está quieto, mantiene última dirección
-            const moveDir = (keys['arrowleft'] || (gameMode === 'vsBot' && keys['a']))
+            const p1Controls = gameMode === 'local1v1' ? CONTROLS.LOCAL_1V1_P1 : CONTROLS.SOLO;
+            const moveDir = isAnyPressed(keys, p1Controls.left)
               ? -1
-              : (keys['arrowright'] || (gameMode === 'vsBot' && keys['d']))
+              : isAnyPressed(keys, p1Controls.right)
               ? 1
               : 0;
 
@@ -2874,7 +2893,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
               p1.rifleAnimFrame = (p1.rifleAnimFrame || 0) + 1;
 
               if (p1.rifleAnimFrame >= 4) {
-                // Ciclo continuo si mantiene 'N' o disparo con arma automática (M60, Assault, TommyGun, SMG, Carbine, MP50)
+                // Ciclo continuo si mantiene disparo o golpe con arma automática (M60, Assault, TommyGun, SMG, Carbine, MP50)
                 const isAuto =
                   p1.equippedWeapon === WeaponType.M60 ||
                   p1.equippedWeapon === WeaponType.Assault ||
@@ -2883,7 +2902,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                   p1.equippedWeapon === WeaponType.SMG ||
                   p1.equippedWeapon === WeaponType.Carbine ||
                   p1.equippedWeapon === WeaponType.MP50;
-                const nHeld = !!keys['n'] || !!keys['N'] || !!keys['m'] || !!keys['M'];
+                const nHeld = isAnyPressed(keys, p1Controls.fire) || isAnyPressed(keys, p1Controls.melee);
 
                 if (isAuto && nHeld && p1.ammo > 0 && p1.attackCooldown <= 0) {
                   p1.rifleAnimFrame = 0;
@@ -2961,9 +2980,10 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
             // Orientación según la dirección hacia la que mira (flip_h):
             // Si pulsa izquierda/derecha actualiza la orientación; si no, mantiene la última dirección
-            const moveDir = (keys['arrowleft'] || (gameMode === 'vsBot' && keys['a']))
+            const p1Controls = gameMode === 'local1v1' ? CONTROLS.LOCAL_1V1_P1 : CONTROLS.SOLO;
+            const moveDir = isAnyPressed(keys, p1Controls.left)
               ? -1
-              : (keys['arrowright'] || (gameMode === 'vsBot' && keys['d']))
+              : isAnyPressed(keys, p1Controls.right)
               ? 1
               : 0;
 
@@ -3431,9 +3451,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           const jumpHeld = p2RawInput.jumpHeld;
           const rollPressed = p2RawInput.roll;
           const dropThrough = !!p2RawInput.dropThrough;
-          const crouchHeld = (scheme === 'wasd_p1')
-            ? !!keys['arrowdown']
-            : !!(keys['s'] || keys['S']);
+          const crouchHeld = isAnyPressed(keys, CONTROLS.LOCAL_1V1_P2.down);
 
           const isNinjaComboLocked = !!bot.isSwordAttacking || !!bot.isMeleeComboAttacking || !!bot.isOneHandAttacking || !!bot.isTwoHandAttacking;
 
@@ -3446,11 +3464,16 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             dropThrough: isNinjaComboLocked ? false : dropThrough,
           };
 
-          // Recuperación activa de derribo para P2 (1v1) mediante teclas de movimiento (W, A, S, D, salto, rodada)
+          // Recuperación activa de derribo para P2 (1v1) mediante teclas de movimiento (Flechas, salto, rodada, combate)
           if (bot.fsm === PlayerFSMState.KnockedDown || bot.fsm === PlayerFSMState.GetUp) {
             const hasDirInput = moveDir !== 0;
             const hasVerticalInput = jumpJustPressed || rollPressed || crouchHeld;
-            const anyP2Input = hasDirInput || hasVerticalInput || !!keys['j'] || !!keys['J'] || !!keys['k'] || !!keys['K'] || !!keys['l'] || !!keys['L'];
+            const anyP2Input =
+              hasDirInput ||
+              hasVerticalInput ||
+              isAnyPressed(keys, CONTROLS.LOCAL_1V1_P2.melee) ||
+              isAnyPressed(keys, CONTROLS.LOCAL_1V1_P2.fire) ||
+              isAnyPressed(keys, CONTROLS.LOCAL_1V1_P2.grenade);
 
             if (anyP2Input && bot.stateTicks >= 4) {
               if (rollPressed || (crouchHeld && hasDirInput)) {
@@ -4369,7 +4392,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                     bot.equippedWeapon === WeaponType.Uzi ||
                     bot.equippedWeapon === WeaponType.SilencedUzi ||
                     bot.equippedWeapon === WeaponType.MachinePistol;
-                  const kHeld = !!keys['k'] || !!keys['K'];
+                  const kHeld = isAnyPressed(keys, CONTROLS.LOCAL_1V1_P2.fire);
 
                   if (isAuto && kHeld && bot.ammo > 0 && bot.attackCooldown <= 0) {
                     bot.pistolAnimFrame = 0;
@@ -4447,7 +4470,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                     bot.equippedWeapon === WeaponType.SMG ||
                     bot.equippedWeapon === WeaponType.Carbine ||
                     bot.equippedWeapon === WeaponType.MP50;
-                  const kHeld = !!keys['k'] || !!keys['K'];
+                  const kHeld = isAnyPressed(keys, CONTROLS.LOCAL_1V1_P2.fire);
 
                   if (isAuto && kHeld && bot.ammo > 0 && bot.attackCooldown <= 0) {
                     bot.rifleAnimFrame = 0;
@@ -5881,11 +5904,11 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
         // P1 pickup
         const d1 = Math.hypot(w.x - p1.x, w.y - p1.y);
+        const p1Controls = gameMode === 'local1v1' ? CONTROLS.LOCAL_1V1_P1 : CONTROLS.SOLO;
         const canP1Pickup =
           p1.fsm === PlayerFSMState.Crouch ||
           p1.equippedWeapon === WeaponType.Fists ||
-          keys['arrowdown'] ||
-          (gameMode === 'vsBot' && keys['s']);
+          isAnyPressed(keys, p1Controls.down);
 
         if (d1 < 32 && canP1Pickup) {
           const wData = getWeapon(w.weaponType);
@@ -5958,7 +5981,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         const canBotPickup =
           bot.fsm === PlayerFSMState.Crouch ||
           bot.equippedWeapon === WeaponType.Fists ||
-          (gameMode === 'local1v1' && (keys['s'] || keys['S']));
+          (gameMode === 'local1v1' && isAnyPressed(keys, CONTROLS.LOCAL_1V1_P2.down));
 
         if (d2 < 32 && canBotPickup) {
           const wData = getWeapon(w.weaponType);
@@ -8190,7 +8213,12 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
               </h2>
 
               <button
-                onClick={() => setIsPaused(false)}
+                onClick={() => {
+                  if (stateRef.current) {
+                    stateRef.current.keysJustPressed = {};
+                  }
+                  setIsPaused(false);
+                }}
                 className="w-full px-4 py-2.5 bg-neutral-900 hover:bg-white hover:text-black text-white font-pixel text-[10px] border-2 border-white transition cursor-pointer text-center"
               >
                 [ CONTINUAR ] (ESC)

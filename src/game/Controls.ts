@@ -36,9 +36,9 @@ export const CONTROLS = {
     up: ['KeyW', 'Space', 'w', ' '],
     down: ['KeyS', 's'],
     run: ['ShiftLeft', 'KeyQ', 'shift', 'q'],
-    melee: ['KeyF', 'KeyJ', 'f', 'j'],
-    fire: ['KeyG', 'KeyK', 'g', 'k'],
-    grenade: ['KeyH', 'KeyL', 'h', 'l'],
+    melee: ['KeyF', 'f'],
+    fire: ['KeyG', 'g'],
+    grenade: ['KeyH', 'h'],
   } as ControlBinding,
 
   // Modo 1v1 Local — Jugador 2 (Flechas + N / M / Coma)

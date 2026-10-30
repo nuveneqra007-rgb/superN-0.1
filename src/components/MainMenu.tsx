@@ -132,10 +132,26 @@ export const MainMenu: React.FC<MainMenuProps> = ({
   const handleExecuteFight = useCallback((chosenWorldId: string, finalRounds: number, _modeName: GameModeOption) => {
     sounds.playPickup();
 
-    // Resolver facciones aleatorias al empezar la partida
-    const resolvedSlots: BotSlotConfig[] = botSlots.slice(0, numBots).map((slot) => {
+    // Resolver facciones aleatorias al empezar la partida sin repetir entre slots
+    // mientras queden facciones disponibles, excluyendo las ya elegidas explícitamente en otros slots;
+    // si se agotan, permite repetir.
+    const activeSlots = botSlots.slice(0, numBots);
+    const explicitFactions = new Set<BotFaction>();
+    activeSlots.forEach((slot) => {
+      if (slot.faction !== 'RANDOM') {
+        explicitFactions.add(slot.faction);
+      }
+    });
+
+    let availableFactions = CANONICAL_BOT_FACTIONS.filter((f) => !explicitFactions.has(f));
+
+    const resolvedSlots: BotSlotConfig[] = activeSlots.map((slot) => {
       if (slot.faction === 'RANDOM') {
-        const randFaction = CANONICAL_BOT_FACTIONS[Math.floor(Math.random() * CANONICAL_BOT_FACTIONS.length)];
+        if (availableFactions.length === 0) {
+          availableFactions = [...CANONICAL_BOT_FACTIONS];
+        }
+        const randIndex = Math.floor(Math.random() * availableFactions.length);
+        const randFaction = availableFactions.splice(randIndex, 1)[0];
         return { ...slot, faction: randFaction };
       }
       return slot;

@@ -1383,15 +1383,28 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       const activeSlots = configuredSlots.slice(0, ENGINE_MAX_BOTS);
       const allSpawns = computeFighterSpawns(worldCfg, 1 + activeSlots.length);
 
-      return activeSlots.map((slotCfg, idx) => {
+      const explicitFactions = new Set<BotFaction>();
+      activeSlots.forEach((slot) => {
+        if (slot.faction !== 'RANDOM') explicitFactions.add(slot.faction);
+      });
+      let availableFactions = CANONICAL_BOT_FACTIONS.filter((f) => !explicitFactions.has(f));
+
+      const resolvedActiveSlots = activeSlots.map((slotCfg) => {
+        if (slotCfg.faction === 'RANDOM') {
+          if (availableFactions.length === 0) availableFactions = [...CANONICAL_BOT_FACTIONS];
+          const randIndex = Math.floor(Math.random() * availableFactions.length);
+          const randFaction = availableFactions.splice(randIndex, 1)[0];
+          return { ...slotCfg, faction: randFaction };
+        }
+        return slotCfg;
+      });
+
+      return resolvedActiveSlots.map((slotCfg, idx) => {
         const id = idx + 2;
-        const faction: BotFaction =
-          slotCfg.faction === 'RANDOM'
-            ? CANONICAL_BOT_FACTIONS[Math.floor(Math.random() * CANONICAL_BOT_FACTIONS.length)]
-            : slotCfg.faction;
+        const faction = slotCfg.faction as BotFaction;
         const arch = getBotArchetype(faction);
         const spawn = allSpawns[idx + 1] || { x: 760, y: 460 };
-        const sameFactionCount = activeSlots.filter((s) => s.faction === slotCfg.faction).length;
+        const sameFactionCount = resolvedActiveSlots.filter((s) => s.faction === faction).length;
         const label = sameFactionCount > 1 ? `${arch.name.toUpperCase()} ${idx + 1}` : arch.name.toUpperCase();
 
         const state = createPlayerState(id, label, true, spawn.x, spawn.y);
@@ -3288,94 +3301,100 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             const p1FacingDir = p1.facingRight ? 1 : -1;
             const currentStep = p1.swordComboStep || 0;
             const hitReach = currentStep === 0 ? 68 : currentStep === 1 ? 74 : 84;
-            const isBotInReach =
-              bot.isAlive &&
-              !bot.isGrabbed &&
-              !s.p2Controller.isInvulnerable &&
-              bot.fsm !== PlayerFSMState.Roll &&
-              ((p1FacingDir > 0 && bot.x >= p1.x - 10 && bot.x <= p1.x + hitReach) ||
-               (p1FacingDir < 0 && bot.x <= p1.x + 10 && bot.x >= p1.x - hitReach)) &&
-              Math.abs(bot.y - p1.y) < 42;
-
             const wpn = getWeapon(p1.equippedWeapon);
             const wpnName = wpn.name || 'ESPADA';
 
-            if (isBotInReach) {
-              sounds.playBladeHit();
-              let damage = 22 * p1.damageDealtModifier;
-              let shake = 6;
-              let stun = 16;
-              let hitStop = 3;
-              let kbX = p1FacingDir * 190;
-              let isKnockdown = false;
-              let textPrefix = `¡TAJO I (${wpnName.toUpperCase()})!`;
-              let textColor = '#38bdf8';
+            for (const bInst of s.bots) {
+              const bot = bInst.state;
+              if (!bot.isAlive || bot.isGrabbed) continue;
+              const isInvuln =
+                bot.id === 2 && gameMode === 'local1v1'
+                  ? s.p2Controller.isInvulnerable
+                  : bot.fsm !== PlayerFSMState.Roll;
+              if (isInvuln) continue;
 
-              if (currentStep === 0) {
-                damage = 22 * p1.damageDealtModifier;
-                shake = 6;
-                stun = 16;
-                hitStop = 3;
-                kbX = p1FacingDir * 190;
-                addSparks(bot.x, bot.y, '#38bdf8', 16);
-                addSparks(bot.x, bot.y, '#ffffff', 10);
-              } else if (currentStep === 1) {
-                damage = 30 * p1.damageDealtModifier;
-                shake = 9;
-                stun = 20;
-                hitStop = 4;
-                kbX = p1FacingDir * 270;
-                textPrefix = `¡TAJO II (${wpnName.toUpperCase()})!`;
-                addSparks(bot.x, bot.y, '#38bdf8', 22);
-                addSparks(bot.x, bot.y, '#ffffff', 14);
-              } else {
-                damage = 44 * p1.damageDealtModifier;
-                shake = 14;
-                stun = 28;
-                hitStop = 6;
-                kbX = p1FacingDir * 390;
-                isKnockdown = true;
-                textPrefix = `¡REMATE NINJA (${wpnName.toUpperCase()})!`;
-                textColor = '#06b6d4';
-                sounds.playHeavyBladeSlash();
-                addSparks(bot.x, bot.y - 10, '#38bdf8', 28);
-                addSparks(bot.x, bot.y - 10, '#e0f2fe', 22);
-                addSparks(bot.x, bot.y - 10, '#ffffff', 16);
-                CombatSystem.disarmPlayer(bot);
-              }
+              const isBotInReach =
+                ((p1FacingDir > 0 && bot.x >= p1.x - 10 && bot.x <= p1.x + hitReach) ||
+                 (p1FacingDir < 0 && bot.x <= p1.x + 10 && bot.x >= p1.x - hitReach)) &&
+                Math.abs(bot.y - p1.y) < 42;
 
-              const hitRes = CombatSystem.applyHit(bot, {
-                damage,
-                kbX,
-                kbY: isKnockdown ? -270 : undefined,
-                stunTicks: stun,
-                hitStop,
-                screenShake: shake,
-                causedKnockdown: isKnockdown,
-                attacker: p1,
-                weaponType: p1.equippedWeapon,
-              });
-
-              s.screenShake = hitRes.screenShake;
-              s.hitStopTicks = hitRes.hitStop;
-              if (gameMode === 'local1v1') {
-                s.p2Controller.setPosition(bot.x, bot.y);
-                s.p2Controller.vx = bot.velocityX;
-                s.p2Controller.vy = bot.velocityY;
-              }
-              if (hitRes.isDead) {
+              if (isBotInReach) {
                 sounds.playBladeHit();
-              }
-              addBloodParticles(bot.x, bot.y, p1FacingDir, hitRes.finalDamage);
+                let damage = 22 * p1.damageDealtModifier;
+                let shake = 6;
+                let stun = 16;
+                let hitStop = 3;
+                let kbX = p1FacingDir * 190;
+                let isKnockdown = false;
+                let textPrefix = `¡TAJO I (${wpnName.toUpperCase()})!`;
+                let textColor = '#38bdf8';
 
-              s.floatingTexts.push({
-                id: s.nextEntityId++,
-                text: `${textPrefix} -${Math.round(hitRes.finalDamage)}`,
-                x: bot.x,
-                y: bot.y - 32,
-                color: textColor,
-                life: isKnockdown ? 48 : 36,
-              });
+                if (currentStep === 0) {
+                  damage = 22 * p1.damageDealtModifier;
+                  shake = 6;
+                  stun = 16;
+                  hitStop = 3;
+                  kbX = p1FacingDir * 190;
+                  addSparks(bot.x, bot.y, '#38bdf8', 16);
+                  addSparks(bot.x, bot.y, '#ffffff', 10);
+                } else if (currentStep === 1) {
+                  damage = 30 * p1.damageDealtModifier;
+                  shake = 9;
+                  stun = 20;
+                  hitStop = 4;
+                  kbX = p1FacingDir * 270;
+                  textPrefix = `¡TAJO II (${wpnName.toUpperCase()})!`;
+                  addSparks(bot.x, bot.y, '#38bdf8', 22);
+                  addSparks(bot.x, bot.y, '#ffffff', 14);
+                } else {
+                  damage = 44 * p1.damageDealtModifier;
+                  shake = 14;
+                  stun = 28;
+                  hitStop = 6;
+                  kbX = p1FacingDir * 390;
+                  isKnockdown = true;
+                  textPrefix = `¡REMATE NINJA (${wpnName.toUpperCase()})!`;
+                  textColor = '#06b6d4';
+                  sounds.playHeavyBladeSlash();
+                  addSparks(bot.x, bot.y - 10, '#38bdf8', 28);
+                  addSparks(bot.x, bot.y - 10, '#e0f2fe', 22);
+                  addSparks(bot.x, bot.y - 10, '#ffffff', 16);
+                  CombatSystem.disarmPlayer(bot);
+                }
+
+                const hitRes = CombatSystem.applyHit(bot, {
+                  damage,
+                  kbX,
+                  kbY: isKnockdown ? -270 : undefined,
+                  stunTicks: stun,
+                  hitStop,
+                  screenShake: shake,
+                  causedKnockdown: isKnockdown,
+                  attacker: p1,
+                  weaponType: p1.equippedWeapon,
+                });
+
+                s.screenShake = hitRes.screenShake;
+                s.hitStopTicks = hitRes.hitStop;
+                if (gameMode === 'local1v1') {
+                  s.p2Controller.setPosition(bot.x, bot.y);
+                  s.p2Controller.vx = bot.velocityX;
+                  s.p2Controller.vy = bot.velocityY;
+                }
+                if (hitRes.isDead) {
+                  sounds.playBladeHit();
+                }
+                addBloodParticles(bot.x, bot.y, p1FacingDir, hitRes.finalDamage);
+
+                s.floatingTexts.push({
+                  id: s.nextEntityId++,
+                  text: `${textPrefix} -${Math.round(hitRes.finalDamage)}`,
+                  x: bot.x,
+                  y: bot.y - 32,
+                  color: textColor,
+                  life: isKnockdown ? 48 : 36,
+                });
+              }
             }
 
             s.crates.forEach((c) => {
@@ -3436,50 +3455,61 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             p1.oneHandHasHit = true;
             const p1FacingDir = p1.facingRight ? 1 : -1;
             const hitReach = 58;
-            const isBotInReach =
-              bot.isAlive &&
-              !bot.isGrabbed &&
-              !s.p2Controller.isInvulnerable &&
-              bot.fsm !== PlayerFSMState.Roll &&
-              ((p1FacingDir > 0 && bot.x >= p1.x - 10 && bot.x <= p1.x + hitReach) ||
-               (p1FacingDir < 0 && bot.x <= p1.x + 10 && bot.x >= p1.x - hitReach)) &&
-              Math.abs(bot.y - p1.y) < 34;
-
             const wpn = getWeapon(p1.equippedWeapon);
             const isBlade = isBladeWeapon(p1.equippedWeapon);
             const baseDmg = wpn.damage || 16;
             const finalDmg = baseDmg * p1.damageDealtModifier;
 
-            if (isBotInReach) {
-              if (isBlade) {
-                sounds.playBladeHit();
-                addSparks(bot.x, bot.y, '#38bdf8', 16);
-                addSparks(bot.x, bot.y, '#ffffff', 10);
-              } else {
-                sounds.playHit();
-                addSparks(bot.x, bot.y, '#f59e0b', 16);
+            for (const bInst of s.bots) {
+              const bot = bInst.state;
+              if (!bot.isAlive || bot.isGrabbed) continue;
+              const isInvuln =
+                bot.id === 2 && gameMode === 'local1v1'
+                  ? s.p2Controller.isInvulnerable
+                  : bot.fsm !== PlayerFSMState.Roll;
+              if (isInvuln) continue;
+
+              const isBotInReach =
+                ((p1FacingDir > 0 && bot.x >= p1.x - 10 && bot.x <= p1.x + hitReach) ||
+                 (p1FacingDir < 0 && bot.x <= p1.x + 10 && bot.x >= p1.x - hitReach)) &&
+                Math.abs(bot.y - p1.y) < 34;
+
+              if (isBotInReach) {
+                if (isBlade) {
+                  sounds.playBladeHit();
+                  addSparks(bot.x, bot.y, '#38bdf8', 16);
+                  addSparks(bot.x, bot.y, '#ffffff', 10);
+                } else {
+                  sounds.playHit();
+                  addSparks(bot.x, bot.y, '#f59e0b', 16);
+                }
+
+                const hitRes = CombatSystem.applyHit(bot, {
+                  damage: finalDmg,
+                  kbX: p1FacingDir * 170,
+                  stunTicks: GameConstants.HitstunTicksLight,
+                  attacker: p1,
+                  weaponType: p1.equippedWeapon,
+                  screenShake: 7,
+                });
+                s.screenShake = hitRes.screenShake;
+                s.hitStopTicks = hitRes.hitStop;
+                if (gameMode === 'local1v1') {
+                  s.p2Controller.setPosition(bot.x, bot.y);
+                  s.p2Controller.vx = bot.velocityX;
+                  s.p2Controller.vy = bot.velocityY;
+                }
+                addBloodParticles(bot.x, bot.y, p1FacingDir, hitRes.finalDamage);
+
+                s.floatingTexts.push({
+                  id: s.nextEntityId++,
+                  text: `¡${wpn.name.toUpperCase()}! -${Math.round(hitRes.finalDamage)}`,
+                  x: bot.x,
+                  y: bot.y - 32,
+                  color: isBlade ? '#38bdf8' : '#f59e0b',
+                  life: 35,
+                });
               }
-
-              const hitRes = CombatSystem.applyHit(bot, {
-                damage: finalDmg,
-                kbX: p1FacingDir * 170,
-                stunTicks: GameConstants.HitstunTicksLight,
-                attacker: p1,
-                weaponType: p1.equippedWeapon,
-                screenShake: 7,
-              });
-              s.screenShake = hitRes.screenShake;
-              s.hitStopTicks = hitRes.hitStop;
-              addBloodParticles(bot.x, bot.y, p1FacingDir, hitRes.finalDamage);
-
-              s.floatingTexts.push({
-                id: s.nextEntityId++,
-                text: `¡${wpn.name.toUpperCase()}! -${Math.round(hitRes.finalDamage)}`,
-                x: bot.x,
-                y: bot.y - 32,
-                color: isBlade ? '#38bdf8' : '#f59e0b',
-                life: 35,
-              });
             }
 
             // Impacto en cajas del escenario
@@ -4023,84 +4053,98 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             p1.meleeHasHit = true;
             const p1FacingDir = p1.facingRight ? 1 : -1;
             const hitReach = 50;
-            const isBotInReach =
-              bot.isAlive &&
-              !bot.isGrabbed &&
-              !s.p2Controller.isInvulnerable &&
-              bot.fsm !== PlayerFSMState.Roll &&
-              ((p1FacingDir > 0 && bot.x >= p1.x - 10 && bot.x <= p1.x + hitReach) ||
-               (p1FacingDir < 0 && bot.x <= p1.x + 10 && bot.x >= p1.x - hitReach)) &&
-              Math.abs(bot.y - p1.y) < 32;
 
-            if (isBotInReach) {
-              sounds.playHit();
-              let damage = 12;
-              let shake = 5;
-              let kbX = p1FacingDir * 110;
-              let kbY: number | undefined = undefined;
-              let causedKnockdown = false;
-              let stunTicks = GameConstants.HitstunTicksLight;
-              let text = '¡PUÑETAZO!';
-              let textColor = '#38bdf8';
+            for (const bInst of s.bots) {
+              const bot = bInst.state;
+              if (!bot.isAlive || bot.isGrabbed) continue;
+              const isInvuln =
+                bot.id === 2 && gameMode === 'local1v1'
+                  ? s.p2Controller.isInvulnerable
+                  : bot.fsm !== PlayerFSMState.Roll;
+              if (isInvuln) continue;
 
-              if (p1.meleeComboStep === 0) {
-                // Fila 1: Puñetazo
-                damage = 12 * p1.damageDealtModifier;
-                shake = 5;
-                kbX = p1FacingDir * 110;
-                stunTicks = GameConstants.HitstunTicksLight;
-                text = `¡PUÑETAZO! -${Math.round(damage)}`;
-                textColor = '#38bdf8';
-                addSparks(bot.x, bot.y, '#38bdf8', 14);
-              } else if (p1.meleeComboStep === 1) {
-                // Fila 2: Patada
-                damage = 18 * p1.damageDealtModifier;
-                shake = 8;
-                kbX = p1FacingDir * 200;
-                stunTicks = GameConstants.HitstunTicksLight;
-                text = `¡PATADA! -${Math.round(damage)}`;
-                textColor = '#f59e0b';
-                addSparks(bot.x, bot.y, '#f59e0b', 18);
-                addSparks(bot.x, bot.y, '#ffffff', 12);
-              } else {
-                // Fila 3: Uppercut (Lanzamiento vertical demoledor y derribo)
-                damage = 28 * p1.damageDealtModifier;
-                shake = 14;
-                kbX = p1FacingDir * 240;
-                kbY = -390;
-                s.p2Controller.vy = -390;
-                causedKnockdown = true;
-                stunTicks = GameConstants.HitstunTicksStrong;
-                text = `¡UPPERCUT! -${Math.round(damage)}`;
-                textColor = '#ef4444';
-                sounds.playHeavySmash();
-                addSparks(bot.x, bot.y - 12, '#ef4444', 26);
-                addSparks(bot.x, bot.y - 12, '#fde047', 20);
-                addSparks(bot.x, bot.y - 12, '#ffffff', 16);
+              const isBotInReach =
+                ((p1FacingDir > 0 && bot.x >= p1.x - 10 && bot.x <= p1.x + hitReach) ||
+                 (p1FacingDir < 0 && bot.x <= p1.x + 10 && bot.x >= p1.x - hitReach)) &&
+                Math.abs(bot.y - p1.y) < 32;
+
+              if (isBotInReach) {
+                sounds.playHit();
+                let damage = 12;
+                let shake = 5;
+                let kbX = p1FacingDir * 110;
+                let kbY: number | undefined = undefined;
+                let causedKnockdown = false;
+                let stunTicks = GameConstants.HitstunTicksLight;
+                let text = '¡PUÑETAZO!';
+                let textColor = '#38bdf8';
+
+                if (p1.meleeComboStep === 0) {
+                  // Fila 1: Puñetazo
+                  damage = 12 * p1.damageDealtModifier;
+                  shake = 5;
+                  kbX = p1FacingDir * 110;
+                  stunTicks = GameConstants.HitstunTicksLight;
+                  text = `¡PUÑETAZO! -${Math.round(damage)}`;
+                  textColor = '#38bdf8';
+                  addSparks(bot.x, bot.y, '#38bdf8', 14);
+                } else if (p1.meleeComboStep === 1) {
+                  // Fila 2: Patada
+                  damage = 18 * p1.damageDealtModifier;
+                  shake = 8;
+                  kbX = p1FacingDir * 200;
+                  stunTicks = GameConstants.HitstunTicksLight;
+                  text = `¡PATADA! -${Math.round(damage)}`;
+                  textColor = '#f59e0b';
+                  addSparks(bot.x, bot.y, '#f59e0b', 18);
+                  addSparks(bot.x, bot.y, '#ffffff', 12);
+                } else {
+                  // Fila 3: Uppercut (Lanzamiento vertical demoledor y derribo)
+                  damage = 28 * p1.damageDealtModifier;
+                  shake = 14;
+                  kbX = p1FacingDir * 240;
+                  kbY = -390;
+                  if (bot.id === 2 && gameMode === 'local1v1') {
+                    s.p2Controller.vy = -390;
+                  }
+                  causedKnockdown = true;
+                  stunTicks = GameConstants.HitstunTicksStrong;
+                  text = `¡UPPERCUT! -${Math.round(damage)}`;
+                  textColor = '#ef4444';
+                  sounds.playHeavySmash();
+                  addSparks(bot.x, bot.y - 12, '#ef4444', 26);
+                  addSparks(bot.x, bot.y - 12, '#fde047', 20);
+                  addSparks(bot.x, bot.y - 12, '#ffffff', 16);
+                }
+
+                const hitRes = CombatSystem.applyHit(bot, {
+                  damage,
+                  kbX,
+                  kbY,
+                  stunTicks,
+                  causedKnockdown,
+                  attacker: p1,
+                  weaponType: WeaponType.Fists,
+                  screenShake: shake,
+                });
+                s.screenShake = hitRes.screenShake;
+                s.hitStopTicks = hitRes.hitStop;
+                if (gameMode === 'local1v1') {
+                  s.p2Controller.setPosition(bot.x, bot.y);
+                  s.p2Controller.vx = bot.velocityX;
+                  s.p2Controller.vy = bot.velocityY;
+                }
+                addBloodParticles(bot.x, bot.y, p1FacingDir, hitRes.finalDamage);
+
+                s.floatingTexts.push({
+                  id: s.nextEntityId++,
+                  text,
+                  x: bot.x,
+                  y: bot.y - 32,
+                  color: textColor,
+                  life: 35,
+                });
               }
-
-              const hitRes = CombatSystem.applyHit(bot, {
-                damage,
-                kbX,
-                kbY,
-                stunTicks,
-                causedKnockdown,
-                attacker: p1,
-                weaponType: WeaponType.Fists,
-                screenShake: shake,
-              });
-              s.screenShake = hitRes.screenShake;
-              s.hitStopTicks = hitRes.hitStop;
-              addBloodParticles(bot.x, bot.y, p1FacingDir, hitRes.finalDamage);
-
-              s.floatingTexts.push({
-                id: s.nextEntityId++,
-                text,
-                x: bot.x,
-                y: bot.y - 32,
-                color: textColor,
-                life: 35,
-              });
             }
 
             // Daño e interacción con cajas destructibles
@@ -7475,12 +7519,12 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           p1GrenadeCount: s.p1Grenades.ammo[s.p1Grenades.activeType] || 0,
           p1GrenadeTotal: getTotalGrenades(s.p1Grenades),
           p1GrenadeMax: GRENADE_MAX_CAPACITY,
-          botHealth: bot.health,
-          botMaxHealth: bot.maxHealth,
-          botWeapon: bot.equippedWeapon,
-          botAmmo: bot.ammo,
-          botGrenadeType: s.botGrenades.activeType,
-          botGrenadeCount: s.botGrenades.ammo[s.botGrenades.activeType] || 0,
+          botHealth: s.bots[0]?.state.health ?? 0,
+          botMaxHealth: s.bots[0]?.state.maxHealth ?? 100,
+          botWeapon: s.bots[0]?.state.equippedWeapon ?? WeaponType.Fists,
+          botAmmo: s.bots[0]?.state.ammo ?? 0,
+          botGrenadeType: s.bots[0]?.grenades.activeType ?? GrenadeType.Frag,
+          botGrenadeCount: s.bots[0]?.grenades ? (s.bots[0].grenades.ammo[s.bots[0].grenades.activeType] || 0) : 0,
           round: s.round,
           p1Score: s.p1Score,
           botScore: s.botScore,
@@ -8191,7 +8235,8 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         p: PlayerState,
         sprite: HTMLImageElement | null,
         nameTagColor: string,
-        playerId: number
+        playerId: number,
+        isDuplicateFaction: boolean = false
       ) => {
         // Dimensiones aumentadas para hacer a los personajes más grandes y visibles en pantalla
         const isBigFighter =
@@ -8210,7 +8255,11 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         const runSheet = isP1 ? s.p1RunSheet : (is1v1 ? s.botRunSheet : null);
         const rollSheet = isP1 ? s.p1RollSheet : (is1v1 ? s.botRollSheet : null);
         const jumpSheet = isP1 ? s.p1JumpSheet : (is1v1 ? s.botJumpSheet : null);
-        const idleImg = isP1 ? s.p1IdleSprite : (s.botIdleSprite || s.p1IdleSprite);
+        const idleImg = isP1
+          ? s.p1IdleSprite
+          : is1v1
+          ? (s.botIdleSprite || s.p1IdleSprite)
+          : (sprite || s.botIdleSprite);
         const cfg = isP1 ? s.p1SheetConfig : (is1v1 ? s.botSheetConfig : null);
         const activeThrowSheet = isP1 ? s.p1ThrowUpSheet : (is1v1 ? s.botThrowUpSheet : null);
         const activeRifleSheet = isP1 ? s.p1RifleSheet : (is1v1 ? s.botRifleSheet : null);
@@ -8244,9 +8293,20 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           ctx.translate(p.x, p.y + 16);
           ctx.rotate((p.facingRight ? 1 : -1) * 1.5);
           ctx.globalAlpha = 0.65;
-          const deadImg = idleImg || sprite;
+          const deadImg = isP1 || is1v1 ? (idleImg || sprite) : (sprite || s.botIdleSprite);
           if (deadImg && deadImg.complete && deadImg.naturalWidth > 0) {
             ctx.drawImage(deadImg, drawX, drawY, charW, charH);
+            if (!isP1 && isDuplicateFaction) {
+              ctx.save();
+              ctx.globalCompositeOperation = 'source-atop';
+              ctx.fillStyle = nameTagColor;
+              ctx.globalAlpha = 0.25;
+              ctx.fillRect(drawX, drawY, charW, charH);
+              ctx.restore();
+              ctx.strokeStyle = nameTagColor;
+              ctx.lineWidth = 1.5;
+              ctx.strokeRect(drawX, drawY, charW, charH);
+            }
           } else {
             ctx.fillStyle = 'rgba(100, 116, 139, 0.6)';
             ctx.fillRect(-charW / 3, -charH / 2, (charW * 2) / 3, charH);
@@ -8860,6 +8920,20 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           ctx.lineWidth = 1;
           ctx.strokeRect(drawX, drawY, charW, charH);
           ctx.restore();
+        } else if (isDuplicateFaction) {
+          // Distinción visual para bots de la misma facción: tinte de color suave y contorno con inst.color
+          ctx.save();
+          ctx.strokeStyle = nameTagColor;
+          ctx.lineWidth = 2;
+          ctx.shadowColor = nameTagColor;
+          ctx.shadowBlur = 6;
+          ctx.strokeRect(drawX - 1, drawY - 1, charW + 2, charH + 2);
+
+          ctx.globalCompositeOperation = 'source-atop';
+          ctx.fillStyle = nameTagColor;
+          ctx.globalAlpha = 0.22;
+          ctx.fillRect(drawX, drawY, charW, charH);
+          ctx.restore();
         }
 
         // Arma equipada en mano (proporcional al personaje aumentado)
@@ -8872,7 +8946,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         }
 
         // Granada táctica activa visible en el cinturón / funda del combatiente
-        const fighterGrenades = isP1 ? s.p1Grenades : s.botGrenades;
+        const fighterGrenades = isP1 ? s.p1Grenades : (s.bots.find((b) => b.id === p.id)?.grenades || s.bots[0]?.grenades || s.p1Grenades);
         const activeGType = fighterGrenades.activeType;
         const activeCount = fighterGrenades.ammo[activeGType] || 0;
         if (activeCount > 0) {
@@ -8952,9 +9026,10 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         renderGroundedShadow(inst.state);
       }
 
-      renderFighter(s.p1, s.p1Sprite, '#38bdf8', 1);
+      renderFighter(s.p1, s.p1Sprite, '#38bdf8', 1, false);
       for (const inst of s.bots) {
-        renderFighter(inst.state, inst.sprite || s.botSprite, inst.color, inst.id);
+        const isDuplicateFaction = gameMode !== 'local1v1' && s.bots.filter((b) => b.faction === inst.faction).length > 1;
+        renderFighter(inst.state, inst.sprite || s.botSprite, inst.color, inst.id, isDuplicateFaction);
       }
 
       // 11. PROYECTILES

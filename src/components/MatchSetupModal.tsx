@@ -294,24 +294,21 @@ export const MatchSetupModal: React.FC<MatchSetupModalProps> = ({
             </div>
           </div>
 
-          {/* 3. GAME MODE */}
+          {/* 3. ROUNDS */}
           <div
             onClick={() => setSelectedRow(2)}
             onMouseEnter={() => setSelectedRow(2)}
-            className="flex items-center justify-between cursor-pointer py-1 px-1 transition"
+            className={`flex items-center justify-between cursor-pointer py-1.5 px-2 transition rounded ${
+              selectedRow === 2 ? 'bg-neutral-900 border border-white/40' : 'border border-transparent'
+            }`}
           >
             <div className="flex items-center gap-2">
-              <span className={selectedRow === 2 ? 'text-white font-black' : 'text-neutral-200'}>
-                GAME MODE
+              <span className={selectedRow === 2 ? 'text-white font-black' : 'text-neutral-300'}>
+                ROUNDS
               </span>
-              {selectedRow === 2 && (
-                <span className="text-white text-base font-black animate-pulse leading-none">
-                  ◄
-                </span>
-              )}
             </div>
 
-            {/* Selector de Modo */}
+            {/* Selector de Rondas */}
             <div className="flex items-center gap-3">
               <button
                 type="button"
@@ -321,7 +318,7 @@ export const MatchSetupModal: React.FC<MatchSetupModalProps> = ({
                   cycleGameMode(-1);
                 }}
                 className="text-white hover:text-yellow-300 px-1 text-sm font-black transition cursor-pointer active:scale-125"
-                title="Modo anterior (Flecha Izq)"
+                title="Rondas anterior (Flecha Izq)"
               >
                 ◀
               </button>
@@ -332,7 +329,7 @@ export const MatchSetupModal: React.FC<MatchSetupModalProps> = ({
                   setSelectedRow(2);
                   cycleGameMode(1);
                 }}
-                className="text-white font-black tracking-wider text-xs sm:text-sm min-w-[120px] sm:min-w-[140px] text-center uppercase"
+                className="text-yellow-300 font-black tracking-wider text-xs sm:text-sm min-w-[120px] sm:min-w-[140px] text-center uppercase"
               >
                 {currentGameMode}
               </span>

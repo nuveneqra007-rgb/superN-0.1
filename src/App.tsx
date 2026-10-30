@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { BotFaction, getBotArchetype } from './game/BotData';
+import { BotFaction, BotSlotConfig, getBotArchetype } from './game/BotData';
 import { LandingScreen } from './components/LandingScreen';
 import { ModeSelectScreen, GameMode } from './components/ModeSelectScreen';
 import { MainMenu } from './components/MainMenu';
@@ -18,6 +18,9 @@ export const App: React.FC = () => {
 
   const [playerFaction, setPlayerFaction] = useState<BotFaction>(BotFaction.Ninja);
   const [botFaction, setBotFaction] = useState<BotFaction>(BotFaction.Thug);
+  const [botSlots, setBotSlots] = useState<BotSlotConfig[]>([
+    { faction: 'RANDOM', difficulty: 'normal', team: 'independent' },
+  ]);
   const [rounds, setRounds] = useState<number>(5);
   const [selectedWorldId, setSelectedWorldId] = useState<string | null>(null);
 
@@ -56,12 +59,16 @@ export const App: React.FC = () => {
     player: BotFaction,
     bot: BotFaction,
     worldId: string,
-    numRounds: number
+    numRounds: number,
+    slots?: BotSlotConfig[]
   ) => {
     setPlayerFaction(player);
     setBotFaction(bot);
     setSelectedWorldId(worldId);
     setRounds(numRounds);
+    if (slots && slots.length > 0) {
+      setBotSlots(slots);
+    }
     transitionTo('arena');
   };
 
@@ -128,6 +135,7 @@ export const App: React.FC = () => {
             gameMode={gameMode}
             playerFaction={playerFaction}
             botFaction={botFaction}
+            botSlots={botSlots}
             maxRounds={rounds}
             worldId={selectedWorldId || 'classic'}
             onExitToMenu={handleExitToWorldSelect}

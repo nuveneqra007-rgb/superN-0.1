@@ -502,6 +502,75 @@ export const CombatSystem = {
     return dmg;
   },
 
+  applyHit(target: PlayerState, params: {
+    damage: number;
+    kbX: number;
+    kbY?: number;
+    stunTicks?: number;
+    hitStop?: number;
+    causedKnockdown?: boolean;
+    attacker?: PlayerState;
+    weaponType?: WeaponType;
+    screenShake?: number;
+  }): {
+    finalDamage: number;
+    isDead: boolean;
+    causedKnockdown: boolean;
+    stunTicks: number;
+    hitStop: number;
+    screenShake: number;
+  } {
+    const finalDamage = Math.max(1, params.damage * (target.damageTakenModifier || 1.0));
+    target.health = Math.max(0, target.health - finalDamage);
+    target.hitFlashTicks = 2; // 2 frames de destello blanco retro
+
+    target.velocityX = params.kbX;
+    if (params.kbY !== undefined) {
+      target.velocityY = params.kbY;
+    }
+
+    const causedKnockdown = !!params.causedKnockdown || target.health <= 0;
+    const stunTicks = params.stunTicks ?? (causedKnockdown ? GameConstants.HitstunTicksStrong : GameConstants.HitstunTicksLight);
+    const hitStop = params.hitStop ?? (causedKnockdown ? 6 : 4);
+    const screenShake = params.screenShake ?? (causedKnockdown ? 14 : 7);
+
+    if (target.health <= 0) {
+      target.health = 0;
+      target.isAlive = false;
+      PlayerFSM.tryTransition(target, PlayerFSMState.Dead);
+      target.deaths++;
+      if (params.attacker) {
+        params.attacker.kills++;
+      }
+    } else if (causedKnockdown) {
+      target.onGround = false;
+      target.knockdownTicks = 45;
+      PlayerFSM.tryTransition(target, PlayerFSMState.KnockedDown);
+    } else {
+      target.hitstunTicks = stunTicks;
+      PlayerFSM.tryTransition(target, PlayerFSMState.Hitstun);
+    }
+
+    if (params.attacker) {
+      const upperName = params.attacker.name.toUpperCase();
+      if (upperName.includes('BIKER') || upperName.includes('MOTERO')) {
+        params.attacker.health = Math.min(params.attacker.maxHealth, params.attacker.health + 4);
+      }
+      if (upperName.includes('BERSERKER')) {
+        params.attacker.health = Math.min(params.attacker.maxHealth, params.attacker.health + 5);
+      }
+    }
+
+    return {
+      finalDamage,
+      isDead: !target.isAlive,
+      causedKnockdown,
+      stunTicks,
+      hitStop,
+      screenShake,
+    };
+  },
+
   applyDamage(
     p: PlayerState,
     dmg: number,
@@ -510,23 +579,13 @@ export const CombatSystem = {
     kbY: number,
     knockdown: boolean
   ): void {
-    p.health = Math.max(0, p.health - dmg);
-    p.velocityX = kbX;
-    p.velocityY = kbY;
-
-    if (p.health <= 0) {
-      p.health = 0;
-      p.isAlive = false;
-      PlayerFSM.tryTransition(p, PlayerFSMState.Dead);
-      return;
-    }
-
-    if (knockdown) {
-      PlayerFSM.tryTransition(p, PlayerFSMState.KnockedDown);
-    } else {
-      p.hitstunTicks = hitstunTicks;
-      PlayerFSM.tryTransition(p, PlayerFSMState.Hitstun);
-    }
+    this.applyHit(p, {
+      damage: dmg,
+      kbX,
+      kbY,
+      stunTicks: hitstunTicks,
+      causedKnockdown: knockdown,
+    });
   },
 
   disarmPlayer(p: PlayerState): void {

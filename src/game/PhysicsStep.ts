@@ -7,6 +7,7 @@
 import { GameConstants } from './GameConstants';
 import { PlayerFSM } from './PlayerFSM';
 import { PlayerFSMState, PlayerState } from './PlayerState';
+import { PLAYER_CONFIG } from './PlayerController';
 
 export interface PhysicsRect {
   x: number;
@@ -36,9 +37,12 @@ export const PhysicsStep = {
       return;
     }
 
-    p.velocityY += GameConstants.Gravity * this.deltaTime;
-    const maxFall = 800;
-    if (p.velocityY > maxFall) p.velocityY = maxFall;
+    // Gravedad asimétrica unificada idéntica a PLAYER_CONFIG
+    const gravity = p.velocityY < 0 ? PLAYER_CONFIG.GRAVITY_RISE : PLAYER_CONFIG.GRAVITY_FALL;
+    p.velocityY += gravity * this.deltaTime;
+    if (p.velocityY > PLAYER_CONFIG.TERMINAL_VELOCITY) {
+      p.velocityY = PLAYER_CONFIG.TERMINAL_VELOCITY;
+    }
   },
 
   applyMovement(p: PlayerState): void {
@@ -48,9 +52,13 @@ export const PhysicsStep = {
       p.velocityX *= GameConstants.AirFriction;
     }
 
+    if (Math.abs(p.velocityX) < 2) {
+      p.velocityX = 0;
+    }
+
     if (p.fsm === PlayerFSMState.Roll) {
       const dir = p.facingRight ? 1 : -1;
-      p.velocityX = dir * GameConstants.RollSpeed;
+      p.velocityX = dir * PLAYER_CONFIG.ROLL_SPEED;
     }
 
     p.x += p.velocityX * this.deltaTime;
@@ -125,9 +133,19 @@ export const PhysicsStep = {
   },
 
   clampToBounds(p: PlayerState): void {
+    const hw = GameConstants.HitboxStand.x / 2;
+    if (p.x < hw) {
+      p.x = hw;
+      p.velocityX = 0;
+    } else if (p.x > 960 - hw) {
+      p.x = 960 - hw;
+      p.velocityX = 0;
+    }
+
     const killY = 700;
     if (p.y > killY) {
       p.health = 0;
+      p.isAlive = false;
       PlayerFSM.tryTransition(p, PlayerFSMState.Dead);
     }
   },

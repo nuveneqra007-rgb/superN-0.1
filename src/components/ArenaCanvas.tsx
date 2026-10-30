@@ -4,14 +4,14 @@
 // =============================================================
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { BotFaction, getBotArchetype } from '../game/BotData';
+import { BotFaction, getBotArchetype, BotSlotConfig } from '../game/BotData';
 import { BotAI, BotAIState, createBotFSMData } from '../game/BotFSM';
 import { CombatSystem, HitResult } from '../game/CombatSystem';
 import { GameConstants } from '../game/GameConstants';
 import { PhysicsRect, PhysicsStep } from '../game/PhysicsStep';
 import { PlayerFSM } from '../game/PlayerFSM';
 import { createPlayerState, PlayerFSMState, PlayerState } from '../game/PlayerState';
-import { getWeapon, isBladeWeapon, isOneHandWeapon, isPistolWeapon, isRifleWeapon, isSwordWeapon, isThrowableWeapon, isTwoHandWeapon, SpawnableWeaponsList, WeaponCategory, WeaponDatabase, WeaponType } from '../game/WeaponData';
+import { getWeapon, isBladeWeapon, isOneHandWeapon, isPistolWeapon, isRifleWeapon, isSwordWeapon, isThrowableWeapon, isTwoHandWeapon, SpawnableWeaponsList, WeaponCategory, WeaponDatabase, WeaponType, getWeaponStunData } from '../game/WeaponData';
 import { PlayerController, PlayerInput, PlayerState as ControllerState, PLAYER_CONFIG } from '../game/PlayerController';
 import { sounds } from '../game/SoundEffects';
 import { getWorldConfig, WorldConfig, HazardCfg, PlatformRect } from '../game/WorldData';
@@ -34,10 +34,13 @@ import {
 } from '../game/GrenadeSystem';
 import { CONTROLS, isAnyPressed, CONTROLS_TEXT } from '../game/Controls';
 
+export const ENGINE_MAX_BOTS = 1;
+
 interface ArenaCanvasProps {
   gameMode?: GameMode;
   playerFaction?: BotFaction;
   botFaction: BotFaction;
+  botSlots?: BotSlotConfig[];
   maxRounds: number;
   worldId?: string;
   onExitToMenu: () => void;
@@ -395,6 +398,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
   gameMode = 'vsBot',
   playerFaction = BotFaction.Assassin,
   botFaction,
+  botSlots,
   maxRounds,
   worldId = 'classic',
   onExitToMenu,
@@ -407,7 +411,11 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
   const ARENA_HEIGHT = 540;
 
   const playerArch = getBotArchetype(playerFaction);
-  const botArch = getBotArchetype(botFaction);
+  const firstSlotFaction = (botSlots && botSlots.length > 0 && botSlots[0].faction !== 'RANDOM')
+    ? (botSlots[0].faction as BotFaction)
+    : botFaction;
+  const effectiveBotFaction = firstSlotFaction;
+  const botArch = getBotArchetype(effectiveBotFaction);
   const currentWorld = getWorldConfig(worldId);
 
   // React state for HUD
@@ -500,6 +508,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     worldConfig: WorldConfig;
     worldTick: number;
     screenShake: number;
+    hitStopTicks: number;
     weaponSpawnTimer: number;
     round: number;
     p1Score: number;
@@ -619,6 +628,26 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         maxLife: 22,
         color,
         size: 1.5 + Math.random() * 2,
+      });
+    }
+  };
+
+  const addBloodParticles = (x: number, y: number, dirX: number = 0, intensity: number = 10) => {
+    if (!stateRef.current) return;
+    const count = Math.min(24, Math.max(6, Math.round(intensity / 3)));
+    const bloodColors = ['#dc2626', '#b91c1c', '#991b1b', '#ef4444'];
+    for (let i = 0; i < count; i++) {
+      const angle = (dirX > 0 ? -0.3 : dirX < 0 ? Math.PI + 0.3 : -Math.PI / 2) + (Math.random() - 0.5) * 1.2;
+      const speed = 60 + Math.random() * 140;
+      stateRef.current.particles.push({
+        x: x + (Math.random() - 0.5) * 12,
+        y: y + (Math.random() - 0.5) * 16,
+        vx: Math.cos(angle) * speed + (dirX * 40),
+        vy: Math.sin(angle) * speed - 30,
+        life: 14 + Math.random() * 16,
+        maxLife: 30,
+        color: bloodColors[Math.floor(Math.random() * bloodColors.length)],
+        size: 1.8 + Math.random() * 2.2,
       });
     }
   };
@@ -1076,13 +1105,16 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       worldConfig: worldCfg,
       worldTick: 0,
       screenShake: 0,
+      hitStopTicks: 0,
       weaponSpawnTimer: 300,
       round: 1,
       p1Score: 0,
       botScore: 0,
       roundActive: true,
-      announcement: '¡PELEA!',
-      announcementTicks: 90,
+      announcement: (botSlots && botSlots.length > ENGINE_MAX_BOTS)
+        ? `${botSlots.length} BOTS (PROXIMAMENTE) — COMBATE 1V1`
+        : '¡PELEA!',
+      announcementTicks: (botSlots && botSlots.length > ENGINE_MAX_BOTS) ? 140 : 90,
       nextEntityId: 20,
       keys: {},
       keysJustPressed: {},
@@ -1636,27 +1668,39 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       const s = stateRef.current;
       if (!s) return;
 
+      // B-09 HIT-STOP: Congela la simulación durante el impacto mientras el shake continúa
+      if (s.hitStopTicks > 0) {
+        s.hitStopTicks--;
+        if (s.screenShake > 0) {
+          s.screenShake *= 0.88;
+          if (s.screenShake < 0.1) s.screenShake = 0;
+        }
+        return;
+      }
+
       s.worldTick++;
       const p1 = s.p1;
       const bot = s.bot;
       const keys = s.keys;
 
-      // Destello blanco de golpe (Hit Flash Feedback)
+      // Destello blanco de golpe (Hit Flash Feedback: 2 frames)
       if (p1.hitFlashTicks > 0) p1.hitFlashTicks--;
       if (bot.hitFlashTicks > 0) bot.hitFlashTicks--;
 
-      // Detección reactiva de daño para destello inmediato y partículas de impacto
+      // Detección reactiva de daño para destello inmediato y partículas de sangre/chispa
       if ((p1 as any)._prevHealth !== undefined && p1.health < (p1 as any)._prevHealth) {
-        p1.hitFlashTicks = 5;
+        const dmg = (p1 as any)._prevHealth - p1.health;
+        p1.hitFlashTicks = 2;
         addSparks(p1.x, p1.y, '#ffffff', 8);
-        addSparks(p1.x, p1.y, '#38bdf8', 6);
+        addBloodParticles(p1.x, p1.y, -p1.velocityX, dmg);
       }
       (p1 as any)._prevHealth = p1.health;
 
       if ((bot as any)._prevHealth !== undefined && bot.health < (bot as any)._prevHealth) {
-        bot.hitFlashTicks = 5;
+        const dmg = (bot as any)._prevHealth - bot.health;
+        bot.hitFlashTicks = 2;
         addSparks(bot.x, bot.y, '#ffffff', 8);
-        addSparks(bot.x, bot.y, '#f87171', 6);
+        addBloodParticles(bot.x, bot.y, -bot.velocityX, dmg);
       }
       (bot as any)._prevHealth = bot.health;
 
@@ -2476,22 +2520,30 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                 addSparks(bot.x, bot.y, '#fbbf24', 14);
               }
 
-              s.screenShake = 12; // Mayor sacudida por golpe pesado
-              bot.velocityX = p1FacingDir * 260; // Mayor retroceso
-              bot.hitstunTicks = 24; // Mayor aturdimiento
-              PlayerFSM.tryTransition(bot, PlayerFSMState.Hitstun);
-
-              bot.health = Math.max(0, bot.health - finalDmg);
-              if (bot.health <= 0) {
-                bot.health = 0;
-                bot.isAlive = false;
-                PlayerFSM.tryTransition(bot, PlayerFSMState.Dead);
+              const hitRes = CombatSystem.applyHit(bot, {
+                damage: finalDmg,
+                kbX: p1FacingDir * 260,
+                stunTicks: 24,
+                hitStop: 5,
+                screenShake: 12,
+                attacker: p1,
+                weaponType: p1.equippedWeapon,
+              });
+              s.screenShake = hitRes.screenShake;
+              s.hitStopTicks = hitRes.hitStop;
+              if (gameMode === 'local1v1') {
+                s.p2Controller.setPosition(bot.x, bot.y);
+                s.p2Controller.vx = bot.velocityX;
+                s.p2Controller.vy = bot.velocityY;
+              }
+              if (hitRes.isDead) {
                 sounds.playHit();
               }
+              addBloodParticles(bot.x, bot.y, p1FacingDir, hitRes.finalDamage);
 
               s.floatingTexts.push({
                 id: s.nextEntityId++,
-                text: `¡GOLPE PESADO (${wpn.name.toUpperCase()})! -${Math.round(finalDmg)}`,
+                text: `¡GOLPE PESADO (${wpn.name.toUpperCase()})! -${Math.round(hitRes.finalDamage)}`,
                 x: bot.x,
                 y: bot.y - 36,
                 color: '#f97316',
@@ -2571,42 +2623,41 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
             if (isBotInReach) {
               sounds.playBladeHit();
-              let damage = 22;
+              let damage = 22 * p1.damageDealtModifier;
               let shake = 6;
-              let text = '¡TAJO I!';
+              let stun = 16;
+              let hitStop = 3;
+              let kbX = p1FacingDir * 190;
+              let isKnockdown = false;
+              let textPrefix = `¡TAJO I (${wpnName.toUpperCase()})!`;
               let textColor = '#38bdf8';
 
               if (currentStep === 0) {
                 damage = 22 * p1.damageDealtModifier;
                 shake = 6;
-                text = `¡TAJO I (${wpnName.toUpperCase()})! -${Math.round(damage)}`;
-                textColor = '#38bdf8';
-                bot.velocityX = p1FacingDir * 190;
-                bot.hitstunTicks = 16;
-                PlayerFSM.tryTransition(bot, PlayerFSMState.Hitstun);
+                stun = 16;
+                hitStop = 3;
+                kbX = p1FacingDir * 190;
                 addSparks(bot.x, bot.y, '#38bdf8', 16);
                 addSparks(bot.x, bot.y, '#ffffff', 10);
               } else if (currentStep === 1) {
                 damage = 30 * p1.damageDealtModifier;
                 shake = 9;
-                text = `¡TAJO II (${wpnName.toUpperCase()})! -${Math.round(damage)}`;
-                textColor = '#38bdf8';
-                bot.velocityX = p1FacingDir * 270;
-                bot.hitstunTicks = 20;
-                PlayerFSM.tryTransition(bot, PlayerFSMState.Hitstun);
+                stun = 20;
+                hitStop = 4;
+                kbX = p1FacingDir * 270;
+                textPrefix = `¡TAJO II (${wpnName.toUpperCase()})!`;
                 addSparks(bot.x, bot.y, '#38bdf8', 22);
                 addSparks(bot.x, bot.y, '#ffffff', 14);
               } else {
                 damage = 44 * p1.damageDealtModifier;
                 shake = 14;
-                text = `¡REMATE NINJA (${wpnName.toUpperCase()})! -${Math.round(damage)}`;
+                stun = 28;
+                hitStop = 6;
+                kbX = p1FacingDir * 390;
+                isKnockdown = true;
+                textPrefix = `¡REMATE NINJA (${wpnName.toUpperCase()})!`;
                 textColor = '#06b6d4';
-                bot.velocityX = p1FacingDir * 390;
-                bot.velocityY = -270;
-                s.p2Controller.vy = -270;
-                bot.onGround = false;
-                bot.knockdownTicks = 45;
-                PlayerFSM.tryTransition(bot, PlayerFSMState.KnockedDown);
                 sounds.playHeavyBladeSlash();
                 addSparks(bot.x, bot.y - 10, '#38bdf8', 28);
                 addSparks(bot.x, bot.y - 10, '#e0f2fe', 22);
@@ -2614,22 +2665,37 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                 CombatSystem.disarmPlayer(bot);
               }
 
-              s.screenShake = shake;
-              bot.health = Math.max(0, bot.health - damage);
-              if (bot.health <= 0) {
-                bot.health = 0;
-                bot.isAlive = false;
-                PlayerFSM.tryTransition(bot, PlayerFSMState.Dead);
-                sounds.playHit();
+              const hitRes = CombatSystem.applyHit(bot, {
+                damage,
+                kbX,
+                kbY: isKnockdown ? -270 : undefined,
+                stunTicks: stun,
+                hitStop,
+                screenShake: shake,
+                causedKnockdown: isKnockdown,
+                attacker: p1,
+                weaponType: p1.equippedWeapon,
+              });
+
+              s.screenShake = hitRes.screenShake;
+              s.hitStopTicks = hitRes.hitStop;
+              if (gameMode === 'local1v1') {
+                s.p2Controller.setPosition(bot.x, bot.y);
+                s.p2Controller.vx = bot.velocityX;
+                s.p2Controller.vy = bot.velocityY;
               }
+              if (hitRes.isDead) {
+                sounds.playBladeHit();
+              }
+              addBloodParticles(bot.x, bot.y, p1FacingDir, hitRes.finalDamage);
 
               s.floatingTexts.push({
                 id: s.nextEntityId++,
-                text,
+                text: `${textPrefix} -${Math.round(hitRes.finalDamage)}`,
                 x: bot.x,
                 y: bot.y - 32,
                 color: textColor,
-                life: 38,
+                life: isKnockdown ? 48 : 36,
               });
             }
 
@@ -4099,22 +4165,28 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                   addSparks(p1.x, p1.y, '#fbbf24', 14);
                 }
 
-                s.screenShake = 12;
-                p1.velocityX = p2FacingDir * 260;
-                p1.hitstunTicks = 24;
-                PlayerFSM.tryTransition(p1, PlayerFSMState.Hitstun);
-
-                p1.health = Math.max(0, p1.health - finalDmg);
-                if (p1.health <= 0) {
-                  p1.health = 0;
-                  p1.isAlive = false;
-                  PlayerFSM.tryTransition(p1, PlayerFSMState.Dead);
+                const hitRes = CombatSystem.applyHit(p1, {
+                  damage: finalDmg,
+                  kbX: p2FacingDir * 260,
+                  stunTicks: 24,
+                  hitStop: 5,
+                  screenShake: 12,
+                  attacker: bot,
+                  weaponType: bot.equippedWeapon,
+                });
+                s.screenShake = hitRes.screenShake;
+                s.hitStopTicks = hitRes.hitStop;
+                s.p1Controller.setPosition(p1.x, p1.y);
+                s.p1Controller.vx = p1.velocityX;
+                s.p1Controller.vy = p1.velocityY;
+                if (hitRes.isDead) {
                   sounds.playHit();
                 }
+                addBloodParticles(p1.x, p1.y, p2FacingDir, hitRes.finalDamage);
 
                 s.floatingTexts.push({
                   id: s.nextEntityId++,
-                  text: `¡GOLPE PESADO (${wpn.name.toUpperCase()})! -${Math.round(finalDmg)}`,
+                  text: `¡GOLPE PESADO (${wpn.name.toUpperCase()})! -${Math.round(hitRes.finalDamage)}`,
                   x: p1.x,
                   y: p1.y - 36,
                   color: '#f97316',
@@ -4207,64 +4279,76 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
               if (isP1InReach) {
                 sounds.playBladeHit();
-                let damage = 22;
+                let damage = 22 * bot.damageDealtModifier;
                 let shake = 6;
-                let text = '¡TAJO I!';
+                let stun = 16;
+                let hitStop = 3;
+                let kbX = p2FacingDir * 190;
+                let isKnockdown = false;
+                let textPrefix = `¡TAJO I (${wpnName.toUpperCase()})!`;
                 let textColor = '#f43f5e';
 
                 if (currentStep === 0) {
                   damage = 22 * bot.damageDealtModifier;
                   shake = 6;
-                  text = `¡TAJO I (${wpnName.toUpperCase()})! -${Math.round(damage)}`;
-                  textColor = '#f43f5e';
-                  p1.velocityX = p2FacingDir * 190;
-                  p1.hitstunTicks = 16;
-                  PlayerFSM.tryTransition(p1, PlayerFSMState.Hitstun);
+                  stun = 16;
+                  hitStop = 3;
+                  kbX = p2FacingDir * 190;
                   addSparks(p1.x, p1.y, '#f43f5e', 16);
                   addSparks(p1.x, p1.y, '#ffffff', 10);
                 } else if (currentStep === 1) {
                   damage = 30 * bot.damageDealtModifier;
                   shake = 9;
-                  text = `¡TAJO II (${wpnName.toUpperCase()})! -${Math.round(damage)}`;
-                  textColor = '#f43f5e';
-                  p1.velocityX = p2FacingDir * 270;
-                  p1.hitstunTicks = 20;
-                  PlayerFSM.tryTransition(p1, PlayerFSMState.Hitstun);
+                  stun = 20;
+                  hitStop = 4;
+                  kbX = p2FacingDir * 270;
+                  textPrefix = `¡TAJO II (${wpnName.toUpperCase()})!`;
                   addSparks(p1.x, p1.y, '#f43f5e', 22);
                   addSparks(p1.x, p1.y, '#ffffff', 14);
                 } else {
                   damage = 44 * bot.damageDealtModifier;
                   shake = 14;
-                  text = `¡REMATE NINJA (${wpnName.toUpperCase()})! -${Math.round(damage)}`;
+                  stun = 28;
+                  hitStop = 6;
+                  kbX = p2FacingDir * 390;
+                  isKnockdown = true;
+                  textPrefix = `¡REMATE NINJA (${wpnName.toUpperCase()})!`;
                   textColor = '#e11d48';
-                  p1.velocityX = p2FacingDir * 390;
-                  p1.velocityY = -270;
-                  s.p1Controller.vy = -270;
-                  p1.onGround = false;
-                  p1.knockdownTicks = 45;
-                  PlayerFSM.tryTransition(p1, PlayerFSMState.KnockedDown);
                   sounds.playHeavyBladeSlash();
                   addSparks(p1.x, p1.y - 10, '#f43f5e', 28);
                   addSparks(p1.x, p1.y - 10, '#ffffff', 16);
                   CombatSystem.disarmPlayer(p1);
                 }
 
-                s.screenShake = shake;
-                p1.health = Math.max(0, p1.health - damage);
-                if (p1.health <= 0) {
-                  p1.health = 0;
-                  p1.isAlive = false;
-                  PlayerFSM.tryTransition(p1, PlayerFSMState.Dead);
-                  sounds.playHit();
+                const hitRes = CombatSystem.applyHit(p1, {
+                  damage,
+                  kbX,
+                  kbY: isKnockdown ? -270 : undefined,
+                  stunTicks: stun,
+                  hitStop,
+                  screenShake: shake,
+                  causedKnockdown: isKnockdown,
+                  attacker: bot,
+                  weaponType: bot.equippedWeapon,
+                });
+
+                s.screenShake = hitRes.screenShake;
+                s.hitStopTicks = hitRes.hitStop;
+                s.p1Controller.setPosition(p1.x, p1.y);
+                s.p1Controller.vx = p1.velocityX;
+                s.p1Controller.vy = p1.velocityY;
+                if (hitRes.isDead) {
+                  sounds.playBladeHit();
                 }
+                addBloodParticles(p1.x, p1.y, p2FacingDir, hitRes.finalDamage);
 
                 s.floatingTexts.push({
                   id: s.nextEntityId++,
-                  text,
+                  text: `${textPrefix} -${Math.round(hitRes.finalDamage)}`,
                   x: p1.x,
                   y: p1.y - 32,
                   color: textColor,
-                  life: 38,
+                  life: isKnockdown ? 48 : 36,
                 });
               }
             }
@@ -5040,16 +5124,14 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             }
           }
 
-          // Bot Jump
+          // Bot Jump (Arcade: sin restricción de estamina, igual que P1)
           if (
             botInput.jump &&
             (bot.onGround || bot.coyoteTicks > 0) &&
-            bot.stamina >= GameConstants.StaminaCostJump &&
             bot.fsm !== PlayerFSMState.Roll &&
             bot.fsm !== PlayerFSMState.KnockedDown
           ) {
             bot.velocityY = GameConstants.JumpVelocity;
-            bot.stamina -= GameConstants.StaminaCostJump;
             bot.coyoteTicks = 0;
             PlayerFSM.tryTransition(bot, PlayerFSMState.Jump);
             sounds.playJump();
@@ -7810,18 +7892,11 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
         ctx.restore();
 
-        // Barra de salud sobre cabeza (ajustada a la nueva escala del personaje)
-        const hpPercent = Math.max(0, p.health / p.maxHealth);
-        ctx.fillStyle = '#0f172a';
-        ctx.fillRect(p.x - 24, p.y - 48, 48, 6);
-        ctx.fillStyle = hpPercent > 0.5 ? '#22c55e' : hpPercent > 0.25 ? '#eab308' : '#ef4444';
-        ctx.fillRect(p.x - 23, p.y - 47, 46 * hpPercent, 4);
-
-        // Nombre
+        // UI-01: Nombre del personaje sobre cabeza (barra de vida en tarjeta HUD retro)
         ctx.fillStyle = nameTagColor;
-        ctx.font = 'bold 10px monospace';
+        ctx.font = 'bold 9px monospace';
         ctx.textAlign = 'center';
-        ctx.fillText(p.name, p.x, p.y - 54);
+        ctx.fillText(p.name, p.x, p.y - 46);
       };
 
       // 9.5 SOMBRA BAJO LOS PIES (CONTACTO Y PESO VISUAL EN EL SUELO / PLATAFORMAS)
@@ -8010,9 +8085,20 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         ctx.lineWidth = 1;
         ctx.strokeRect(p1BarX, p1BarY, p1BarW, p1BarH);
 
-        // Icono y Texto del Arma Equipada P1
+        const truncateText = (str: string, maxW: number): string => {
+          if (ctx.measureText(str).width <= maxW) return str;
+          let t = str;
+          while (t.length > 0 && ctx.measureText(t + '…').width > maxW) {
+            t = t.slice(0, -1);
+          }
+          return t + '…';
+        };
+
+        // Icono y Texto del Arma Equipada P1 con munición (UI-04 y UI-10)
         const p1Wpn = getWeapon(s.p1.equippedWeapon);
-        const p1WpnName = (p1Wpn?.name || s.p1.equippedWeapon || 'KATANA').toUpperCase();
+        const p1AmmoStr = s.p1.ammo > 0 ? ` [${s.p1.ammo}]` : '';
+        const p1RawName = (p1Wpn?.name || s.p1.equippedWeapon || 'KATANA').toUpperCase();
+        const p1WpnName = truncateText(p1RawName + p1AmmoStr, 125);
         const p1WImg = s.weaponImages[s.p1.equippedWeapon];
         const p1HasIcon = p1WImg && p1WImg.complete && p1WImg.naturalWidth > 0;
 
@@ -8084,9 +8170,11 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         ctx.lineWidth = 1;
         ctx.strokeRect(botBarX, botBarY, botBarW, botBarH);
 
-        // Icono y Texto del Arma Equipada del Bot
+        // Icono y Texto del Arma Equipada del Bot con munición (UI-04 y UI-10)
         const botWpn = getWeapon(s.bot.equippedWeapon);
-        const botWpnName = (botWpn?.name || s.bot.equippedWeapon || 'FISTS').toUpperCase();
+        const botAmmoStr = s.bot.ammo > 0 ? ` [${s.bot.ammo}]` : '';
+        const botRawName = (botWpn?.name || s.bot.equippedWeapon || 'FISTS').toUpperCase();
+        const botWpnName = truncateText(botRawName + botAmmoStr, 125);
         const bWImg = s.weaponImages[s.bot.equippedWeapon];
         const bHasIcon = bWImg && bWImg.complete && bWImg.naturalWidth > 0;
 
@@ -8138,50 +8226,66 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
   return (
     <div className="relative w-full h-full flex flex-col items-center justify-center p-2 select-none overflow-hidden bg-neutral-950">
       {/* HUD Superior: Nombre del Mundo, P1 vs COM central y botón Salir */}
-      <div className="w-full max-w-[960px] bg-black/90 border-2 border-white border-b-0 px-4 py-2.5 flex items-center justify-between text-[10px] font-pixel shadow-lg">
+      <div className="w-full max-w-[1240px] bg-black/90 border-2 border-white border-b-0 px-4 py-2.5 flex items-center justify-between text-[10px] font-pixel shadow-lg">
         <div className="flex items-center gap-2.5 text-neutral-300">
           <span className="text-cyan-400 font-bold uppercase tracking-wider">{hudState.worldName}</span>
           <span className="text-neutral-600">|</span>
-          <span className="text-neutral-300">RONDA {hudState.round}/{hudState.maxRounds}</span>
+          <span className="text-neutral-300">
+            {hudState.maxRounds >= 999
+              ? `RONDA ${hudState.round} (INFINITO)`
+              : `RONDA ${hudState.round}/${hudState.maxRounds}`}
+          </span>
         </div>
 
-        {/* Centro de Pantalla: P1 vs COM (o P1 vs P2) con marcador */}
+        {/* Centro de Pantalla: P1 vs COM (o P1 vs P2) con marcador calibrado (B-10 y B-11) */}
         <div className="flex items-center gap-3 font-pixel text-[10px]">
-          <div className="flex items-center gap-1.5">
-            <span className="text-cyan-400 font-bold">P1</span>
-            {Array.from({ length: hudState.maxRounds }).map((_, i) => (
-              <div
-                key={i}
-                className={`w-3.5 h-3.5 border border-white flex items-center justify-center ${
-                  i < hudState.p1Score
-                    ? 'bg-yellow-400 text-[8px] font-bold text-black'
-                    : 'bg-neutral-900 text-neutral-600'
-                }`}
-              >
-                {i < hudState.p1Score ? '■' : ''}
+          {hudState.maxRounds >= 999 ? (
+            /* Modo infinito: Contador numérico directo sin desbordar con 999 casillas */
+            <div className="flex items-center gap-3">
+              <span className="text-cyan-400 font-bold">P1 [{hudState.p1Score}]</span>
+              <span className="text-neutral-400 font-bold px-1">VS</span>
+              <span className="text-rose-400 font-bold">[{hudState.botScore}] {gameMode === 'local1v1' ? 'P2' : 'COM'}</span>
+            </div>
+          ) : (
+            /* Modo con rondas: casillas = victorias requeridas (floor(maxRounds/2) + 1) */
+            <>
+              <div className="flex items-center gap-1.5">
+                <span className="text-cyan-400 font-bold">P1</span>
+                {Array.from({ length: Math.floor(hudState.maxRounds / 2) + 1 }).map((_, i) => (
+                  <div
+                    key={i}
+                    className={`w-3.5 h-3.5 border border-white flex items-center justify-center ${
+                      i < hudState.p1Score
+                        ? 'bg-yellow-400 text-[8px] font-bold text-black'
+                        : 'bg-neutral-900 text-neutral-600'
+                    }`}
+                  >
+                    {i < hudState.p1Score ? '■' : ''}
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
 
-          <span className="text-neutral-400 font-bold px-1">VS</span>
+              <span className="text-neutral-400 font-bold px-1">VS</span>
 
-          <div className="flex items-center gap-1.5">
-            {Array.from({ length: hudState.maxRounds }).map((_, i) => (
-              <div
-                key={i}
-                className={`w-3.5 h-3.5 border border-white flex items-center justify-center ${
-                  i < hudState.botScore
-                    ? 'bg-yellow-400 text-[8px] font-bold text-black'
-                    : 'bg-neutral-900 text-neutral-600'
-                }`}
-              >
-                {i < hudState.botScore ? '■' : ''}
+              <div className="flex items-center gap-1.5">
+                {Array.from({ length: Math.floor(hudState.maxRounds / 2) + 1 }).map((_, i) => (
+                  <div
+                    key={i}
+                    className={`w-3.5 h-3.5 border border-white flex items-center justify-center ${
+                      i < hudState.botScore
+                        ? 'bg-yellow-400 text-[8px] font-bold text-black'
+                        : 'bg-neutral-900 text-neutral-600'
+                    }`}
+                  >
+                    {i < hudState.botScore ? '■' : ''}
+                  </div>
+                ))}
+                <span className="text-rose-400 font-bold">
+                  {gameMode === 'local1v1' ? 'P2' : 'COM'}
+                </span>
               </div>
-            ))}
-            <span className="text-rose-400 font-bold">
-              {gameMode === 'local1v1' ? 'P2' : 'COM'}
-            </span>
-          </div>
+            </>
+          )}
         </div>
 
         <button
@@ -8192,7 +8296,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         </button>
       </div>
 
-      {/* Viewport del Canvas Retro */}
+      {/* Viewport del Canvas Retro (UI-08: ampliado a pantalla completa manteniendo 16:9) */}
       <div className="relative border-2 border-white bg-black">
         <canvas
           ref={canvasRef}
@@ -8200,7 +8304,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           height={ARENA_HEIGHT}
           onClick={() => sounds.resumeAudio()}
           tabIndex={0}
-          className="w-full max-w-[960px] max-h-[78vh] aspect-[16/9] object-contain block focus:outline-none"
+          className="w-full max-w-[1240px] max-h-[80vh] aspect-[16/9] object-contain block focus:outline-none"
           style={{ imageRendering: 'pixelated' }}
         />
 

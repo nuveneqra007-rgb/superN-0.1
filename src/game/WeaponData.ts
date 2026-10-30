@@ -1192,3 +1192,34 @@ export function isThrowableWeapon(type: string | WeaponType): boolean {
   return THROWABLE_WEAPONS.has(type as WeaponType);
 }
 
+export interface WeaponStunData {
+  stunLight: number;
+  stunMedium: number;
+  stunHeavy: number;
+  hitStopLight: number;
+  hitStopHeavy: number;
+}
+
+export const WEAPON_STUN_DEFAULTS: Record<string, WeaponStunData> = {
+  default: { stunLight: 16, stunMedium: 20, stunHeavy: 24, hitStopLight: 3, hitStopHeavy: 6 },
+  blade: { stunLight: 16, stunMedium: 20, stunHeavy: 28, hitStopLight: 4, hitStopHeavy: 6 },
+  heavy: { stunLight: 20, stunMedium: 24, stunHeavy: 32, hitStopLight: 5, hitStopHeavy: 7 },
+  projectile: { stunLight: 12, stunMedium: 16, stunHeavy: 22, hitStopLight: 2, hitStopHeavy: 5 },
+};
+
+export function getWeaponStunData(type?: WeaponType): WeaponStunData {
+  if (!type) return WEAPON_STUN_DEFAULTS.default;
+  const w = WeaponDatabase[type];
+  if (!w) return WEAPON_STUN_DEFAULTS.default;
+  if (w.category === 'Melee') {
+    if (type === WeaponType.Sword || type === WeaponType.Katana || type === WeaponType.Machete || type === WeaponType.Axe) {
+      return WEAPON_STUN_DEFAULTS.blade;
+    }
+    if (type === WeaponType.Hammer || type === WeaponType.Chainsaw || type === WeaponType.LeadPipe) {
+      return WEAPON_STUN_DEFAULTS.heavy;
+    }
+    return WEAPON_STUN_DEFAULTS.default;
+  }
+  return WEAPON_STUN_DEFAULTS.projectile;
+}
+

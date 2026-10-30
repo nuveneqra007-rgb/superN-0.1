@@ -36,6 +36,14 @@ export enum BotAIType {
   Zombie = 'Zombie',
 }
 
+export const MAX_BOTS = 5;
+
+export interface BotSlotConfig {
+  faction: BotFaction | 'RANDOM';
+  difficulty: 'easy' | 'normal' | 'hard';
+  team: 'independent';
+}
+
 export interface BotArchetypeData {
   faction: BotFaction;
   name: string;

@@ -4,7 +4,7 @@
 // =============================================================
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { BotFaction, getBotArchetype, BotSlotConfig, CANONICAL_BOT_FACTIONS, BotAIType } from '../game/BotData';
+import { BotFaction, getBotArchetype, BotSlotConfig, CANONICAL_BOT_FACTIONS, BotAIType, MAX_BOTS } from '../game/BotData';
 import { BotAI, BotAIState, createBotFSMData, BotFSMData } from '../game/BotFSM';
 import { BotInstance } from '../game/BotInstance';
 import { CombatSystem, HitResult } from '../game/CombatSystem';
@@ -17,6 +17,7 @@ import { PlayerController, PlayerInput, PlayerState as ControllerState, PLAYER_C
 import { sounds } from '../game/SoundEffects';
 import { getWorldConfig, WorldConfig, HazardCfg, PlatformRect } from '../game/WorldData';
 import { GameMode } from './ModeSelectScreen';
+import { FighterBar, FighterBarData, FighterSlotInfo, SHOW_ENERGY_BAR } from './FighterBar';
 import {
   GrenadeType,
   GrenadeConfig,
@@ -35,8 +36,164 @@ import {
 } from '../game/GrenadeSystem';
 import { CONTROLS, isAnyPressed, CONTROLS_TEXT } from '../game/Controls';
 
-export const ENGINE_MAX_BOTS = 3;
+export const ENGINE_MAX_BOTS = MAX_BOTS;
 export const START_WITH_GRENADES = false;
+
+export const getGrenadeIconUrl = (gType: GrenadeType): string => {
+  return GRENADE_DATABASE[gType]?.iconUrl || '/assets/weapons/Grenade.png';
+};
+
+export const getWeaponIconUrl = (wType: WeaponType): string => {
+  if (wType === WeaponType.Fists) return '/assets/weapons/Fist.png';
+  const w = getWeapon(wType);
+  return w?.iconUrl || '/assets/weapons/Fist.png';
+};
+
+/**
+ * Calcula los puntos de spawn para todos los luchadores (J1 + N bots).
+ * Si el mundo tiene suficientes puntos, los usa directamente.
+ * Si hay más luchadores que puntos de spawn, los reparte equiespaciadamente sobre el suelo,
+ * garantizando una distancia mínima de al menos 80px entre cada dos luchadores.
+ */
+export const computeFighterSpawns = (
+  worldCfg: WorldConfig,
+  totalFighters: number
+): Array<{ x: number; y: number }> => {
+  if (worldCfg.spawns.length >= totalFighters) {
+    return worldCfg.spawns.slice(0, totalFighters);
+  }
+
+  const groundY = worldCfg.spawns[0]?.y ?? 460;
+  const leftMargin = 120;
+  const rightMargin = 840;
+  const availableWidth = rightMargin - leftMargin;
+  const step = availableWidth / Math.max(1, totalFighters - 1);
+
+  const spawns: Array<{ x: number; y: number }> = [];
+  for (let i = 0; i < totalFighters; i++) {
+    spawns.push({
+      x: Math.round(leftMargin + i * step),
+      y: groundY,
+    });
+  }
+  return spawns;
+};
+
+export const buildFighterBarData = (
+  fighter: PlayerState,
+  color: string,
+  portrait: string | undefined,
+  score: number,
+  grenades: GrenadeInventory
+): FighterBarData => {
+  const inv = fighter.inventory;
+  const isAlive = fighter.isAlive;
+  const activeSlot = inv
+    ? inv.activeSlot
+    : (() => {
+        const wSlot = slotForWeapon(fighter.equippedWeapon);
+        if (wSlot === 'handgun') return 'handgun' as const;
+        if (wSlot === 'primary') return 'primary' as const;
+        if (wSlot === 'throwable') return 'throwable' as const;
+        return 'melee' as const;
+      })();
+
+  let meleeSlot: FighterSlotInfo;
+  let handgunSlot: FighterSlotInfo;
+  let primarySlot: FighterSlotInfo;
+
+  if (inv) {
+    meleeSlot = {
+      weaponType: inv.melee,
+      iconUrl: getWeaponIconUrl(inv.melee),
+      isEmpty: false,
+    };
+    handgunSlot = inv.handgun
+      ? {
+          weaponType: inv.handgun.type,
+          iconUrl: getWeaponIconUrl(inv.handgun.type),
+          ammo: inv.activeSlot === 'handgun' ? fighter.ammo : inv.handgun.ammo,
+          isEmpty: false,
+        }
+      : {
+          iconUrl: '',
+          isEmpty: true,
+        };
+    primarySlot = inv.primary
+      ? {
+          weaponType: inv.primary.type,
+          iconUrl: getWeaponIconUrl(inv.primary.type),
+          ammo: inv.activeSlot === 'primary' ? fighter.ammo : inv.primary.ammo,
+          isEmpty: false,
+        }
+      : {
+          iconUrl: '',
+          isEmpty: true,
+        };
+  } else {
+    const wSlot = slotForWeapon(fighter.equippedWeapon);
+    if (wSlot === 'handgun') {
+      meleeSlot = { weaponType: WeaponType.Fists, iconUrl: '/assets/weapons/Fist.png', isEmpty: false };
+      handgunSlot = {
+        weaponType: fighter.equippedWeapon,
+        iconUrl: getWeaponIconUrl(fighter.equippedWeapon),
+        ammo: fighter.ammo,
+        isEmpty: false,
+      };
+      primarySlot = { iconUrl: '', isEmpty: true };
+    } else if (wSlot === 'primary') {
+      meleeSlot = { weaponType: WeaponType.Fists, iconUrl: '/assets/weapons/Fist.png', isEmpty: false };
+      handgunSlot = { iconUrl: '', isEmpty: true };
+      primarySlot = {
+        weaponType: fighter.equippedWeapon,
+        iconUrl: getWeaponIconUrl(fighter.equippedWeapon),
+        ammo: fighter.ammo,
+        isEmpty: false,
+      };
+    } else if (wSlot === 'throwable') {
+      meleeSlot = { weaponType: WeaponType.Fists, iconUrl: '/assets/weapons/Fist.png', isEmpty: false };
+      handgunSlot = { iconUrl: '', isEmpty: true };
+      primarySlot = { iconUrl: '', isEmpty: true };
+    } else {
+      meleeSlot = {
+        weaponType: fighter.equippedWeapon,
+        iconUrl: getWeaponIconUrl(fighter.equippedWeapon),
+        isEmpty: false,
+      };
+      handgunSlot = { iconUrl: '', isEmpty: true };
+      primarySlot = { iconUrl: '', isEmpty: true };
+    }
+  }
+
+  const gActive = grenades.activeType;
+  const gCount = grenades.ammo[gActive] || 0;
+  const totalG = getTotalGrenades(grenades);
+  const throwableSlot: FighterSlotInfo = {
+    weaponType: gActive,
+    iconUrl: getGrenadeIconUrl(gActive),
+    count: gCount,
+    isEmpty: totalG <= 0 && gCount <= 0,
+  };
+
+  return {
+    id: fighter.id,
+    name: fighter.name,
+    color,
+    portrait,
+    health: fighter.health,
+    maxHealth: fighter.maxHealth,
+    energy: fighter.stamina,
+    isAlive,
+    score,
+    activeSlot,
+    slots: {
+      melee: meleeSlot,
+      handgun: handgunSlot,
+      primary: primarySlot,
+      throwable: throwableSlot,
+    },
+  };
+};
 
 interface ArenaCanvasProps {
   gameMode?: GameMode;
@@ -447,6 +604,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     isMatchOver: false,
     matchWinner: '',
     worldName: currentWorld.name,
+    fighters: [] as FighterBarData[],
   });
 
   // Esquema de controles en 1v1 Local ('wasd_p1': J1=WASD / J2=Flechas, 'arrows_p1': J1=Flechas / J2=WASD)
@@ -1183,6 +1341,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           : [{ faction: botFaction, difficulty: 'normal', team: 'independent' }];
 
       const activeSlots = configuredSlots.slice(0, ENGINE_MAX_BOTS);
+      const allSpawns = computeFighterSpawns(worldCfg, 1 + activeSlots.length);
 
       return activeSlots.map((slotCfg, idx) => {
         const id = idx + 2;
@@ -1191,9 +1350,9 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             ? CANONICAL_BOT_FACTIONS[Math.floor(Math.random() * CANONICAL_BOT_FACTIONS.length)]
             : slotCfg.faction;
         const arch = getBotArchetype(faction);
-        const spawnIndex = (idx + 1) % worldCfg.spawns.length;
-        const spawn = worldCfg.spawns[spawnIndex] || { x: 760, y: 460 };
-        const label = arch.name.toUpperCase();
+        const spawn = allSpawns[idx + 1] || { x: 760, y: 460 };
+        const sameFactionCount = activeSlots.filter((s) => s.faction === slotCfg.faction).length;
+        const label = sameFactionCount > 1 ? `${arch.name.toUpperCase()} ${idx + 1}` : arch.name.toUpperCase();
 
         const state = createPlayerState(id, label, true, spawn.x, spawn.y);
         state.maxHealth = arch.maxHealth;
@@ -1222,7 +1381,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           slotConfig: slotCfg,
           faction,
           state,
-          ai: createBotFSMData(arch.aiType),
+          ai: createBotFSMData(arch.aiType, slotCfg.difficulty),
           grenades: createGrenadeInventory(
             GRENADE_MAX_CAPACITY,
             GrenadeType.Frag,
@@ -1247,8 +1406,13 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
     const arch = getBotArchetype(effectiveP2Faction);
     const pArch = getBotArchetype(effectiveP1Faction);
-
-    const spawnP1 = worldCfg.spawns[0] || { x: 200, y: 460 };
+    const configuredSlots: BotSlotConfig[] =
+      botSlots && botSlots.length > 0
+        ? botSlots
+        : [{ faction: botFaction, difficulty: 'normal', team: 'independent' }];
+    const activeBotCount = gameMode === 'local1v1' ? 1 : Math.min(configuredSlots.length, ENGINE_MAX_BOTS);
+    const allSpawns = computeFighterSpawns(worldCfg, 1 + activeBotCount);
+    const spawnP1 = allSpawns[0] || { x: 200, y: 460 };
     const p1Label = gameMode === 'local1v1' ? 'NINJA (J1)' : 'NINJA';
 
     const p1 = createPlayerState(1, p1Label, false, spawnP1.x, spawnP1.y);
@@ -1531,10 +1695,8 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       round: 1,
       p1Score: 0,
       roundActive: true,
-      announcement: (botSlots && botSlots.length > ENGINE_MAX_BOTS)
-        ? `${botSlots.length} BOTS (PROXIMAMENTE) — COMBATE 1V1`
-        : '¡PELEA!',
-      announcementTicks: (botSlots && botSlots.length > ENGINE_MAX_BOTS) ? 140 : 90,
+      announcement: '¡PELEA!',
+      announcementTicks: 90,
       nextEntityId: 20,
       keys: {},
       keysJustPressed: {},
@@ -1573,6 +1735,23 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     sounds.startWorldAmbient(worldCfg.ambientSound);
     sounds.playRoundGong(true);
 
+    const initialFighters: FighterBarData[] = [
+      buildFighterBarData(p1, '#38bdf8', pArch.spriteUrl, 0, stateRef.current.p1Grenades),
+      ...initialBots.map((b) =>
+        buildFighterBarData(
+          b.state,
+          b.color,
+          getBotArchetype(b.faction)?.spriteUrl || b.sprite?.src,
+          b.score,
+          b.grenades
+        )
+      ),
+    ];
+    setHudState((prev) => ({
+      ...prev,
+      fighters: initialFighters,
+    }));
+
     return () => {
       sounds.stopWorldAmbient();
       stateRef.current = null;
@@ -1589,8 +1768,13 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     const arch = getBotArchetype(effectiveP2Faction);
     const pArch = getBotArchetype(effectiveP1Faction);
 
-    const spawnP1 = worldCfg.spawns[0] || { x: 200, y: 460 };
-    const spawnBot = worldCfg.spawns[1] || { x: 760, y: 460 };
+    const configuredSlots: BotSlotConfig[] =
+      botSlots && botSlots.length > 0
+        ? botSlots
+        : [{ faction: botFaction, difficulty: 'normal', team: 'independent' }];
+    const activeBotCount = gameMode === 'local1v1' ? 1 : Math.min(configuredSlots.length, ENGINE_MAX_BOTS);
+    const allSpawns = computeFighterSpawns(worldCfg, 1 + activeBotCount);
+    const spawnP1 = allSpawns[0] || { x: 200, y: 460 };
 
     if (isFullRematch) {
       s.p1Score = 0;
@@ -1715,8 +1899,28 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     s.announcementTicks = 90;
     s.weaponSpawnTimer = 300;
 
+    const roundFighters: FighterBarData[] = [
+      buildFighterBarData(s.p1, '#38bdf8', pArch.spriteUrl, s.p1Score, s.p1Grenades),
+      ...s.bots.map((b) =>
+        buildFighterBarData(
+          b.state,
+          b.color,
+          getBotArchetype(b.faction)?.spriteUrl || b.sprite?.src,
+          b.score,
+          b.grenades
+        )
+      ),
+    ];
+    setHudState((prev) => ({
+      ...prev,
+      p1Score: s.p1Score,
+      botScore: s.botScore,
+      round: s.round,
+      fighters: roundFighters,
+    }));
+
     sounds.playRoundGong(true);
-  }, [botFaction, playerFaction, createWorldHazards]);
+  }, [botFaction, playerFaction, createWorldHazards, botSlots, gameMode]);
 
   // Teclado y control de eventos
   useEffect(() => {
@@ -1836,7 +2040,8 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     y: number,
     radius: number,
     damage: number,
-    spawnFire: boolean
+    spawnFire: boolean,
+    _shooterId?: number
   ) => {
     if (!stateRef.current) return;
     const s = stateRef.current;
@@ -2057,6 +2262,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     const updateGame = () => {
       const s = stateRef.current;
       if (!s) return;
+      const updateStart = performance.now();
 
       // B-09 HIT-STOP: Congela la simulación durante el impacto mientras el shake continúa
       if (s.hitStopTicks > 0) {
@@ -5873,6 +6079,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           }
         }
       }
+    }
 
       // ─────────────────────────────────────────────────────────
       // 3. FÍSICAS DE JUGADORES Y ESTADOS
@@ -6995,7 +7202,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           });
         }
 
-        [p1, bot].forEach((fighter) => {
+        allFighters.forEach((fighter) => {
           if (fighter.isAlive && Math.hypot(fighter.x - fz.x, fighter.y - fz.y) < fz.radius) {
             fighter.fireTicks = Math.max(fighter.fireTicks, 90);
             fighter.isOnFire = true;
@@ -7063,6 +7270,20 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
       // Sincronizar HUD cada 3 frames
       if (s.worldTick % 3 === 0) {
+        const pArch = getBotArchetype(BotFaction.Ninja);
+        const fightersData: FighterBarData[] = [
+          buildFighterBarData(p1, '#38bdf8', pArch.spriteUrl, s.p1Score, s.p1Grenades),
+          ...s.bots.map((b) =>
+            buildFighterBarData(
+              b.state,
+              b.color,
+              getBotArchetype(b.faction)?.spriteUrl || b.sprite?.src,
+              b.score,
+              b.grenades
+            )
+          ),
+        ];
+
         setHudState((prev) => ({
           ...prev,
           p1Health: p1.health,
@@ -7085,10 +7306,15 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           p1Score: s.p1Score,
           botScore: s.botScore,
           announcement: s.announcement,
+          fighters: fightersData,
         }));
       }
-    }
-  };
+
+      const updateElapsed = performance.now() - updateStart;
+      if (updateElapsed > 6 && s.worldTick % 120 === 0) {
+        console.warn(`[superN Engine] 60Hz updateGame elapsed: ${updateElapsed.toFixed(2)}ms (> 6ms target)`);
+      }
+    };
 
     // ─────────────────────────────────────────────────────────
     // RENDERIZADOR CANVAS 2D
@@ -7766,7 +7992,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         p: PlayerState,
         sprite: HTMLImageElement | null,
         nameTagColor: string,
-        playerId: 1 | 2
+        playerId: number
       ) => {
         // Dimensiones aumentadas para hacer a los personajes más grandes y visibles en pantalla
         const isBigFighter =
@@ -8514,10 +8740,14 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       };
 
       renderGroundedShadow(s.p1);
-      renderGroundedShadow(s.bot);
+      for (const inst of s.bots) {
+        renderGroundedShadow(inst.state);
+      }
 
       renderFighter(s.p1, s.p1Sprite, '#38bdf8', 1);
-      renderFighter(s.bot, s.botSprite, '#f87171', 2);
+      for (const inst of s.bots) {
+        renderFighter(inst.state, inst.sprite || s.botSprite, inst.color, inst.id);
+      }
 
       // 11. PROYECTILES
       for (const pr of s.projectiles) {
@@ -8603,176 +8833,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         ctx.fillText(s.announcement, ARENA_WIDTH / 2, ARENA_HEIGHT / 2 + 7);
       }
 
-      // 14.5. HUD RETRO SUPERFIGHTERS (CAJAS P1 Y COM CON BORDES BLANCOS Y FUENTE PIXEL)
-      const drawRetroHUD = () => {
-        ctx.save();
-
-        const boxW = 230;
-        const boxH = 68;
-
-        // ── CAJA RETRO P1 (ESQUINA SUPERIOR IZQUIERDA) ──
-        const p1X = 16;
-        const p1Y = 16;
-
-        // Fondo semitransparente oscuro y borde blanco sólido
-        ctx.fillStyle = 'rgba(5, 7, 10, 0.88)';
-        ctx.fillRect(p1X, p1Y, boxW, boxH);
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 1.5;
-        ctx.strokeRect(p1X, p1Y, boxW, boxH);
-
-        // Retrato del Ninja
-        const p1AvX = p1X + 8;
-        const p1AvY = p1Y + 12;
-        const p1AvSize = 44;
-        ctx.fillStyle = '#0a0e17';
-        ctx.fillRect(p1AvX, p1AvY, p1AvSize, p1AvSize);
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(p1AvX, p1AvY, p1AvSize, p1AvSize);
-
-        const p1Img = (s.p1IdleSprite && s.p1IdleSprite.complete && s.p1IdleSprite.naturalWidth > 0)
-          ? s.p1IdleSprite
-          : (s.p1Sprite && s.p1Sprite.complete && s.p1Sprite.naturalWidth > 0)
-          ? s.p1Sprite
-          : null;
-
-        if (p1Img) {
-          ctx.drawImage(p1Img, p1AvX + 2, p1AvY + 2, p1AvSize - 4, p1AvSize - 4);
-        } else {
-          ctx.fillStyle = '#38bdf8';
-          ctx.fillRect(p1AvX + 6, p1AvY + 6, p1AvSize - 12, p1AvSize - 12);
-        }
-
-        // Nombre del Jugador ("NINJA")
-        ctx.fillStyle = '#ffffff';
-        ctx.font = '9px "Press Start 2P", monospace';
-        ctx.textAlign = 'left';
-        ctx.fillText('NINJA', p1X + 60, p1Y + 23);
-
-        // Barra de Vida P1 (Verde o Roja)
-        const p1BarX = p1X + 60;
-        const p1BarY = p1Y + 29;
-        const p1BarW = 158;
-        const p1BarH = 10;
-        const p1HpRatio = Math.max(0, s.p1.health / s.p1.maxHealth);
-
-        ctx.fillStyle = '#18181b';
-        ctx.fillRect(p1BarX, p1BarY, p1BarW, p1BarH);
-        ctx.fillStyle = p1HpRatio > 0.35 ? '#22c55e' : '#ef4444';
-        ctx.fillRect(p1BarX, p1BarY, Math.round(p1BarW * p1HpRatio), p1BarH);
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(p1BarX, p1BarY, p1BarW, p1BarH);
-
-        const truncateText = (str: string, maxW: number): string => {
-          if (ctx.measureText(str).width <= maxW) return str;
-          let t = str;
-          while (t.length > 0 && ctx.measureText(t + '…').width > maxW) {
-            t = t.slice(0, -1);
-          }
-          return t + '…';
-        };
-
-        // Icono y Texto del Arma Equipada P1 con munición (UI-04 y UI-10)
-        const p1Wpn = getWeapon(s.p1.equippedWeapon);
-        const p1AmmoStr = s.p1.ammo > 0 ? ` [${s.p1.ammo}]` : '';
-        const p1RawName = (p1Wpn?.name || s.p1.equippedWeapon || 'PUÑOS DESNUDOS').toUpperCase();
-        const p1WpnName = truncateText(p1RawName + p1AmmoStr, 125);
-        const p1WImg = s.weaponImages[s.p1.equippedWeapon];
-        const p1HasIcon = p1WImg && p1WImg.complete && p1WImg.naturalWidth > 0;
-
-        if (p1HasIcon) {
-          ctx.drawImage(p1WImg, p1X + 60, p1Y + 45, 24, 14);
-        }
-        ctx.fillStyle = '#fde047';
-        ctx.font = '8px "Press Start 2P", monospace';
-        ctx.textAlign = 'left';
-        ctx.fillText(p1WpnName, p1HasIcon ? p1X + 90 : p1X + 60, p1Y + 56);
-
-        // ── CAJA RETRO BOT / COM (ESQUINA SUPERIOR DERECHA) ──
-        const p2X = ARENA_WIDTH - boxW - 16;
-        const p2Y = 16;
-
-        // Fondo semitransparente oscuro y borde blanco sólido
-        ctx.fillStyle = 'rgba(5, 7, 10, 0.88)';
-        ctx.fillRect(p2X, p2Y, boxW, boxH);
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 1.5;
-        ctx.strokeRect(p2X, p2Y, boxW, boxH);
-
-        // Retrato del Bot
-        const botAvSize = 44;
-        const botAvX = p2X + boxW - 8 - botAvSize;
-        const botAvY = p2Y + 12;
-        ctx.fillStyle = '#0a0e17';
-        ctx.fillRect(botAvX, botAvY, botAvSize, botAvSize);
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(botAvX, botAvY, botAvSize, botAvSize);
-
-        const botSpriteImg = (s.botIdleSprite && s.botIdleSprite.complete && s.botIdleSprite.naturalWidth > 0)
-          ? s.botIdleSprite
-          : (s.botSprite && s.botSprite.complete && s.botSprite.naturalWidth > 0)
-          ? s.botSprite
-          : null;
-
-        if (botSpriteImg) {
-          ctx.drawImage(botSpriteImg, botAvX + 2, botAvY + 2, botAvSize - 4, botAvSize - 4);
-        } else {
-          ctx.fillStyle = '#ef4444';
-          ctx.fillRect(botAvX + 6, botAvY + 6, botAvSize - 12, botAvSize - 12);
-        }
-
-        // Nombre del Bot ("JEFE TANQUE", "BOT" o su nombre de arquetipo)
-        const is1v1 = gameMode === 'local1v1';
-        const rawBotName = is1v1 ? 'NINJA' : (s.bot?.name || botArch?.name || 'BOT');
-        const botDisplayName = rawBotName.toUpperCase();
-
-        ctx.fillStyle = '#ffffff';
-        ctx.font = '9px "Press Start 2P", monospace';
-        ctx.textAlign = 'right';
-        ctx.fillText(botDisplayName, p2X + boxW - 60, p2Y + 23);
-
-        // Barra de Vida del Bot (Verde o Roja)
-        const botBarW = 158;
-        const botBarH = 10;
-        const botBarX = p2X + boxW - 60 - botBarW;
-        const botBarY = p2Y + 29;
-        const botHpRatio = Math.max(0, s.bot.health / s.bot.maxHealth);
-
-        ctx.fillStyle = '#18181b';
-        ctx.fillRect(botBarX, botBarY, botBarW, botBarH);
-        ctx.fillStyle = botHpRatio > 0.35 ? '#22c55e' : '#ef4444';
-        const botFillW = Math.round(botBarW * botHpRatio);
-        ctx.fillRect(botBarX + botBarW - botFillW, botBarY, botFillW, botBarH);
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(botBarX, botBarY, botBarW, botBarH);
-
-        // Icono y Texto del Arma Equipada del Bot con munición (UI-04 y UI-10)
-        const botWpn = getWeapon(s.bot.equippedWeapon);
-        const botAmmoStr = s.bot.ammo > 0 ? ` [${s.bot.ammo}]` : '';
-        const botRawName = (botWpn?.name || s.bot.equippedWeapon || 'FISTS').toUpperCase();
-        const botWpnName = truncateText(botRawName + botAmmoStr, 125);
-        const bWImg = s.weaponImages[s.bot.equippedWeapon];
-        const bHasIcon = bWImg && bWImg.complete && bWImg.naturalWidth > 0;
-
-        ctx.textAlign = 'right';
-        ctx.fillStyle = '#fde047';
-        ctx.font = '8px "Press Start 2P", monospace';
-        ctx.fillText(botWpnName, p2X + boxW - 60, p2Y + 56);
-
-        if (bHasIcon) {
-          const textW = ctx.measureText(botWpnName).width;
-          ctx.drawImage(bWImg, p2X + boxW - 60 - textW - 28, p2Y + 45, 24, 14);
-        }
-
-        ctx.restore();
-      };
-
-      drawRetroHUD();
-
+      // 14.5. HUD de luchadores gestionado por FighterBar (React HTML sobre el canvas)
       ctx.restore();
     };
 
@@ -8817,14 +8878,16 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           </span>
         </div>
 
-        {/* Centro de Pantalla: P1 vs COM (o P1 vs P2) con marcador calibrado (B-10 y B-11) */}
+        {/* Centro de Pantalla: P1 vs COM (o P1 vs P2 / TODOS en multi-bot) */}
         <div className="flex items-center gap-3 font-pixel text-[10px]">
           {hudState.maxRounds >= 999 ? (
-            /* Modo infinito: Contador numérico directo sin desbordar con 999 casillas */
+            /* Modo infinito */
             <div className="flex items-center gap-3">
               <span className="text-cyan-400 font-bold">P1 [{hudState.p1Score}]</span>
               <span className="text-neutral-400 font-bold px-1">VS</span>
-              <span className="text-rose-400 font-bold">[{hudState.botScore}] {gameMode === 'local1v1' ? 'P2' : 'COM'}</span>
+              <span className="text-rose-400 font-bold">
+                [{hudState.botScore}] {gameMode === 'local1v1' ? 'P2' : (hudState.fighters.length > 2 ? `TODOS (${hudState.fighters.length - 1} BOTS)` : 'COM')}
+              </span>
             </div>
           ) : (
             /* Modo con rondas: casillas = victorias requeridas (floor(maxRounds/2) + 1) */
@@ -8861,7 +8924,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                   </div>
                 ))}
                 <span className="text-rose-400 font-bold">
-                  {gameMode === 'local1v1' ? 'P2' : 'COM'}
+                  {gameMode === 'local1v1' ? 'P2' : (hudState.fighters.length > 2 ? `TODOS (${hudState.fighters.length - 1} BOTS)` : 'COM')}
                 </span>
               </div>
             </>
@@ -8876,6 +8939,9 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         </button>
       </div>
 
+      {/* FASE F2: Barra de Luchadores con Inventario de Ranuras */}
+      <FighterBar fighters={hudState.fighters} />
+
       {/* Viewport del Canvas Retro (UI-08: ampliado a pantalla completa manteniendo 16:9) */}
       <div className="relative border-2 border-white bg-black">
         <canvas
@@ -8884,7 +8950,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           height={ARENA_HEIGHT}
           onClick={() => sounds.resumeAudio()}
           tabIndex={0}
-          className="w-full max-w-[1240px] max-h-[80vh] aspect-[16/9] object-contain block focus:outline-none"
+          className="w-full max-w-[1240px] max-h-[75vh] aspect-[16/9] object-contain block focus:outline-none"
           style={{ imageRendering: 'pixelated' }}
         />
 

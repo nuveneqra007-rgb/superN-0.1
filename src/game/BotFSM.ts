@@ -23,6 +23,7 @@ export interface BotFSMData {
   currentState: BotAIState;
   stateTicks: number;
   aiType: BotAIType;
+  difficulty?: string;
   dodgeCooldown: number;
   strafeDirX: number;
   strafeTicks: number;
@@ -31,11 +32,12 @@ export interface BotFSMData {
   pickupCooldown: number;
 }
 
-export function createBotFSMData(aiType: BotAIType): BotFSMData {
+export function createBotFSMData(aiType: BotAIType, difficulty?: string): BotFSMData {
   return {
     currentState: BotAIState.Idle,
     stateTicks: 0,
     aiType,
+    difficulty,
     dodgeCooldown: 0,
     strafeDirX: 1,
     strafeTicks: 0,

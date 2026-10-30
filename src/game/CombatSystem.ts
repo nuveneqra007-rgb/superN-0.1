@@ -586,8 +586,34 @@ export const CombatSystem = {
   },
 
   disarmPlayer(p: PlayerState): void {
-    p.equippedWeapon = WeaponType.Fists;
-    p.ammo = 0;
+    if (p.inventory) {
+      if (p.inventory.activeSlot === 'melee') {
+        p.inventory.melee = WeaponType.Fists;
+        p.equippedWeapon = WeaponType.Fists;
+        p.ammo = 0;
+      } else if (p.inventory.activeSlot === 'handgun') {
+        p.inventory.handgun = null;
+        p.inventory.activeSlot = 'melee';
+        p.equippedWeapon = p.inventory.melee;
+        p.ammo = 0;
+      } else if (p.inventory.activeSlot === 'primary') {
+        p.inventory.primary = null;
+        p.inventory.activeSlot = 'melee';
+        p.equippedWeapon = p.inventory.melee;
+        p.ammo = 0;
+      } else if (p.inventory.activeSlot === 'throwable') {
+        p.inventory.activeSlot = 'melee';
+        p.equippedWeapon = p.inventory.melee;
+        p.ammo = 0;
+      }
+      p.characterState = p.equippedWeapon === WeaponType.Fists ? 'desarmado' : 'arma_una_mano';
+      p.weaponState = p.equippedWeapon === WeaponType.Fists ? 'desarmado' : 'arma_una_mano';
+    } else {
+      p.equippedWeapon = WeaponType.Fists;
+      p.ammo = 0;
+      p.characterState = 'desarmado';
+      p.weaponState = 'desarmado';
+    }
   },
 
   applyModifiers(base: number, dealt: number, taken: number): number {

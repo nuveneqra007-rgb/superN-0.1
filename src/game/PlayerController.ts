@@ -217,8 +217,12 @@ export class PlayerController {
     const fireJust = isAnyPressed(keysJustPressed, bindings.fire);
     const throwGrenade = isAnyPressed(keys, bindings.grenade);
     const throwJust = isAnyPressed(keysJustPressed, bindings.grenade);
+    const slot1Just = bindings.weaponSlot1 ? isAnyPressed(keysJustPressed, bindings.weaponSlot1) : false;
+    const slot2Just = bindings.weaponSlot2 ? isAnyPressed(keysJustPressed, bindings.weaponSlot2) : false;
+    const slot3Just = bindings.weaponSlot3 ? isAnyPressed(keysJustPressed, bindings.weaponSlot3) : false;
+    const slot4Just = bindings.weaponSlot4 ? isAnyPressed(keysJustPressed, bindings.weaponSlot4) : false;
 
-    return { melee, meleeJust, fire, fireJust, throwGrenade, throwJust };
+    return { melee, meleeJust, fire, fireJust, throwGrenade, throwJust, slot1Just, slot2Just, slot3Just, slot4Just };
   }
 
   /**

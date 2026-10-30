@@ -14,6 +14,10 @@ export interface ControlBinding {
   melee: string[];
   fire: string[];
   grenade: string[];
+  weaponSlot1: string[];
+  weaponSlot2: string[];
+  weaponSlot3: string[];
+  weaponSlot4: string[];
 }
 
 export const CONTROLS = {
@@ -27,6 +31,10 @@ export const CONTROLS = {
     melee: ['KeyN', 'KeyF', 'KeyJ', 'n', 'f', 'j'],
     fire: ['KeyM', 'KeyG', 'KeyK', 'm', 'g', 'k'],
     grenade: ['Comma', 'KeyH', 'KeyL', ',', 'comma', 'h', 'l'],
+    weaponSlot1: ['Digit1', '1'],
+    weaponSlot2: ['Digit2', '2'],
+    weaponSlot3: ['Digit3', '3'],
+    weaponSlot4: ['Digit4', '4'],
   } as ControlBinding,
 
   // Modo 1v1 Local — Jugador 1 (WASD + F / G / H)
@@ -39,6 +47,10 @@ export const CONTROLS = {
     melee: ['KeyF', 'f'],
     fire: ['KeyG', 'g'],
     grenade: ['KeyH', 'h'],
+    weaponSlot1: ['Digit1', '1'],
+    weaponSlot2: ['Digit2', '2'],
+    weaponSlot3: ['Digit3', '3'],
+    weaponSlot4: ['Digit4', '4'],
   } as ControlBinding,
 
   // Modo 1v1 Local — Jugador 2 (Flechas + N / M / Coma)
@@ -51,6 +63,10 @@ export const CONTROLS = {
     melee: ['KeyN', 'n'],
     fire: ['KeyM', 'm'],
     grenade: ['Comma', ',', 'comma'],
+    weaponSlot1: ['Digit7', '7'],
+    weaponSlot2: ['Digit8', '8'],
+    weaponSlot3: ['Digit9', '9'],
+    weaponSlot4: ['Digit0', '0'],
   } as ControlBinding,
 } as const;
 

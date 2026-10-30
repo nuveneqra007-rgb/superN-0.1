@@ -1223,3 +1223,29 @@ export function getWeaponStunData(type?: WeaponType): WeaponStunData {
   return WEAPON_STUN_DEFAULTS.projectile;
 }
 
+export type WeaponSlot = 'melee' | 'handgun' | 'primary' | 'throwable';
+
+/**
+ * Determina a qué ranura de inventario pertenece un arma:
+ * - 'melee': Armas cuerpo a cuerpo (puños, katana, cuchillo, bate, hacha, etc.)
+ * - 'handgun': Pistolas y armas de fuego de una mano
+ * - 'primary': Rifles, escopetas, bazooka y armas de fuego a dos manos
+ * - 'throwable': Granadas, cócteles molotov y arrojadizas
+ * - 'powerup': Estimulantes y mejoras temporales (no ocupan ranura fija)
+ */
+export function slotForWeapon(type: WeaponType): WeaponSlot | 'powerup' | null {
+  const w = WeaponDatabase[type];
+  if (!w) return null;
+  if (w.category === 'Powerup') return 'powerup';
+  if (w.category === 'Throwable' || isThrowableWeapon(type)) return 'throwable';
+  if (w.category === 'Melee') return 'melee';
+  if (isPistolWeapon(type)) return 'handgun';
+  if (isRifleWeapon(type)) return 'primary';
+  if (w.category === 'Firearm') {
+    if (isOneHandWeapon(type)) return 'handgun';
+    return 'primary';
+  }
+  return null;
+}
+
+

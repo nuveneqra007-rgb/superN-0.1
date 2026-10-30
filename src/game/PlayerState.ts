@@ -31,10 +31,23 @@ export enum PlayerFSMState {
   ArmaDosManos = 'arma_dos_manos', // Estado del personaje al equipar arma pesada a dos manos
 }
 
+export type WeaponSlotType = 'melee' | 'handgun' | 'primary' | 'throwable';
+
+export interface PlayerInventory {
+  melee: WeaponType;
+  handgun: { type: WeaponType; ammo: number } | null;
+  primary: { type: WeaponType; ammo: number } | null;
+  activeSlot: WeaponSlotType;
+}
+
 export interface PlayerState {
   id: number;
   name: string;
   isBot: boolean;
+
+  // Inventario por ranuras (J1 y J2 humano en local1v1)
+  inventory?: PlayerInventory;
+  slotCooldownTicks?: number;
 
   // FSM
   fsm: PlayerFSMState;

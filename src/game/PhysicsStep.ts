@@ -21,8 +21,6 @@ export const PhysicsStep = {
   deltaTime: 1 / 60,
 
   tick(p: PlayerState, platforms: PhysicsRect[], arenaWidth: number = 960): void {
-    if (!p.isAlive) return;
-
     this.applyGravity(p);
     this.applyMovement(p);
     this.resolveCollisions(p, platforms);
@@ -143,7 +141,7 @@ export const PhysicsStep = {
     }
 
     const killY = 700;
-    if (p.y > killY) {
+    if (p.y > killY && p.isAlive) {
       p.health = 0;
       p.isAlive = false;
       PlayerFSM.tryTransition(p, PlayerFSMState.Dead);

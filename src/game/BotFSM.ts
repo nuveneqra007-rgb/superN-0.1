@@ -42,6 +42,12 @@ export interface BotFSMData {
   pendingTimer: number; // Temporizador del tiempo de reacción
   movementPattern: 'advance' | 'circle' | 'wait'; // Alternancia de fintas y patrones
   movementPatternTicks: number; // Duración del patrón actual
+
+  // Lote 10: Detección de bloqueo y separación
+  stuckTicks?: number;
+  lastStuckX?: number;
+  lastStuckY?: number;
+  stepBackTicks?: number;
 }
 
 export function createBotFSMData(aiType: BotAIType, difficulty?: string): BotFSMData {
@@ -83,6 +89,10 @@ export function createBotFSMData(aiType: BotAIType, difficulty?: string): BotFSM
     pendingTimer: 0,
     movementPattern: 'advance',
     movementPatternTicks: Math.floor(40 + Math.random() * 40),
+    stuckTicks: 0,
+    lastStuckX: undefined,
+    lastStuckY: undefined,
+    stepBackTicks: 0,
   };
 }
 
@@ -197,6 +207,34 @@ export const BotAI = {
       desiredState = BotAIState.Idle;
     }
 
+    // Lote 10: Detección de bloqueo si el bot lleva más de 90 ticks en Idle o Chase desplazándose menos de 10 px
+    if (target && target.isAlive && (ai.currentState === BotAIState.Idle || ai.currentState === BotAIState.Chase)) {
+      if (ai.stuckTicks === undefined) {
+        ai.stuckTicks = 0;
+        ai.lastStuckX = bot.x;
+        ai.lastStuckY = bot.y;
+      }
+      ai.stuckTicks++;
+      if (ai.stuckTicks > 90) {
+        const moved = Math.hypot(bot.x - (ai.lastStuckX ?? bot.x), bot.y - (ai.lastStuckY ?? bot.y));
+        if (moved < 10) {
+          ai.currentState = BotAIState.Chase;
+          ai.pendingState = null;
+          ai.pendingTimer = 0;
+          if (bot.onGround && target.y < bot.y - 15) {
+            ai.jumpCooldown = 0;
+          }
+        }
+        ai.stuckTicks = 0;
+        ai.lastStuckX = bot.x;
+        ai.lastStuckY = bot.y;
+      }
+    } else {
+      ai.stuckTicks = 0;
+      ai.lastStuckX = bot.x;
+      ai.lastStuckY = bot.y;
+    }
+
     // Retraso de tiempo de reacción humano (Lote 8: reactionTicks por dificultad)
     // El combate melee inminente o defensa directa reacciona con rapidez; cambios tácticos aplican delay
     if (desiredState === BotAIState.Attack && dist < 32) {
@@ -215,8 +253,12 @@ export const BotAI = {
         }
       }
     } else {
-      ai.pendingState = null;
-      ai.pendingTimer = 0;
+      // Lote 10: No reiniciar pendingTimer si el estado deseado vuelve al estado actual;
+      // solo reiniciar cuando el estado deseado cambie a uno distinto del pendiente.
+      if (ai.pendingState === ai.currentState) {
+        ai.pendingState = null;
+        ai.pendingTimer = 0;
+      }
     }
 
     return ai.currentState;
@@ -267,6 +309,21 @@ export const BotAI = {
         break;
 
       case BotAIState.Attack:
+        // Lote 10: Si |dx| < 14, paso corto hacia atrás durante ~8 ticks para recuperar separación y conectar el golpe
+        if (target) {
+          const dx = target.x - bot.x;
+          if (Math.abs(dx) < 14) {
+            if (ai.stepBackTicks === undefined || ai.stepBackTicks <= 0) {
+              ai.stepBackTicks = 8;
+            }
+          }
+          if (ai.stepBackTicks && ai.stepBackTicks > 0) {
+            ai.stepBackTicks--;
+            moveX = dx >= 0 ? -0.85 : 0.85;
+            melee = false;
+            break;
+          }
+        }
         // Si está en pausa de combo, retrocede y no ataca de inmediato
         if (ai.currentComboPause > 0 && target) {
           moveX = target.x > bot.x ? -0.8 : 0.8;

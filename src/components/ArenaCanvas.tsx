@@ -5827,6 +5827,12 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             ? { moveX: 0, jump: false, crouch: false, melee: false, fire: false }
             : BotAI.computeInput(bot, inst.ai, target, aiState, nearestWpnPos);
 
+          inst.lastInput = {
+            melee: !!botInput.melee,
+            fire: !!botInput.fire,
+            distToTarget: target ? Math.round(Math.hypot(target.x - bot.x, target.y - bot.y)) : undefined,
+          };
+
           if (inst.quiet && bot.onGround && bot.fsm !== PlayerFSMState.KnockedDown && bot.fsm !== PlayerFSMState.GetUp && bot.fsm !== PlayerFSMState.Hitstun) {
             bot.velocityX = 0;
             if (bot.fsm === PlayerFSMState.Run || bot.fsm === PlayerFSMState.Walk) {
@@ -5881,6 +5887,14 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             if (bot.onGround && Math.abs(bot.velocityX) < 5) {
               bot.velocityX = 0;
               if (bot.fsm === PlayerFSMState.Run) PlayerFSM.tryTransition(bot, PlayerFSMState.Idle);
+            }
+          }
+
+          // Lote 10 - Parte 3: En Attack y Strafe, orientar al bot hacia su target (|dx| >= 2)
+          if (target && (aiState === BotAIState.Attack || aiState === BotAIState.Strafe)) {
+            const dx = target.x - bot.x;
+            if (Math.abs(dx) >= 2) {
+              bot.facingRight = dx >= 0;
             }
           }
 
@@ -6183,7 +6197,12 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
               PlayerFSM.tryTransition(bot, PlayerFSMState.RangedFire);
               sounds.playGunshot(wpn.type.toLowerCase());
 
-              const dir = bot.facingRight ? 1 : -1;
+              // Lote 10 - Parte 3: En Strafe y disparo, proyectiles salen hacia el objetivo
+              let dir = bot.facingRight ? 1 : -1;
+              if (target && Math.abs(target.x - bot.x) >= 2) {
+                dir = target.x >= bot.x ? 1 : -1;
+                bot.facingRight = dir > 0;
+              }
               const muzzleX = bot.x + dir * 28;
               const muzzleY = bot.y - 6;
 
@@ -8980,11 +8999,56 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
         ctx.restore();
 
+        // Lote 10 - Parte 5: Nametags sin solapamiento (desplazamiento vertical de 10px por solape a < 40px)
+        let overlapOffset = 0;
+        if (p.isAlive) {
+          const aliveFighters = [s.p1, ...s.bots.map((b) => b.state)].filter((f) => f.isAlive);
+          const pIndex = aliveFighters.findIndex((f) => f.id === p.id);
+          if (pIndex > 0) {
+            for (let i = 0; i < pIndex; i++) {
+              if (Math.abs(aliveFighters[i].x - p.x) < 40) {
+                overlapOffset += 10;
+              }
+            }
+          }
+        }
+        const tagY = p.y - 46 - overlapOffset;
+
         // UI-01: Nombre del personaje sobre cabeza (barra de vida en tarjeta HUD retro)
         ctx.fillStyle = nameTagColor;
         ctx.font = 'bold 9px monospace';
         ctx.textAlign = 'center';
-        ctx.fillText(p.name, p.x, p.y - 46);
+        ctx.fillText(p.name, p.x, tagY);
+
+        // Lote 10 - Parte 2: Overlay de depuración bajo ?debug=1 (sin ?debug=1 no dibuja nada)
+        const isDebug = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('debug') === '1';
+        if (isDebug && !isP1) {
+          const inst = s.bots.find((b) => b.id === playerId);
+          if (inst) {
+            ctx.save();
+            ctx.font = 'bold 8px monospace';
+            ctx.textAlign = 'center';
+            const distStr = inst.lastInput?.distToTarget !== undefined ? `${inst.lastInput.distToTarget}px` : '-';
+            const tgtStr = inst.currentTargetId !== undefined ? `T:${inst.currentTargetId}` : 'T:-';
+            const pendStr = inst.ai.pendingState ? `→${inst.ai.pendingState}` : '';
+            const actionStr = `${inst.lastInput?.melee ? ' [M]' : ''}${inst.lastInput?.fire ? ' [F]' : ''}`;
+            const faceStr = p.facingRight ? 'R' : 'L';
+            const line1 = `${inst.ai.currentState}${pendStr} (${faceStr})`;
+            const line2 = `${tgtStr} d:${distStr}${actionStr}`;
+
+            ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+            ctx.fillRect(p.x - 48, tagY - 26, 96, 20);
+            ctx.strokeStyle = nameTagColor;
+            ctx.lineWidth = 1;
+            ctx.strokeRect(p.x - 48, tagY - 26, 96, 20);
+
+            ctx.fillStyle = '#38bdf8';
+            ctx.fillText(line1, p.x, tagY - 15);
+            ctx.fillStyle = '#facc15';
+            ctx.fillText(line2, p.x, tagY - 8);
+            ctx.restore();
+          }
+        }
       };
 
       // 9.5 SOMBRA BAJO LOS PIES (CONTACTO Y PESO VISUAL EN EL SUELO / PLATAFORMAS)

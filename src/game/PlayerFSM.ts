@@ -145,6 +145,8 @@ export const PlayerFSM = {
   },
 
   tick(p: PlayerState): void {
+    if (p.fsm === PlayerFSMState.Dead || !p.isAlive) return;
+
     p.stateTicks++;
     if (p.invulnerabilityTicks > 0) p.invulnerabilityTicks--;
     if (p.attackCooldown > 0) p.attackCooldown--;

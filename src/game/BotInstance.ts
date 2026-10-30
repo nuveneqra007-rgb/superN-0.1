@@ -24,4 +24,9 @@ export interface BotInstance {
   currentTargetId?: number;
   targetEvalTicks?: number;
   sprite?: HTMLImageElement;
+  lastInput?: {
+    melee: boolean;
+    fire: boolean;
+    distToTarget?: number;
+  };
 }

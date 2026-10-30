@@ -4,7 +4,7 @@
 // =============================================================
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { BotFaction, getBotArchetype, BotSlotConfig } from '../game/BotData';
+import { BotFaction, getBotArchetype, BotSlotConfig, CANONICAL_BOT_FACTIONS, BotAIType } from '../game/BotData';
 import { BotAI, BotAIState, createBotFSMData, BotFSMData } from '../game/BotFSM';
 import { BotInstance } from '../game/BotInstance';
 import { CombatSystem, HitResult } from '../game/CombatSystem';
@@ -35,7 +35,7 @@ import {
 } from '../game/GrenadeSystem';
 import { CONTROLS, isAnyPressed, CONTROLS_TEXT } from '../game/Controls';
 
-export const ENGINE_MAX_BOTS = 1;
+export const ENGINE_MAX_BOTS = 3;
 export const START_WITH_GRENADES = false;
 
 interface ArenaCanvasProps {
@@ -518,7 +518,6 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     weaponSpawnTimer: number;
     round: number;
     p1Score: number;
-    botScore: number;
     roundActive: boolean;
     announcement: string;
     announcementTicks: number;
@@ -841,6 +840,138 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     return false;
   };
 
+  interface MeleeHitOptions {
+    reachX: number;
+    reachY: number;
+    baseDamage: number;
+    kbX: number;
+    kbY?: number;
+    stunTicks?: number;
+    hitStop?: number;
+    screenShake?: number;
+    causedKnockdown?: boolean;
+    isBlade?: boolean;
+    floatingTextPrefix?: string;
+  }
+
+  const resolveMeleeHits = (
+    s: NonNullable<typeof stateRef.current>,
+    attacker: PlayerState,
+    options: MeleeHitOptions
+  ): boolean => {
+    const allFighters = [s.p1, ...s.bots.map((b) => b.state)];
+    const facingDir = attacker.facingRight ? 1 : -1;
+    let didHitAny = false;
+
+    for (const target of allFighters) {
+      if (target.id === attacker.id) continue;
+      if (!target.isAlive || target.isGrabbed) continue;
+
+      const isInvuln =
+        target.id === s.p1.id
+          ? s.p1Controller.isInvulnerable
+          : target.id === 2 && gameMode === 'local1v1'
+          ? s.p2Controller.isInvulnerable
+          : target.fsm === PlayerFSMState.Roll;
+
+      if (isInvuln) continue;
+
+      const inReachX =
+        (facingDir > 0 && target.x >= attacker.x - 15 && target.x <= attacker.x + options.reachX) ||
+        (facingDir < 0 && target.x <= attacker.x + 15 && target.x >= attacker.x - options.reachX);
+      const inReachY = Math.abs(target.y - attacker.y) < options.reachY;
+
+      if (inReachX && inReachY) {
+        didHitAny = true;
+        if (options.isBlade) {
+          sounds.playBladeHit();
+          addSparks(target.x, target.y, '#38bdf8', 22);
+          addSparks(target.x, target.y, '#ffffff', 14);
+        } else {
+          sounds.playHit();
+          addSparks(target.x, target.y, '#f97316', 22);
+          addSparks(target.x, target.y, '#fbbf24', 14);
+        }
+
+        const finalDmg = options.baseDamage * (attacker.damageDealtModifier || 1.0);
+        const hitRes = CombatSystem.applyHit(target, {
+          damage: finalDmg,
+          kbX: facingDir * options.kbX,
+          kbY: options.kbY ?? -60,
+          stunTicks: options.stunTicks ?? 24,
+          hitStop: options.hitStop ?? 5,
+          screenShake: options.screenShake ?? 12,
+          causedKnockdown: options.causedKnockdown,
+          attacker,
+          weaponType: attacker.equippedWeapon,
+        });
+
+        s.screenShake = hitRes.screenShake;
+        s.hitStopTicks = hitRes.hitStop;
+
+        if (target.id === s.p1.id) {
+          s.p1Controller.setPosition(target.x, target.y);
+          s.p1Controller.vx = target.velocityX;
+          s.p1Controller.vy = target.velocityY;
+        } else if (target.id === 2 && gameMode === 'local1v1') {
+          s.p2Controller.setPosition(target.x, target.y);
+          s.p2Controller.vx = target.velocityX;
+          s.p2Controller.vy = target.velocityY;
+        }
+
+        if (hitRes.isDead) {
+          sounds.playHit();
+        }
+        addBloodParticles(target.x, target.y, facingDir, hitRes.finalDamage);
+
+        target.isMeleeComboAttacking = false;
+        target.comboStep = 0;
+        target.meleeComboStep = 0;
+        target.comboBuffered = false;
+        target.comboWindowTicks = 0;
+        target.isOneHandAttacking = false;
+        target.isTwoHandAttacking = false;
+        target.isSwordAttacking = false;
+        target.isPistolShooting = false;
+        target.isRifleShooting = false;
+        target.isThrowing = false;
+
+        s.floatingTexts.push({
+          id: s.nextEntityId++,
+          text: `${options.floatingTextPrefix || ''}-${Math.round(hitRes.finalDamage)}`,
+          x: target.x,
+          y: target.y - 35,
+          color: options.isBlade ? '#38bdf8' : '#f97316',
+          life: 30,
+        });
+      }
+    }
+
+    return didHitAny;
+  };
+
+  const pickTarget = (inst: BotInstance, allFighters: PlayerState[]): PlayerState | null => {
+    const self = inst.state;
+    const opponents = allFighters.filter((f) => f.id !== self.id && f.isAlive);
+    if (opponents.length === 0) return null;
+
+    if (self.lastAttackerId !== undefined && (self.lastHitTicks || 0) <= 180) {
+      const revengeTarget = opponents.find((f) => f.id === self.lastAttackerId);
+      if (revengeTarget) return revengeTarget;
+    }
+
+    opponents.sort((a, b) => {
+      const distA = Math.hypot(a.x - self.x, a.y - self.y);
+      const distB = Math.hypot(b.x - self.x, b.y - self.y);
+      if (Math.abs(distA - distB) < 15) {
+        return a.health - b.health;
+      }
+      return distA - distB;
+    });
+
+    return opponents[0] || null;
+  };
+
   // ─────────────────────────────────────────────────────────────
   // SISTEMA MODULAR DE GESTIÓN Y CICLO DE VIDA DE ARMAS (SPAWN SLOTS)
   // ─────────────────────────────────────────────────────────────
@@ -1032,7 +1163,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             slot: 0,
             faction: BotFaction.Ninja,
             state,
-            ai: createBotFSMData('aggressive'),
+            ai: createBotFSMData(BotAIType.Hard),
             grenades: createGrenadeInventory(
               GRENADE_MAX_CAPACITY,
               GrenadeType.Frag,
@@ -1049,13 +1180,16 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       const configuredSlots: BotSlotConfig[] =
         botSlots && botSlots.length > 0
           ? botSlots
-          : [{ slotIndex: 0, faction: botFaction }];
+          : [{ faction: botFaction, difficulty: 'normal', team: 'independent' }];
 
       const activeSlots = configuredSlots.slice(0, ENGINE_MAX_BOTS);
 
       return activeSlots.map((slotCfg, idx) => {
         const id = idx + 2;
-        const faction = slotCfg.faction;
+        const faction: BotFaction =
+          slotCfg.faction === 'RANDOM'
+            ? CANONICAL_BOT_FACTIONS[Math.floor(Math.random() * CANONICAL_BOT_FACTIONS.length)]
+            : slotCfg.faction;
         const arch = getBotArchetype(faction);
         const spawnIndex = (idx + 1) % worldCfg.spawns.length;
         const spawn = worldCfg.spawns[spawnIndex] || { x: 760, y: 460 };
@@ -1075,9 +1209,16 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         state.weaponState = 'desarmado';
         state.inventory = undefined;
 
+        const botColors = ['#f87171', '#fb923c', '#a855f7', '#ec4899', '#22d3ee'];
+        let bSprite: HTMLImageElement | undefined;
+        if (arch.spriteUrl) {
+          bSprite = new Image();
+          bSprite.src = arch.spriteUrl;
+        }
+
         return {
           id,
-          slot: slotCfg.slotIndex ?? idx,
+          slot: idx,
           slotConfig: slotCfg,
           faction,
           state,
@@ -1089,8 +1230,9 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           ),
           controller: undefined,
           quiet: false,
-          color: '#f87171',
+          color: botColors[idx % botColors.length],
           score: currentScoreMap?.get(id) ?? 0,
+          sprite: bSprite,
         };
       });
     },
@@ -1388,7 +1530,6 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       weaponSpawnTimer: 300,
       round: 1,
       p1Score: 0,
-      botScore: 0,
       roundActive: true,
       announcement: (botSlots && botSlots.length > ENGINE_MAX_BOTS)
         ? `${botSlots.length} BOTS (PROXIMAMENTE) — COMBATE 1V1`
@@ -1929,7 +2070,15 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
       s.worldTick++;
       const p1 = s.p1;
+      const bot = s.bot;
       const keys = s.keys;
+      const allFighters = [s.p1, ...s.bots.map((b) => b.state)];
+
+      for (const f of allFighters) {
+        if (f.lastHitTicks !== undefined) {
+          f.lastHitTicks++;
+        }
+      }
 
       // Destello blanco de golpe (Hit Flash Feedback: 2 frames)
       if (p1.hitFlashTicks > 0) p1.hitFlashTicks--;
@@ -1960,17 +2109,19 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         }
       }
 
-      // Fin de ronda y match
-      const aliveBots = s.bots.filter((b) => b.state.isAlive);
-      if (s.roundActive && (!p1.isAlive || aliveBots.length === 0)) {
+      // Fin de ronda y match: el último combatiente vivo (J1 o Bot) gana la ronda
+      const aliveFighters = allFighters.filter((f) => f.isAlive);
+      if (s.roundActive && aliveFighters.length <= 1) {
         s.roundActive = false;
-        const p1Won = p1.isAlive;
+        const winner = aliveFighters[0] || null;
+        const p1Won = winner && winner.id === p1.id;
+
         if (p1Won) {
           s.p1Score++;
           s.announcement = '¡JUGADOR 1 GANA!';
           sounds.playRoundGong(true);
-        } else {
-          const winningBot = aliveBots[0] || s.bots[0];
+        } else if (winner) {
+          const winningBot = s.bots.find((b) => b.state.id === winner.id);
           if (winningBot) {
             winningBot.score++;
           }
@@ -1980,6 +2131,9 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
               : winningBot
               ? `¡${winningBot.state.name} GANA!`
               : '¡BOT GANA!';
+          sounds.playRoundGong(false);
+        } else {
+          s.announcement = '¡EMPATE!';
           sounds.playRoundGong(false);
         }
         s.announcementTicks = 150;
@@ -2212,48 +2366,54 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         const fireJustPressed = p1Combat.fireJust;
         const throwJustPressed = p1Combat.throwJust;
 
-        if (p1.isGrappling && p1.grabbedTargetId === bot.id) {
+        const grabbedTarget = p1.isGrappling && p1.grabbedTargetId !== null
+          ? (s.bots.find((b) => b.id === p1.grabbedTargetId)?.state || (bot.id === p1.grabbedTargetId ? bot : null))
+          : null;
+
+        if (p1.isGrappling && grabbedTarget) {
           p1.grappleTicks++;
-          bot.x = p1.x + p1FacingDir * 24;
-          bot.y = p1.y;
-          bot.velocityX = 0;
-          bot.velocityY = 0;
-          bot.isGrabbed = true;
-          s.p2Controller.setPosition(bot.x, bot.y);
-          s.p2Controller.vx = 0;
-          s.p2Controller.vy = 0;
+          grabbedTarget.x = p1.x + p1FacingDir * 24;
+          grabbedTarget.y = p1.y;
+          grabbedTarget.velocityX = 0;
+          grabbedTarget.velocityY = 0;
+          grabbedTarget.isGrabbed = true;
+          if (grabbedTarget.id === 2 && gameMode === 'local1v1') {
+            s.p2Controller.setPosition(grabbedTarget.x, grabbedTarget.y);
+            s.p2Controller.vx = 0;
+            s.p2Controller.vy = 0;
+          }
 
           if (meleeJustPressed) {
             sounds.playThrow();
             const throwDirX = leftKey ? -1 : (rightKey ? 1 : p1FacingDir);
             const throwUp = jumpHeld || !crouchHeld;
-            const throwHit = CombatSystem.resolveThrow(p1, bot, throwDirX, throwUp);
+            const throwHit = CombatSystem.resolveThrow(p1, grabbedTarget, throwDirX, throwUp);
 
             p1.isGrappling = false;
             p1.grabbedTargetId = null;
-            bot.isGrabbed = false;
+            grabbedTarget.isGrabbed = false;
             p1.attackCooldown = 26;
             s.screenShake = 10;
-            addSparks(bot.x, bot.y, '#38bdf8', 18);
+            addSparks(grabbedTarget.x, grabbedTarget.y, '#38bdf8', 18);
 
             s.floatingTexts.push({
               id: s.nextEntityId++,
               text: `¡LANZAMIENTO! -${Math.round(throwHit.damageDealt)}`,
-              x: bot.x,
-              y: bot.y - 35,
+              x: grabbedTarget.x,
+              y: grabbedTarget.y - 35,
               color: '#38bdf8',
               life: 38,
             });
 
             s.crates.forEach((c) => {
-              if (Math.hypot(bot.x - (c.x + c.w / 2), bot.y - (c.y + c.h / 2)) < 52) {
+              if (Math.hypot(grabbedTarget.x - (c.x + c.w / 2), grabbedTarget.y - (c.y + c.h / 2)) < 52) {
                 c.health -= 20;
                 c.vx = throwDirX * 360;
                 sounds.playCrateBreak();
               }
             });
             s.barrels.forEach((b) => {
-              if (Math.hypot(bot.x - (b.x + b.w / 2), bot.y - (b.y + b.h / 2)) < 52) {
+              if (Math.hypot(grabbedTarget.x - (b.x + b.w / 2), grabbedTarget.y - (b.y + b.h / 2)) < 52) {
                 b.health -= 15;
                 b.vx = throwDirX * 420;
                 sounds.playHit();
@@ -2262,27 +2422,33 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           } else if (p1.grappleTicks > 50) {
             p1.isGrappling = false;
             p1.grabbedTargetId = null;
-            bot.isGrabbed = false;
+            grabbedTarget.isGrabbed = false;
             p1.attackCooldown = 15;
           }
         } else {
-          const rivalDist = Math.hypot(bot.x - p1.x, bot.y - p1.y);
-          const isNearRival = rivalDist < 38 && Math.abs(bot.y - p1.y) < 26;
+          const potentialGrappleTargets = s.bots
+            .map((b) => b.state)
+            .filter(
+              (b) =>
+                b.isAlive &&
+                !b.isGrabbed &&
+                (b.id === 2 && gameMode === 'local1v1' ? !s.p2Controller.isInvulnerable : b.fsm !== PlayerFSMState.Roll)
+            );
+          const nearRival = potentialGrappleTargets.find(
+            (b) => Math.hypot(b.x - p1.x, b.y - p1.y) < 38 && Math.abs(b.y - p1.y) < 26
+          );
 
           if (
             meleeJustPressed &&
-            isNearRival &&
-            bot.isAlive &&
-            !bot.isGrabbed &&
-            !s.p2Controller.isInvulnerable &&
+            nearRival &&
             p1.attackCooldown <= 0 &&
             p1.onGround &&
             (crouchHeld || (p1.facingRight ? rightKey : leftKey))
           ) {
             p1.isGrappling = true;
-            p1.grabbedTargetId = bot.id;
+            p1.grabbedTargetId = nearRival.id;
             p1.grappleTicks = 0;
-            bot.isGrabbed = true;
+            nearRival.isGrabbed = true;
             sounds.playGrapple();
             s.floatingTexts.push({
               id: s.nextEntityId++,
@@ -2313,36 +2479,40 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             PlayerFSM.tryTransition(p1, PlayerFSMState.CrouchSlide);
             addSparks(p1.x, p1.y + 16, isBladeP1 ? '#e0f2fe' : '#94a3b8', 14);
 
-            if (isBladeP1) {
-              const slideHit = CombatSystem.resolveBladeDashSlash(p1, bot);
-              if (slideHit.didHit) {
-                sounds.playBladeHit();
-                s.screenShake = 9;
-                addSparks(bot.x, bot.y + 12, '#38bdf8', 18);
-                addSparks(bot.x, bot.y + 12, '#ffffff', 12);
-                s.floatingTexts.push({
-                  id: s.nextEntityId++,
-                  text: `¡TAJO RASANTE! -${Math.round(slideHit.damageDealt)}`,
-                  x: bot.x,
-                  y: bot.y - 25,
-                  color: '#38bdf8',
-                  life: 35,
-                });
-              }
-            } else {
-              const slideHit = CombatSystem.resolveSlideTackle(p1, bot);
-              if (slideHit.didHit) {
-                sounds.playHit();
-                s.screenShake = 8;
-                addSparks(bot.x, bot.y + 12, '#38bdf8', 16);
-                s.floatingTexts.push({
-                  id: s.nextEntityId++,
-                  text: `¡BARRIDA! -${Math.round(slideHit.damageDealt)}`,
-                  x: bot.x,
-                  y: bot.y - 25,
-                  color: '#38bdf8',
-                  life: 35,
-                });
+            for (const bInst of s.bots) {
+              const bState = bInst.state;
+              if (!bState.isAlive || bState.isGrabbed) continue;
+              if (isBladeP1) {
+                const slideHit = CombatSystem.resolveBladeDashSlash(p1, bState);
+                if (slideHit.didHit) {
+                  sounds.playBladeHit();
+                  s.screenShake = 9;
+                  addSparks(bState.x, bState.y + 12, '#38bdf8', 18);
+                  addSparks(bState.x, bState.y + 12, '#ffffff', 12);
+                  s.floatingTexts.push({
+                    id: s.nextEntityId++,
+                    text: `¡TAJO RASANTE! -${Math.round(slideHit.damageDealt)}`,
+                    x: bState.x,
+                    y: bState.y - 25,
+                    color: '#38bdf8',
+                    life: 35,
+                  });
+                }
+              } else {
+                const slideHit = CombatSystem.resolveSlideTackle(p1, bState);
+                if (slideHit.didHit) {
+                  sounds.playHit();
+                  s.screenShake = 8;
+                  addSparks(bState.x, bState.y + 12, '#38bdf8', 16);
+                  s.floatingTexts.push({
+                    id: s.nextEntityId++,
+                    text: `¡BARRIDA! -${Math.round(slideHit.damageDealt)}`,
+                    x: bState.x,
+                    y: bState.y - 25,
+                    color: '#38bdf8',
+                    life: 35,
+                  });
+                }
               }
             }
 
@@ -2725,64 +2895,21 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           // Detección de impacto en el fotograma de golpe pesado hacia abajo (fotograma 3)
           if (!p1.twoHandHasHit && (p1.twoHandAnimFrame || 0) === 3) {
             p1.twoHandHasHit = true;
-            const p1FacingDir = p1.facingRight ? 1 : -1;
-            // Mayor hitbox por ser golpe pesado (82px alcance frontal y 48px vertical)
-            const hitReach = 82;
-            const isBotInReach =
-              bot.isAlive &&
-              !bot.isGrabbed &&
-              !s.p2Controller.isInvulnerable &&
-              bot.fsm !== PlayerFSMState.Roll &&
-              ((p1FacingDir > 0 && bot.x >= p1.x - 15 && bot.x <= p1.x + hitReach) ||
-               (p1FacingDir < 0 && bot.x <= p1.x + 15 && bot.x >= p1.x - hitReach)) &&
-              Math.abs(bot.y - p1.y) < 48;
-
             const wpn = getWeapon(p1.equippedWeapon);
             const isBlade = isBladeWeapon(p1.equippedWeapon);
             const baseDmg = (wpn.damage || 22) * 1.45; // Golpe pesado con mayor daño
-            const finalDmg = baseDmg * p1.damageDealtModifier;
 
-            if (isBotInReach) {
-              if (isBlade) {
-                sounds.playBladeHit();
-                addSparks(bot.x, bot.y, '#38bdf8', 22);
-                addSparks(bot.x, bot.y, '#ffffff', 14);
-              } else {
-                sounds.playHit();
-                addSparks(bot.x, bot.y, '#f97316', 22);
-                addSparks(bot.x, bot.y, '#fbbf24', 14);
-              }
-
-              const hitRes = CombatSystem.applyHit(bot, {
-                damage: finalDmg,
-                kbX: p1FacingDir * 260,
-                stunTicks: 24,
-                hitStop: 5,
-                screenShake: 12,
-                attacker: p1,
-                weaponType: p1.equippedWeapon,
-              });
-              s.screenShake = hitRes.screenShake;
-              s.hitStopTicks = hitRes.hitStop;
-              if (gameMode === 'local1v1') {
-                s.p2Controller.setPosition(bot.x, bot.y);
-                s.p2Controller.vx = bot.velocityX;
-                s.p2Controller.vy = bot.velocityY;
-              }
-              if (hitRes.isDead) {
-                sounds.playHit();
-              }
-              addBloodParticles(bot.x, bot.y, p1FacingDir, hitRes.finalDamage);
-
-              s.floatingTexts.push({
-                id: s.nextEntityId++,
-                text: `¡GOLPE PESADO (${wpn.name.toUpperCase()})! -${Math.round(hitRes.finalDamage)}`,
-                x: bot.x,
-                y: bot.y - 36,
-                color: '#f97316',
-                life: 55,
-              });
-            }
+            resolveMeleeHits(s, p1, {
+              reachX: 82,
+              reachY: 48,
+              baseDamage: baseDmg,
+              kbX: 260,
+              stunTicks: 24,
+              hitStop: 5,
+              screenShake: 12,
+              isBlade,
+              floatingTextPrefix: `¡GOLPE PESADO (${wpn.name.toUpperCase()})! `,
+            });
           }
         }
 
@@ -3746,7 +3873,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           if (gameMode === 'local1v1') {
             const controller = inst.controller || s.p2Controller;
             const scheme = controlSchemeRef.current;
-            controller.setPlayerId(inst.id);
+            controller.setPlayerId((inst.id === 1 ? 1 : 2) as 1 | 2);
             const p2RawInput = controller.readInput(keys, s.keysJustPressed, true, scheme);
             const p2Combat = controller.readCombatInput(keys, s.keysJustPressed, true, scheme);
 
@@ -6643,17 +6770,30 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           }
 
           if (pr.weaponType === WeaponType.Baseball) {
-            const target = pr.shooterId === s.p1.id ? s.bot : s.p1;
-            if (target.isAlive && Math.hypot(pr.x - target.x, pr.y - (target.y - 10)) < 26) {
-              target.health = Math.max(0, target.health - pr.damage);
-              target.velocityX += pr.vx * 0.45;
+            let hitTarget: PlayerState | null = null;
+            for (const target of allFighters) {
+              if (target.isAlive && target.id !== pr.shooterId && Math.hypot(pr.x - target.x, pr.y - (target.y - 10)) < 26) {
+                hitTarget = target;
+                break;
+              }
+            }
+            if (hitTarget) {
+              const attacker = allFighters.find((f) => f.id === pr.shooterId);
+              const hitRes = CombatSystem.applyHit(hitTarget, {
+                damage: pr.damage,
+                kbX: (pr.vx > 0 ? 1 : -1) * 90,
+                stunTicks: 16,
+                attacker,
+                weaponType: WeaponType.Baseball,
+              });
+              hitTarget.velocityX += pr.vx * 0.45;
               sounds.playPunch();
               addSparks(pr.x, pr.y, '#f8fafc', 10);
               s.floatingTexts.push({
                 id: s.nextEntityId++,
-                text: `¡BÉISBOL! -${Math.round(pr.damage)}`,
-                x: target.x,
-                y: target.y - 30,
+                text: `¡BÉISBOL! -${Math.round(hitRes.finalDamage)}`,
+                x: hitTarget.x,
+                y: hitTarget.y - 30,
                 color: '#f8fafc',
                 life: 30,
               });
@@ -6663,11 +6803,13 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           }
 
           if (pr.weaponType === WeaponType.Mine) {
-            const target = pr.shooterId === s.p1.id ? s.bot : s.p1;
-            if (pr.lifeTicks > 15 && target.isAlive && Math.hypot(pr.x - target.x, pr.y - target.y) < 28) {
-              triggerGrenadeDetonation(s, pr);
-              s.projectiles.splice(i, 1);
-              continue;
+            if (pr.lifeTicks > 15) {
+              const triggered = allFighters.some((target) => target.isAlive && Math.hypot(pr.x - target.x, pr.y - target.y) < 28);
+              if (triggered) {
+                triggerGrenadeDetonation(s, pr);
+                s.projectiles.splice(i, 1);
+                continue;
+              }
             }
           }
 
@@ -6726,109 +6868,100 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             continue;
           }
 
-          // Impacto en Combatientes
-          const target = pr.shooterId === p1.id ? bot : p1;
-          const isTargetRolling =
-            target.id === p1.id
-              ? s.p1Controller.isInvulnerable
-              : target.fsm === PlayerFSMState.Roll;
+          // Impacto en Combatientes (todos contra todos)
+          let hitTarget: PlayerState | null = null;
+          for (const target of allFighters) {
+            if (!target.isAlive || target.id === pr.shooterId) continue;
+            const isTargetRolling =
+              target.id === p1.id
+                ? s.p1Controller.isInvulnerable
+                : target.id === 2 && gameMode === 'local1v1'
+                ? s.p2Controller.isInvulnerable
+                : target.fsm === PlayerFSMState.Roll;
 
-          if (
-            target.isAlive &&
-            !isTargetRolling &&
-            Math.abs(pr.x - target.x) < 18 &&
-            pr.y >= target.y - 25 &&
-            pr.y <= target.y + 25
-          ) {
+            if (
+              !isTargetRolling &&
+              Math.abs(pr.x - target.x) < 18 &&
+              pr.y >= target.y - 25 &&
+              pr.y <= target.y + 25
+            ) {
+              hitTarget = target;
+              break;
+            }
+          }
+
+          if (hitTarget) {
             const dir = pr.vx > 0 ? 1 : -1;
-            const attacker = pr.shooterId === p1.id ? p1 : bot;
-            const hitRes = CombatSystem.applyHit(target, {
+            const attacker = allFighters.find((f) => f.id === pr.shooterId);
+            const hitRes = CombatSystem.applyHit(hitTarget, {
               damage: pr.damage,
               kbX: dir * 65,
               stunTicks: GameConstants.HitstunTicksLight,
               attacker,
               screenShake: 5,
+              weaponType: pr.weaponType,
             });
-            target.fireTicks = Math.max(target.fireTicks, pr.onFireDuration);
-            target.isOnFire = target.fireTicks > 0;
+            hitTarget.fireTicks = Math.max(hitTarget.fireTicks, pr.onFireDuration);
+            hitTarget.isOnFire = hitTarget.fireTicks > 0;
 
             sounds.playHit();
             addSparks(pr.x, pr.y, '#ef4444', 10);
             s.screenShake = hitRes.screenShake;
             s.hitStopTicks = hitRes.hitStop;
-            addBloodParticles(target.x, target.y, dir, hitRes.finalDamage);
+            addBloodParticles(hitTarget.x, hitTarget.y, dir, hitRes.finalDamage);
 
-            if (target.id === p1.id) {
-              p1.isMeleeComboAttacking = false;
-              p1.comboStep = 0;
-              p1.meleeComboStep = 0;
-              p1.comboBuffered = false;
-              p1.comboWindowTicks = 0;
-              p1.isOneHandAttacking = false;
-              p1.oneHandAnimFrame = 0;
-              p1.oneHandAnimTimer = 0;
-              p1.oneHandHasHit = false;
-              p1.isTwoHandAttacking = false;
-              p1.twoHandAnimFrame = 0;
-              p1.twoHandAnimTimer = 0;
-              p1.twoHandHasHit = false;
-              p1.isPistolShooting = false;
-              p1.pistolAnimFrame = 0;
-              p1.pistolAnimTimer = 0;
-              p1.isRifleShooting = false;
-              p1.rifleAnimFrame = 0;
-              p1.rifleAnimTimer = 0;
-              p1.isThrowing = false;
-              p1.throwAnimFrame = 0;
-              p1.throwAnimTimer = 0;
-              p1.throwHasReleased = false;
-              if (s.p1Controller) {
-                s.p1Controller.isShootingPistol = false;
-                s.p1Controller.isShootingRifle = false;
-                s.p1Controller.isThrowing = false;
-              }
-            } else {
-              bot.isMeleeComboAttacking = false;
-              bot.comboStep = 0;
-              bot.meleeComboStep = 0;
-              bot.comboBuffered = false;
-              bot.comboWindowTicks = 0;
-              bot.isOneHandAttacking = false;
-              bot.oneHandAnimFrame = 0;
-              bot.oneHandAnimTimer = 0;
-              bot.oneHandHasHit = false;
-              bot.isTwoHandAttacking = false;
-              bot.twoHandAnimFrame = 0;
-              bot.twoHandAnimTimer = 0;
-              bot.twoHandHasHit = false;
-              bot.isPistolShooting = false;
-              bot.pistolAnimFrame = 0;
-              bot.pistolAnimTimer = 0;
-              bot.isRifleShooting = false;
-              bot.rifleAnimFrame = 0;
-              bot.rifleAnimTimer = 0;
-              bot.isThrowing = false;
-              bot.throwAnimFrame = 0;
-              bot.throwAnimTimer = 0;
-              bot.throwHasReleased = false;
-              if (s.p2Controller) {
-                s.p2Controller.isShootingPistol = false;
-                s.p2Controller.isShootingRifle = false;
-                s.p2Controller.isThrowing = false;
-              }
+            if (hitTarget.id === p1.id) {
+              s.p1Controller.setPosition(p1.x, p1.y);
+              s.p1Controller.vx = p1.velocityX;
+              s.p1Controller.vy = p1.velocityY;
+              s.p1Controller.isShootingPistol = false;
+              s.p1Controller.isShootingRifle = false;
+              s.p1Controller.isThrowing = false;
+            } else if (hitTarget.id === 2 && gameMode === 'local1v1') {
+              s.p2Controller.setPosition(hitTarget.x, hitTarget.y);
+              s.p2Controller.vx = hitTarget.velocityX;
+              s.p2Controller.vy = hitTarget.velocityY;
+              s.p2Controller.isShootingPistol = false;
+              s.p2Controller.isShootingRifle = false;
+              s.p2Controller.isThrowing = false;
             }
+
+            hitTarget.isMeleeComboAttacking = false;
+            hitTarget.comboStep = 0;
+            hitTarget.meleeComboStep = 0;
+            hitTarget.comboBuffered = false;
+            hitTarget.comboWindowTicks = 0;
+            hitTarget.isOneHandAttacking = false;
+            hitTarget.oneHandAnimFrame = 0;
+            hitTarget.oneHandAnimTimer = 0;
+            hitTarget.oneHandHasHit = false;
+            hitTarget.isTwoHandAttacking = false;
+            hitTarget.twoHandAnimFrame = 0;
+            hitTarget.twoHandAnimTimer = 0;
+            hitTarget.twoHandHasHit = false;
+            hitTarget.isSwordAttacking = false;
+            hitTarget.isPistolShooting = false;
+            hitTarget.pistolAnimFrame = 0;
+            hitTarget.pistolAnimTimer = 0;
+            hitTarget.isRifleShooting = false;
+            hitTarget.rifleAnimFrame = 0;
+            hitTarget.rifleAnimTimer = 0;
+            hitTarget.isThrowing = false;
+            hitTarget.throwAnimFrame = 0;
+            hitTarget.throwAnimTimer = 0;
+            hitTarget.throwHasReleased = false;
 
             s.floatingTexts.push({
               id: s.nextEntityId++,
               text: `-${Math.round(hitRes.finalDamage)}`,
-              x: target.x,
-              y: target.y - 25,
+              x: hitTarget.x,
+              y: hitTarget.y - 25,
               color: '#ef4444',
               life: 30,
             });
 
             if (pr.explosionRadius > 0) {
-              createExplosion(pr.x, pr.y, pr.explosionRadius, pr.damage * 0.7, false);
+              createExplosion(pr.x, pr.y, pr.explosionRadius, pr.damage * 0.7, false, pr.shooterId);
             }
 
             s.projectiles.splice(i, 1);
@@ -6954,7 +7087,8 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           announcement: s.announcement,
         }));
       }
-    };
+    }
+  };
 
     // ─────────────────────────────────────────────────────────
     // RENDERIZADOR CANVAS 2D

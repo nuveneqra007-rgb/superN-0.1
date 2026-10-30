@@ -542,13 +542,19 @@ export const CombatSystem = {
       if (params.attacker) {
         params.attacker.kills++;
       }
-    } else if (causedKnockdown) {
-      target.onGround = false;
-      target.knockdownTicks = 45;
-      PlayerFSM.tryTransition(target, PlayerFSMState.KnockedDown);
     } else {
-      target.hitstunTicks = stunTicks;
-      PlayerFSM.tryTransition(target, PlayerFSMState.Hitstun);
+      if (params.attacker) {
+        target.lastAttackerId = params.attacker.id;
+        target.lastHitTicks = 0;
+      }
+      if (causedKnockdown) {
+        target.onGround = false;
+        target.knockdownTicks = 45;
+        PlayerFSM.tryTransition(target, PlayerFSMState.KnockedDown);
+      } else {
+        target.hitstunTicks = stunTicks;
+        PlayerFSM.tryTransition(target, PlayerFSMState.Hitstun);
+      }
     }
 
     if (params.attacker && params.attacker.lifestealOnHit && params.attacker.lifestealOnHit > 0) {

@@ -21,4 +21,7 @@ export interface BotInstance {
   quiet: boolean;
   color: string;
   score: number;
+  currentTargetId?: number;
+  targetEvalTicks?: number;
+  sprite?: HTMLImageElement;
 }

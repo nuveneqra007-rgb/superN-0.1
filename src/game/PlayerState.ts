@@ -92,6 +92,8 @@ export interface PlayerState {
   // Estadísticas
   kills: number;
   deaths: number;
+  lastAttackerId?: number;
+  lastHitTicks?: number;
 
   // Modificadores
   speedModifier: number;
@@ -211,6 +213,7 @@ export function createPlayerState(
     hitFlashTicks: 0,
     kills: 0,
     deaths: 0,
+    lastHitTicks: 9999,
     speedModifier: GameConstants.Speed_Normal,
     damageDealtModifier: GameConstants.DD_Normal,
     damageTakenModifier: GameConstants.DT_Normal,

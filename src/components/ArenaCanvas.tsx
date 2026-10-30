@@ -6774,148 +6774,158 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           }
         }
 
-        // Bot / J2 pickup
-        const d2 = Math.hypot(w.x - bot.x, w.y - bot.y);
-        let isP2SlotEmpty = false;
-        if (bot.inventory) {
-          if (wSlot === 'melee') {
-            isP2SlotEmpty = bot.inventory.melee === WeaponType.Fists;
-          } else if (wSlot === 'handgun') {
-            isP2SlotEmpty = bot.inventory.handgun === null;
-          } else if (wSlot === 'primary') {
-            isP2SlotEmpty = bot.inventory.primary === null;
-          } else if (wSlot === 'throwable') {
-            isP2SlotEmpty = canAddGrenade(s.botGrenades);
+        // Bot / J2 pickup: soporte multi-bot para que cualquier bot pueda recoger armas
+        let weaponPickedByBot = false;
+        for (const inst of s.bots) {
+          const bState = inst.state;
+          if (!bState.isAlive) continue;
+
+          const d2 = Math.hypot(w.x - bState.x, w.y - bState.y);
+          let isP2SlotEmpty = false;
+          if (bState.inventory) {
+            if (wSlot === 'melee') {
+              isP2SlotEmpty = bState.inventory.melee === WeaponType.Fists;
+            } else if (wSlot === 'handgun') {
+              isP2SlotEmpty = bState.inventory.handgun === null;
+            } else if (wSlot === 'primary') {
+              isP2SlotEmpty = bState.inventory.primary === null;
+            } else if (wSlot === 'throwable') {
+              isP2SlotEmpty = canAddGrenade(inst.grenades);
+            }
           }
-        }
 
-        const canBotPickup =
-          bot.fsm === PlayerFSMState.Crouch ||
-          bot.equippedWeapon === WeaponType.Fists ||
-          (gameMode === 'local1v1' && (isAnyPressed(keys, CONTROLS.LOCAL_1V1_P2.down) || isP2SlotEmpty));
+          const canBotPickup =
+            bState.fsm === PlayerFSMState.Crouch ||
+            bState.equippedWeapon === WeaponType.Fists ||
+            (gameMode === 'local1v1' && (isAnyPressed(keys, CONTROLS.LOCAL_1V1_P2.down) || isP2SlotEmpty));
 
-        if (d2 < 32 && canBotPickup) {
-          if (wSlot === 'throwable') {
-            const gType = w.weaponType === WeaponType.Molotov ? GrenadeType.Molotov : GrenadeType.Frag;
-            if (canAddGrenade(s.botGrenades)) {
-              const added = addGrenades(s.botGrenades, gType, 2);
+          if (d2 < 32 && canBotPickup) {
+            if (wSlot === 'throwable') {
+              const gType = w.weaponType === WeaponType.Molotov ? GrenadeType.Molotov : GrenadeType.Frag;
+              if (canAddGrenade(inst.grenades)) {
+                const added = addGrenades(inst.grenades, gType, 2);
+                sounds.playPickup();
+                addSparks(w.x, w.y, inst.color, 12);
+                s.floatingTexts.push({
+                  id: s.nextEntityId++,
+                  text: `+${added} ${wData.name} (${inst.grenades.ammo[gType]}/${GRENADE_MAX_CAPACITY})`,
+                  x: bState.x,
+                  y: bState.y - 35,
+                  color: inst.color,
+                  life: 45,
+                });
+                if (w.spawnSlotIndex !== undefined && s.weaponSlots && s.weaponSlots[w.spawnSlotIndex]) {
+                  if (s.weaponSlots[w.spawnSlotIndex].currentWeaponId === w.id) {
+                    s.weaponSlots[w.spawnSlotIndex].currentWeaponId = null;
+                  }
+                }
+                s.worldWeapons.splice(i, 1);
+                weaponPickedByBot = true;
+                break;
+              }
+            } else if (bState.inventory) {
+              // J2 en local1v1 con inventario por ranuras
+              if (bState.inventory.activeSlot === 'handgun' && bState.inventory.handgun) {
+                bState.inventory.handgun.ammo = bState.ammo;
+              } else if (bState.inventory.activeSlot === 'primary' && bState.inventory.primary) {
+                bState.inventory.primary.ammo = bState.ammo;
+              }
+
+              if (wSlot === 'melee') {
+                if (bState.inventory.melee !== WeaponType.Fists) {
+                  s.worldWeapons.push({
+                    id: s.nextEntityId++,
+                    weaponType: bState.inventory.melee,
+                    x: bState.x,
+                    y: bState.y,
+                    baseY: bState.y,
+                    bobTicks: 0,
+                  });
+                }
+                bState.inventory.melee = w.weaponType;
+                bState.inventory.activeSlot = 'melee';
+                bState.ammo = 0;
+                equipWeaponState(bState, w.weaponType, inst.controller || s.p2Controller);
+              } else if (wSlot === 'handgun') {
+                if (bState.inventory.handgun !== null) {
+                  s.worldWeapons.push({
+                    id: s.nextEntityId++,
+                    weaponType: bState.inventory.handgun.type,
+                    x: bState.x,
+                    y: bState.y,
+                    baseY: bState.y,
+                    bobTicks: 0,
+                  });
+                }
+                bState.inventory.handgun = { type: w.weaponType, ammo: wData.magSize };
+                bState.inventory.activeSlot = 'handgun';
+                bState.ammo = wData.magSize;
+                equipWeaponState(bState, w.weaponType, inst.controller || s.p2Controller);
+              } else if (wSlot === 'primary') {
+                if (bState.inventory.primary !== null) {
+                  s.worldWeapons.push({
+                    id: s.nextEntityId++,
+                    weaponType: bState.inventory.primary.type,
+                    x: bState.x,
+                    y: bState.y,
+                    baseY: bState.y,
+                    bobTicks: 0,
+                  });
+                }
+                bState.inventory.primary = { type: w.weaponType, ammo: wData.magSize };
+                bState.inventory.activeSlot = 'primary';
+                bState.ammo = wData.magSize;
+                equipWeaponState(bState, w.weaponType, inst.controller || s.p2Controller);
+              }
+
               sounds.playPickup();
-              addSparks(w.x, w.y, '#38bdf8', 12);
               s.floatingTexts.push({
                 id: s.nextEntityId++,
-                text: `+${added} ${wData.name} (${s.botGrenades.ammo[gType]}/${GRENADE_MAX_CAPACITY})`,
-                x: bot.x,
-                y: bot.y - 35,
-                color: '#38bdf8',
+                text: `¡${wData.name}!`,
+                x: bState.x,
+                y: bState.y - 35,
+                color: wSlot === 'primary' ? '#eab308' : wSlot === 'handgun' ? '#38bdf8' : '#f97316',
                 life: 45,
               });
+
               if (w.spawnSlotIndex !== undefined && s.weaponSlots && s.weaponSlots[w.spawnSlotIndex]) {
                 if (s.weaponSlots[w.spawnSlotIndex].currentWeaponId === w.id) {
                   s.weaponSlots[w.spawnSlotIndex].currentWeaponId = null;
                 }
               }
+
               s.worldWeapons.splice(i, 1);
-              continue;
-            }
-          } else if (bot.inventory) {
-            // J2 en local1v1 con inventario por ranuras
-            if (bot.inventory.activeSlot === 'handgun' && bot.inventory.handgun) {
-              bot.inventory.handgun.ammo = bot.ammo;
-            } else if (bot.inventory.activeSlot === 'primary' && bot.inventory.primary) {
-              bot.inventory.primary.ammo = bot.ammo;
-            }
+              weaponPickedByBot = true;
+              break;
+            } else {
+              // Bot IA convencional (vsBot): un solo equippedWeapon
+              bState.equippedWeapon = w.weaponType;
+              bState.ammo = wData.magSize;
+              sounds.playPickup();
+              equipWeaponState(bState, w.weaponType, undefined);
 
-            if (wSlot === 'melee') {
-              if (bot.inventory.melee !== WeaponType.Fists) {
-                s.worldWeapons.push({
-                  id: s.nextEntityId++,
-                  weaponType: bot.inventory.melee,
-                  x: bot.x,
-                  y: bot.y,
-                  baseY: bot.y,
-                  bobTicks: 0,
-                });
+              s.floatingTexts.push({
+                id: s.nextEntityId++,
+                text: `¡${wData.name}!`,
+                x: bState.x,
+                y: bState.y - 35,
+                color: inst.color || '#f87171',
+                life: 45,
+              });
+
+              if (w.spawnSlotIndex !== undefined && s.weaponSlots && s.weaponSlots[w.spawnSlotIndex]) {
+                if (s.weaponSlots[w.spawnSlotIndex].currentWeaponId === w.id) {
+                  s.weaponSlots[w.spawnSlotIndex].currentWeaponId = null;
+                }
               }
-              bot.inventory.melee = w.weaponType;
-              bot.inventory.activeSlot = 'melee';
-              bot.ammo = 0;
-              equipWeaponState(bot, w.weaponType, s.p2Controller);
-            } else if (wSlot === 'handgun') {
-              if (bot.inventory.handgun !== null) {
-                s.worldWeapons.push({
-                  id: s.nextEntityId++,
-                  weaponType: bot.inventory.handgun.type,
-                  x: bot.x,
-                  y: bot.y,
-                  baseY: bot.y,
-                  bobTicks: 0,
-                });
-              }
-              bot.inventory.handgun = { type: w.weaponType, ammo: wData.magSize };
-              bot.inventory.activeSlot = 'handgun';
-              bot.ammo = wData.magSize;
-              equipWeaponState(bot, w.weaponType, s.p2Controller);
-            } else if (wSlot === 'primary') {
-              if (bot.inventory.primary !== null) {
-                s.worldWeapons.push({
-                  id: s.nextEntityId++,
-                  weaponType: bot.inventory.primary.type,
-                  x: bot.x,
-                  y: bot.y,
-                  baseY: bot.y,
-                  bobTicks: 0,
-                });
-              }
-              bot.inventory.primary = { type: w.weaponType, ammo: wData.magSize };
-              bot.inventory.activeSlot = 'primary';
-              bot.ammo = wData.magSize;
-              equipWeaponState(bot, w.weaponType, s.p2Controller);
+
+              s.worldWeapons.splice(i, 1);
+              weaponPickedByBot = true;
+              break;
             }
-
-            sounds.playPickup();
-            s.floatingTexts.push({
-              id: s.nextEntityId++,
-              text: `¡${wData.name}!`,
-              x: bot.x,
-              y: bot.y - 35,
-              color: wSlot === 'primary' ? '#eab308' : wSlot === 'handgun' ? '#38bdf8' : '#f97316',
-              life: 45,
-            });
-
-            if (w.spawnSlotIndex !== undefined && s.weaponSlots && s.weaponSlots[w.spawnSlotIndex]) {
-              if (s.weaponSlots[w.spawnSlotIndex].currentWeaponId === w.id) {
-                s.weaponSlots[w.spawnSlotIndex].currentWeaponId = null;
-              }
-            }
-
-            s.worldWeapons.splice(i, 1);
-            continue;
-          } else {
-            // Bot IA convencional (vsBot): un solo equippedWeapon
-            bot.equippedWeapon = w.weaponType;
-            bot.ammo = wData.magSize;
-            sounds.playPickup();
-            equipWeaponState(bot, w.weaponType, undefined);
-
-            s.floatingTexts.push({
-              id: s.nextEntityId++,
-              text: `¡${wData.name}!`,
-              x: bot.x,
-              y: bot.y - 35,
-              color: '#f87171',
-              life: 45,
-            });
-
-            if (w.spawnSlotIndex !== undefined && s.weaponSlots && s.weaponSlots[w.spawnSlotIndex]) {
-              if (s.weaponSlots[w.spawnSlotIndex].currentWeaponId === w.id) {
-                s.weaponSlots[w.spawnSlotIndex].currentWeaponId = null;
-              }
-            }
-
-            s.worldWeapons.splice(i, 1);
-            continue;
           }
         }
+        if (weaponPickedByBot) continue;
       }
 
       // 4.4. CICLOS DE REEMPLAZO DE ARMAS EN PUNTOS DE SPAWN DESIGNADOS

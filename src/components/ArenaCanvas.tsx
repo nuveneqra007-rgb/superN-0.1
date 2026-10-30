@@ -32,6 +32,7 @@ import {
   consumeGrenade,
   GrenadePickupEntity,
 } from '../game/GrenadeSystem';
+import { CONTROLS_TEXT } from '../game/Controls';
 
 interface ArenaCanvasProps {
   gameMode?: GameMode;
@@ -444,6 +445,27 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
   useEffect(() => {
     controlSchemeRef.current = controlScheme;
   }, [controlScheme]);
+
+  // Menú de pausa y modales retro
+  const [isPaused, setIsPaused] = useState(false);
+  const isPausedRef = useRef(false);
+  useEffect(() => {
+    isPausedRef.current = isPaused;
+  }, [isPaused]);
+
+  const [showExitConfirm, setShowExitConfirm] = useState(false);
+  const showExitConfirmRef = useRef(false);
+  useEffect(() => {
+    showExitConfirmRef.current = showExitConfirm;
+  }, [showExitConfirm]);
+
+  const [showControlsModal, setShowControlsModal] = useState(false);
+  const showControlsModalRef = useRef(false);
+  useEffect(() => {
+    showControlsModalRef.current = showControlsModal;
+  }, [showControlsModal]);
+
+  const [botPracticeMode, setBotPracticeMode] = useState(false);
 
   // Estado mutado en el loop de 60Hz
   const stateRef = useRef<{
@@ -1027,7 +1049,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       bot,
       p2Controller: new PlayerController(spawnBot.x, spawnBot.y, false, 2),
       botAI: createBotFSMData(arch.aiType),
-      botQuiet: true,
+      botQuiet: false,
       projectiles: [],
       worldWeapons,
       weaponSlots,
@@ -1262,68 +1284,107 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     sounds.playRoundGong(true);
   }, [botFaction, playerFaction, createWorldHazards]);
 
-  // Teclado
+  // Teclado y control de eventos
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!stateRef.current) return;
       const key = e.key.toLowerCase();
-      if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' ', 'space'].includes(key)) {
+      const code = e.code;
+
+      const preventedCodes = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'Comma', 'Period', 'Slash'];
+      if (preventedCodes.includes(code) || ['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' ', 'space'].includes(key)) {
         e.preventDefault();
+      }
+
+      if (!stateRef.current.keys[code]) {
+        stateRef.current.keysJustPressed[code] = true;
       }
       if (!stateRef.current.keys[key]) {
         stateRef.current.keysJustPressed[key] = true;
       }
+      stateRef.current.keys[code] = true;
       stateRef.current.keys[key] = true;
 
-      if (key === 'r') {
-        restartRound(stateRef.current.p1Score >= Math.floor(maxRounds / 2) + 1 || stateRef.current.botScore >= Math.floor(maxRounds / 2) + 1);
+      // ESC: Toggle Pausa o cerrar sub-modales
+      if (code === 'Escape' || key === 'escape') {
+        if (showExitConfirmRef.current) {
+          setShowExitConfirm(false);
+          return;
+        }
+        if (showControlsModalRef.current) {
+          setShowControlsModal(false);
+          return;
+        }
+        setIsPaused((prev) => !prev);
+        return;
       }
-      if (key === 'c' || key === 't') {
-        const nextType = cycleGrenadeType(stateRef.current.p1Grenades);
-        const gCfg = GRENADE_DATABASE[nextType];
-        sounds.playPickup();
-        stateRef.current.floatingTexts.push({
-          id: stateRef.current.nextEntityId++,
-          text: `EQUIPADA: ${gCfg.shortName} (${stateRef.current.p1Grenades.ammo[nextType]} disp.)`,
-          x: stateRef.current.p1.x,
-          y: stateRef.current.p1.y - 35,
-          color: gCfg.color,
-          life: 30,
-        });
-      }
-      if (key === 'y' && gameMode === 'local1v1') {
-        cycleGrenadeType(stateRef.current.botGrenades);
-      }
-      if (key === 'b') {
-        stateRef.current.botQuiet = !stateRef.current.botQuiet;
-        stateRef.current.floatingTexts.push({
-          id: stateRef.current.nextEntityId++,
-          text: stateRef.current.botQuiet ? 'BOT: QUIETO (PRÁCTICA)' : 'BOT: IA ACTIVA',
-          x: stateRef.current.bot.x,
-          y: stateRef.current.bot.y - 45,
-          color: stateRef.current.botQuiet ? '#38bdf8' : '#ef4444',
-          life: 45,
-        });
-      }
-      if (key === 'escape') {
-        onExitToMenu();
+
+      // Teclas exclusivas de DEBUG (activas únicamente con ?debug=1 en la URL)
+      const isDebug = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('debug') === '1';
+      if (isDebug) {
+        if (code === 'KeyR' || key === 'r') {
+          restartRound(stateRef.current.p1Score >= Math.floor(maxRounds / 2) + 1 || stateRef.current.botScore >= Math.floor(maxRounds / 2) + 1);
+        }
+        if (code === 'KeyC' || key === 'c' || code === 'KeyT' || key === 't') {
+          const nextType = cycleGrenadeType(stateRef.current.p1Grenades);
+          const gCfg = GRENADE_DATABASE[nextType];
+          sounds.playPickup();
+          stateRef.current.floatingTexts.push({
+            id: stateRef.current.nextEntityId++,
+            text: `DEBUG: ${gCfg.shortName} (${stateRef.current.p1Grenades.ammo[nextType]} disp.)`,
+            x: stateRef.current.p1.x,
+            y: stateRef.current.p1.y - 35,
+            color: gCfg.color,
+            life: 30,
+          });
+        }
+        if ((code === 'KeyY' || key === 'y') && gameMode === 'local1v1') {
+          cycleGrenadeType(stateRef.current.botGrenades);
+        }
+        if (code === 'KeyB' || key === 'b') {
+          stateRef.current.botQuiet = !stateRef.current.botQuiet;
+          setBotPracticeMode(stateRef.current.botQuiet);
+          stateRef.current.floatingTexts.push({
+            id: stateRef.current.nextEntityId++,
+            text: stateRef.current.botQuiet ? 'BOT: QUIETO (PRÁCTICA)' : 'BOT: IA ACTIVA',
+            x: stateRef.current.bot.x,
+            y: stateRef.current.bot.y - 45,
+            color: stateRef.current.botQuiet ? '#38bdf8' : '#ef4444',
+            life: 45,
+          });
+        }
       }
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
       if (!stateRef.current) return;
       const key = e.key.toLowerCase();
+      const code = e.code;
+      stateRef.current.keys[code] = false;
       stateRef.current.keys[key] = false;
+      delete stateRef.current.keysJustPressed[code];
       delete stateRef.current.keysJustPressed[key];
+    };
+
+    // Prevenir teclas pegadas al cambiar de pestaña o perder foco de ventana
+    const handleResetKeys = () => {
+      if (!stateRef.current) return;
+      stateRef.current.keys = {};
+      stateRef.current.keysJustPressed = {};
     };
 
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('blur', handleResetKeys);
+    document.addEventListener('visibilitychange', handleResetKeys);
+
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('blur', handleResetKeys);
+      document.removeEventListener('visibilitychange', handleResetKeys);
     };
-  }, [onExitToMenu, restartRound, maxRounds]);
+  }, [restartRound, maxRounds, gameMode]);
 
   // Helpers de combate y efectos
   const createExplosion = (
@@ -8024,8 +8085,25 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       ctx.restore();
     };
 
-    const loop = () => {
-      updateGame();
+    let lastTime = performance.now();
+    let accumulator = 0;
+    const FIXED_STEP_MS = 1000 / 60;
+    const MAX_ACCUMULATOR = 100;
+
+    const loop = (now: number) => {
+      const frameTime = Math.min(now - lastTime, MAX_ACCUMULATOR);
+      lastTime = now;
+
+      if (!isPausedRef.current) {
+        accumulator += frameTime;
+        while (accumulator >= FIXED_STEP_MS) {
+          updateGame();
+          accumulator -= FIXED_STEP_MS;
+        }
+      } else {
+        accumulator = 0;
+      }
+
       renderGame();
       animId = requestAnimationFrame(loop);
     };
@@ -8084,10 +8162,10 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         </div>
 
         <button
-          onClick={onExitToMenu}
+          onClick={() => setIsPaused(true)}
           className="px-3 py-1 bg-black hover:bg-neutral-800 text-white border-2 border-white text-[9px] font-pixel transition cursor-pointer active:translate-y-0.5 rounded-none"
         >
-          SALIR (ESC)
+          PAUSA (ESC)
         </button>
       </div>
 
@@ -8102,6 +8180,130 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           className="w-full max-w-[960px] max-h-[78vh] aspect-[16/9] object-contain block focus:outline-none"
           style={{ imageRendering: 'pixelated' }}
         />
+
+        {/* Modal de Pausa Retro Superfighters */}
+        {isPaused && !hudState.isMatchOver && (
+          <div className="absolute inset-0 bg-black/85 flex flex-col items-center justify-center p-4 z-30 font-pixel">
+            <div className="border-2 border-white bg-black p-6 flex flex-col items-center gap-3.5 max-w-sm w-full shadow-[0_0_20px_rgba(0,0,0,0.8)]">
+              <h2 className="text-base font-bold tracking-widest text-yellow-400 text-center uppercase border-b-2 border-white/20 pb-2 w-full">
+                PARTIDA EN PAUSA
+              </h2>
+
+              <button
+                onClick={() => setIsPaused(false)}
+                className="w-full px-4 py-2.5 bg-neutral-900 hover:bg-white hover:text-black text-white font-pixel text-[10px] border-2 border-white transition cursor-pointer text-center"
+              >
+                [ CONTINUAR ] (ESC)
+              </button>
+
+              <button
+                onClick={() => {
+                  setIsPaused(false);
+                  restartRound(false);
+                }}
+                className="w-full px-4 py-2.5 bg-neutral-900 hover:bg-white hover:text-black text-white font-pixel text-[10px] border-2 border-white transition cursor-pointer text-center"
+              >
+                [ REINICIAR RONDA ]
+              </button>
+
+              {gameMode === 'vsBot' && (
+                <button
+                  onClick={() => {
+                    const nextVal = !botPracticeMode;
+                    setBotPracticeMode(nextVal);
+                    if (stateRef.current) {
+                      stateRef.current.botQuiet = nextVal;
+                    }
+                  }}
+                  className="w-full px-4 py-2 bg-neutral-900 hover:bg-neutral-800 text-neutral-200 font-pixel text-[9px] border border-white/60 transition cursor-pointer flex items-center justify-between"
+                >
+                  <span>MODO PRÁCTICA:</span>
+                  <span className={botPracticeMode ? 'text-cyan-400 font-bold' : 'text-neutral-500'}>
+                    [{botPracticeMode ? 'BOT QUIETO' : 'IA ACTIVA'}]
+                  </span>
+                </button>
+              )}
+
+              <button
+                onClick={() => setShowControlsModal(true)}
+                className="w-full px-4 py-2 bg-neutral-900 hover:bg-neutral-800 text-yellow-300 font-pixel text-[9px] border border-white/60 transition cursor-pointer text-center"
+              >
+                VER CONTROLES
+              </button>
+
+              <button
+                onClick={() => setShowExitConfirm(true)}
+                className="w-full px-4 py-2.5 bg-rose-950/60 hover:bg-rose-600 hover:text-white text-rose-300 font-pixel text-[10px] border-2 border-rose-500/80 transition cursor-pointer text-center mt-2"
+              >
+                SALIR AL MENÚ
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Modal de Confirmación de Salida */}
+        {showExitConfirm && (
+          <div className="absolute inset-0 bg-black/95 flex flex-col items-center justify-center p-4 z-40 font-pixel">
+            <div className="border-2 border-rose-500 bg-black p-6 flex flex-col items-center gap-4 max-w-sm w-full text-center shadow-[0_0_30px_rgba(244,63,94,0.3)]">
+              <span className="text-rose-400 text-xs font-bold uppercase tracking-wider">
+                ¿ABANDONAR PARTIDA?
+              </span>
+              <p className="text-neutral-300 text-[9px] leading-relaxed">
+                El progreso de la partida actual se perderá.
+              </p>
+              <div className="flex gap-3 w-full mt-2">
+                <button
+                  onClick={onExitToMenu}
+                  className="flex-1 px-4 py-2.5 bg-rose-600 hover:bg-rose-500 text-white font-pixel text-[10px] border-2 border-white transition cursor-pointer"
+                >
+                  SÍ, SALIR
+                </button>
+                <button
+                  onClick={() => setShowExitConfirm(false)}
+                  className="flex-1 px-4 py-2.5 bg-neutral-900 hover:bg-neutral-800 text-white font-pixel text-[10px] border-2 border-white transition cursor-pointer"
+                >
+                  CANCELAR
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal de Controles */}
+        {showControlsModal && (
+          <div className="absolute inset-0 bg-black/95 flex flex-col items-center justify-center p-4 z-40 font-pixel">
+            <div className="border-2 border-white bg-black p-5 flex flex-col items-center gap-3.5 max-w-md w-full shadow-2xl">
+              <h3 className="text-xs font-bold text-yellow-300 uppercase tracking-widest border-b border-white/20 pb-1.5 w-full text-center">
+                GUÍA DE CONTROLES
+              </h3>
+
+              <div className="w-full space-y-2.5 text-[9px] text-neutral-200">
+                <div className="p-2 border border-white/30 bg-neutral-950">
+                  <div className="text-cyan-400 font-bold mb-1">1 JUGADOR (VS BOT):</div>
+                  <div className="text-neutral-300">{CONTROLS_TEXT.SOLO_MOVE}</div>
+                  <div className="text-neutral-400 text-[8px] mt-0.5">{CONTROLS_TEXT.SOLO_ACTIONS}</div>
+                </div>
+
+                <div className="p-2 border border-white/30 bg-neutral-950">
+                  <div className="text-amber-400 font-bold mb-1">DUELO 1v1 (2 JUGADORES):</div>
+                  <div className="text-neutral-300"><span className="text-cyan-300">J1:</span> {CONTROLS_TEXT.P1_1V1_FULL}</div>
+                  <div className="text-neutral-300 mt-1"><span className="text-amber-300">J2:</span> {CONTROLS_TEXT.P2_1V1_FULL}</div>
+                </div>
+
+                <div className="text-[8px] text-neutral-400 bg-neutral-900/60 p-2 border border-neutral-800">
+                  ⚡ {CONTROLS_TEXT.ROLL_HINT}
+                </div>
+              </div>
+
+              <button
+                onClick={() => setShowControlsModal(false)}
+                className="w-full px-4 py-2 bg-neutral-900 hover:bg-white hover:text-black text-white font-pixel text-[10px] border-2 border-white transition cursor-pointer mt-1"
+              >
+                VOLVER (ESC)
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Modal de Fin de Partida con Revancha (Estilo Retro) */}
         {hudState.isMatchOver && (

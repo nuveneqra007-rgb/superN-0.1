@@ -4,6 +4,8 @@
 // SIN inercia ni aceleración suave. Tipado estricto sin `any`.
 // =============================================================
 
+import { CONTROLS, isAnyPressed } from './Controls';
+
 /**
  * Parámetros de configuración ajustables para calibrar el 'game feel'.
  */
@@ -160,83 +162,19 @@ export class PlayerController {
     is1v1: boolean = true,
     scheme: 'wasd_p1' | 'arrows_p1' = 'wasd_p1'
   ): PlayerInput {
-    let leftKey = false;
-    let rightKey = false;
-    let upKey = false;
-    let upJustPressed = false;
-    let downKey = false;
-    let downJustPressed = false;
-    let runHeld = false;
+    const bindings = !is1v1
+      ? CONTROLS.SOLO
+      : this.player_id === 1
+      ? (scheme === 'wasd_p1' ? CONTROLS.LOCAL_1V1_P1 : CONTROLS.LOCAL_1V1_P2)
+      : (scheme === 'wasd_p1' ? CONTROLS.LOCAL_1V1_P2 : CONTROLS.LOCAL_1V1_P1);
 
-    if (this.player_id === 1) {
-      // ═════════════════════════════════════════════════════════
-      // JUGADOR 1 (player_id === 1)
-      // ═════════════════════════════════════════════════════════
-      if (scheme === 'wasd_p1') {
-        // Esquema A: J1 usa WASD + Q/Shift
-        leftKey = !!(keys['a'] || keys['A']);
-        rightKey = !!(keys['d'] || keys['D']);
-        upKey = !!(keys['w'] || keys['W']);
-        upJustPressed = !!(keysJustPressed['w'] || keysJustPressed['W']);
-        downKey = !!(keys['s'] || keys['S']);
-        downJustPressed = !!(keysJustPressed['s'] || keysJustPressed['S']);
-        runHeld = !!(keys['q'] || keys['Q'] || keys['shift']);
-
-        // En modo solitario vsBot (no hay J2 humano), J1 también puede usar las flechas
-        if (!is1v1) {
-          if (keys['arrowleft']) leftKey = true;
-          if (keys['arrowright']) rightKey = true;
-          if (keys['arrowup']) upKey = true;
-          if (keysJustPressed['arrowup'] || keysJustPressed[' ']) upJustPressed = true;
-          if (keys['arrowdown']) downKey = true;
-          if (keysJustPressed['arrowdown']) downJustPressed = true;
-          if (keys['.']) runHeld = true;
-        }
-      } else {
-        // Esquema B: J1 usa Flechas Direccionales
-        leftKey = !!keys['arrowleft'];
-        rightKey = !!keys['arrowright'];
-        upKey = !!keys['arrowup'];
-        upJustPressed = !!keysJustPressed['arrowup'];
-        downKey = !!keys['arrowdown'];
-        downJustPressed = !!keysJustPressed['arrowdown'];
-        runHeld = !!keys['.'];
-
-        if (!is1v1) {
-          if (keys['a'] || keys['A']) leftKey = true;
-          if (keys['d'] || keys['D']) rightKey = true;
-          if (keys['w'] || keys['W']) upKey = true;
-          if (keysJustPressed['w'] || keysJustPressed['W'] || keysJustPressed[' ']) upJustPressed = true;
-          if (keys['s'] || keys['S']) downKey = true;
-          if (keysJustPressed['s'] || keysJustPressed['S']) downJustPressed = true;
-          if (keys['q'] || keys['shift']) runHeld = true;
-        }
-      }
-    } else {
-      // ═════════════════════════════════════════════════════════
-      // JUGADOR 2 (player_id === 2)
-      // ═════════════════════════════════════════════════════════
-      // Estrictamente aislado: Jamás lee teclas de J1
-      if (scheme === 'wasd_p1') {
-        // Si J1 usa WASD, J2 usa Flechas direccionales exclusivamente
-        leftKey = !!keys['arrowleft'];
-        rightKey = !!keys['arrowright'];
-        upKey = !!keys['arrowup'];
-        upJustPressed = !!keysJustPressed['arrowup'];
-        downKey = !!keys['arrowdown'];
-        downJustPressed = !!keysJustPressed['arrowdown'];
-        runHeld = !!keys['.'];
-      } else {
-        // Si J1 usa Flechas, J2 usa WASD exclusivamente
-        leftKey = !!(keys['a'] || keys['A']);
-        rightKey = !!(keys['d'] || keys['D']);
-        upKey = !!(keys['w'] || keys['W']);
-        upJustPressed = !!(keysJustPressed['w'] || keysJustPressed['W']);
-        downKey = !!(keys['s'] || keys['S']);
-        downJustPressed = !!(keysJustPressed['s'] || keysJustPressed['S']);
-        runHeld = !!(keys['q'] || keys['Q']);
-      }
-    }
+    const leftKey = isAnyPressed(keys, bindings.left);
+    const rightKey = isAnyPressed(keys, bindings.right);
+    const upKey = isAnyPressed(keys, bindings.up);
+    const upJustPressed = isAnyPressed(keysJustPressed, bindings.up);
+    const downKey = isAnyPressed(keys, bindings.down);
+    const downJustPressed = isAnyPressed(keysJustPressed, bindings.down);
+    const runHeld = isAnyPressed(keys, bindings.run);
 
     let moveDir: -1 | 0 | 1 = 0;
     if (leftKey && !rightKey) moveDir = -1;
@@ -259,7 +197,7 @@ export class PlayerController {
   }
 
   /**
-   * Lee y procesa las acciones de combate asignadas según el player_id.
+   * Lee y procesa las acciones de combate asignadas según el player_id y modo de juego.
    */
   public readCombatInput(
     keys: Record<string, boolean>,
@@ -267,48 +205,20 @@ export class PlayerController {
     is1v1: boolean = true,
     scheme: 'wasd_p1' | 'arrows_p1' = 'wasd_p1'
   ) {
-    if (this.player_id === 1) {
-      if (scheme === 'wasd_p1') {
-        // J1 en WASD: F o J (Melee), G o K (Disparo), R o L (Granada)
-        const melee = !!(keys['f'] || keys['F'] || keys['j'] || keys['J'] || (!is1v1 && (keys['n'] || keys['N'])));
-        const meleeJust = !!(keysJustPressed['f'] || keysJustPressed['F'] || keysJustPressed['j'] || keysJustPressed['J'] || (!is1v1 && (keysJustPressed['n'] || keysJustPressed['N'])));
-        const fire = !!(keys['g'] || keys['G'] || keys['k'] || keys['K'] || (!is1v1 && (keys['m'] || keys['M'])));
-        const fireJust = !!(keysJustPressed['g'] || keysJustPressed['G'] || keysJustPressed['k'] || keysJustPressed['K'] || (!is1v1 && (keysJustPressed['m'] || keysJustPressed['M'])));
-        const throwGrenade = !!(keys['r'] || keys['R'] || keys['l'] || keys['L'] || (!is1v1 && (keys[','] || keys['comma'])));
-        const throwJust = !!(keysJustPressed['r'] || keysJustPressed['R'] || keysJustPressed['l'] || keysJustPressed['L'] || (!is1v1 && (keysJustPressed[','] || keysJustPressed['comma'])));
-        return { melee, meleeJust, fire, fireJust, throwGrenade, throwJust };
-      } else {
-        // J1 en Flechas: N (Melee), M (Disparo), , (Granada)
-        const melee = !!(keys['n'] || keys['N'] || (!is1v1 && (keys['j'] || keys['J'])));
-        const meleeJust = !!(keysJustPressed['n'] || keysJustPressed['N'] || (!is1v1 && (keysJustPressed['j'] || keysJustPressed['J'])));
-        const fire = !!(keys['m'] || keys['M'] || (!is1v1 && (keys['k'] || keys['K'])));
-        const fireJust = !!(keysJustPressed['m'] || keysJustPressed['M'] || (!is1v1 && (keysJustPressed['k'] || keysJustPressed['K'])));
-        const throwGrenade = !!(keys[','] || keys['comma'] || (!is1v1 && (keys['g'] || keys['l'])));
-        const throwJust = !!(keysJustPressed[','] || keysJustPressed['comma'] || (!is1v1 && (keysJustPressed['g'] || keysJustPressed['l'])));
-        return { melee, meleeJust, fire, fireJust, throwGrenade, throwJust };
-      }
-    } else {
-      // J2 (player_id === 2)
-      if (scheme === 'wasd_p1') {
-        // J2 en Flechas: N (Melee), M (Disparo), , (Granada)
-        const melee = !!(keys['n'] || keys['N'] || keys['1']);
-        const meleeJust = !!(keysJustPressed['n'] || keysJustPressed['N'] || keysJustPressed['1']);
-        const fire = !!(keys['m'] || keys['M'] || keys['2']);
-        const fireJust = !!(keysJustPressed['m'] || keysJustPressed['M'] || keysJustPressed['2']);
-        const throwGrenade = !!(keys[','] || keys['comma'] || keys['3']);
-        const throwJust = !!(keysJustPressed[','] || keysJustPressed['comma'] || keysJustPressed['3']);
-        return { melee, meleeJust, fire, fireJust, throwGrenade, throwJust };
-      } else {
-        // J2 en WASD: J (Melee), K (Disparo), L (Granada)
-        const melee = !!(keys['j'] || keys['J']);
-        const meleeJust = !!(keysJustPressed['j'] || keysJustPressed['J']);
-        const fire = !!(keys['k'] || keys['K']);
-        const fireJust = !!(keysJustPressed['k'] || keysJustPressed['K']);
-        const throwGrenade = !!(keys['l'] || keys['L']);
-        const throwJust = !!(keysJustPressed['l'] || keysJustPressed['L']);
-        return { melee, meleeJust, fire, fireJust, throwGrenade, throwJust };
-      }
-    }
+    const bindings = !is1v1
+      ? CONTROLS.SOLO
+      : this.player_id === 1
+      ? (scheme === 'wasd_p1' ? CONTROLS.LOCAL_1V1_P1 : CONTROLS.LOCAL_1V1_P2)
+      : (scheme === 'wasd_p1' ? CONTROLS.LOCAL_1V1_P2 : CONTROLS.LOCAL_1V1_P1);
+
+    const melee = isAnyPressed(keys, bindings.melee);
+    const meleeJust = isAnyPressed(keysJustPressed, bindings.melee);
+    const fire = isAnyPressed(keys, bindings.fire);
+    const fireJust = isAnyPressed(keysJustPressed, bindings.fire);
+    const throwGrenade = isAnyPressed(keys, bindings.grenade);
+    const throwJust = isAnyPressed(keysJustPressed, bindings.grenade);
+
+    return { melee, meleeJust, fire, fireJust, throwGrenade, throwJust };
   }
 
   /**

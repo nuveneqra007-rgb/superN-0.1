@@ -8,6 +8,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { sounds } from '../game/SoundEffects';
 import { Volume2, VolumeX, Swords } from 'lucide-react';
+import { CONTROLS_TEXT } from '../game/Controls';
 
 export type GameMode = 'vsBot' | 'local1v1';
 
@@ -226,16 +227,25 @@ export const ModeSelectScreen: React.FC<ModeSelectScreenProps> = ({
 
         {/* ── CUADRO DE CONTROLES (BOTTOM) EN FORMA DE LISTA DE TEXTO SIMPLE ── */}
         <div className="w-full max-w-2xl bg-black border-2 border-white/80 p-2.5 mt-3 text-left">
-          <div className="text-[9px] font-black text-yellow-300 tracking-widest uppercase mb-1.5 border-b border-white/20 pb-1">
-            CONTROLES DE COMBATE:
+          <div className="text-[9px] font-black text-yellow-300 tracking-widest uppercase mb-1.5 border-b border-white/20 pb-1 flex items-center justify-between">
+            <span>CONTROLES DE COMBATE:</span>
+            <span className="text-neutral-400 font-normal lowercase">{CONTROLS_TEXT.ROLL_HINT}</span>
           </div>
-          <div className="space-y-1 text-[8px] sm:text-[9px] font-mono-code text-neutral-200 uppercase leading-relaxed">
-            <div>
-              <strong className="text-cyan-400 font-pixel">J1:</strong> WASD - N (MELEE) - M (DISPARO) - G (GRANADA)
-            </div>
-            <div>
-              <strong className="text-amber-400 font-pixel">J2:</strong> FLECHAS - J (MELEE) - K (DISPARO) - L (GRANADA)
-            </div>
+          <div className="space-y-1.5 text-[8px] sm:text-[9px] font-mono-code text-neutral-200 uppercase leading-relaxed">
+            {selectedMode === 'vsBot' ? (
+              <div>
+                <strong className="text-cyan-400 font-pixel">1 JUGADOR:</strong> {CONTROLS_TEXT.SOLO_FULL}
+              </div>
+            ) : (
+              <>
+                <div>
+                  <strong className="text-cyan-400 font-pixel">J1:</strong> {CONTROLS_TEXT.P1_1V1_FULL}
+                </div>
+                <div>
+                  <strong className="text-amber-400 font-pixel">J2:</strong> {CONTROLS_TEXT.P2_1V1_FULL}
+                </div>
+              </>
+            )}
           </div>
         </div>
       </main>

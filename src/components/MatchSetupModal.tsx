@@ -222,14 +222,16 @@ export const MatchSetupModal: React.FC<MatchSetupModalProps> = ({
               handleFight();
             }}
             onMouseEnter={() => setSelectedRow(0)}
-            className="flex items-center justify-between cursor-pointer py-1 px-1 transition hover:text-yellow-300"
+            className={`flex items-center justify-between cursor-pointer py-1.5 px-2 transition rounded ${
+              selectedRow === 0 ? 'bg-neutral-900 border border-white shadow-[0_0_8px_rgba(255,255,255,0.3)] text-yellow-300' : 'border border-transparent text-neutral-200'
+            }`}
           >
             <div className="flex items-center gap-2">
               <span className={selectedRow === 0 ? 'text-white font-black' : 'text-neutral-200'}>
                 FIGHT!
               </span>
               {selectedRow === 0 && (
-                <span className="text-white text-base font-black animate-pulse leading-none">
+                <span className="text-yellow-400 text-base font-black animate-pulse leading-none">
                   ◄
                 </span>
               )}
@@ -240,14 +242,16 @@ export const MatchSetupModal: React.FC<MatchSetupModalProps> = ({
           <div
             onClick={() => setSelectedRow(1)}
             onMouseEnter={() => setSelectedRow(1)}
-            className="flex items-center justify-between cursor-pointer py-1 px-1 transition"
+            className={`flex items-center justify-between cursor-pointer py-1.5 px-2 transition rounded ${
+              selectedRow === 1 ? 'bg-neutral-900 border border-white shadow-[0_0_8px_rgba(255,255,255,0.3)]' : 'border border-transparent text-neutral-200'
+            }`}
           >
             <div className="flex items-center gap-2">
               <span className={selectedRow === 1 ? 'text-white font-black' : 'text-neutral-200'}>
                 MAP
               </span>
               {selectedRow === 1 && (
-                <span className="text-white text-base font-black animate-pulse leading-none">
+                <span className="text-yellow-400 text-base font-black animate-pulse leading-none">
                   ◄
                 </span>
               )}
@@ -299,13 +303,18 @@ export const MatchSetupModal: React.FC<MatchSetupModalProps> = ({
             onClick={() => setSelectedRow(2)}
             onMouseEnter={() => setSelectedRow(2)}
             className={`flex items-center justify-between cursor-pointer py-1.5 px-2 transition rounded ${
-              selectedRow === 2 ? 'bg-neutral-900 border border-white/40' : 'border border-transparent'
+              selectedRow === 2 ? 'bg-neutral-900 border border-white shadow-[0_0_8px_rgba(255,255,255,0.3)]' : 'border border-transparent text-neutral-200'
             }`}
           >
             <div className="flex items-center gap-2">
               <span className={selectedRow === 2 ? 'text-white font-black' : 'text-neutral-300'}>
                 ROUNDS
               </span>
+              {selectedRow === 2 && (
+                <span className="text-yellow-400 text-base font-black animate-pulse leading-none">
+                  ◄
+                </span>
+              )}
             </div>
 
             {/* Selector de Rondas */}
@@ -356,14 +365,16 @@ export const MatchSetupModal: React.FC<MatchSetupModalProps> = ({
               handleReset();
             }}
             onMouseEnter={() => setSelectedRow(3)}
-            className="flex items-center justify-between cursor-pointer py-1 px-1 transition hover:text-yellow-300"
+            className={`flex items-center justify-between cursor-pointer py-1.5 px-2 transition rounded ${
+              selectedRow === 3 ? 'bg-neutral-900 border border-white shadow-[0_0_8px_rgba(255,255,255,0.3)] text-yellow-300' : 'border border-transparent text-neutral-200'
+            }`}
           >
             <div className="flex items-center gap-2">
               <span className={selectedRow === 3 ? 'text-white font-black' : 'text-neutral-200'}>
                 RESET
               </span>
               {selectedRow === 3 && (
-                <span className="text-white text-base font-black animate-pulse leading-none">
+                <span className="text-yellow-400 text-base font-black animate-pulse leading-none">
                   ◄
                 </span>
               )}
@@ -371,12 +382,12 @@ export const MatchSetupModal: React.FC<MatchSetupModalProps> = ({
           </div>
         </div>
 
-        {/* ── GUÍA RÁPIDA DE TECLAS EN EL PIE DEL POP-UP ── */}
-        <div className="mt-5 pt-3 border-t border-white/20 flex items-center justify-between text-[8px] text-neutral-400">
-          <span>▲▼: SELECT</span>
-          <span>◄►: CHANGE</span>
-          <span>ENTER: OK</span>
-          <span>ESC: CLOSE</span>
+        {/* ── GUÍA RÁPIDA DE TECLAS EN EL PIE DEL POP-UP (UI-09: >= 12px) ── */}
+        <div className="mt-5 pt-3 border-t border-white/20 flex items-center justify-between text-xs text-neutral-300 tracking-wider">
+          <span>▲▼ SELECT</span>
+          <span>◄► CHANGE</span>
+          <span>ENTER OK</span>
+          <span>ESC CLOSE</span>
         </div>
       </div>
     </div>

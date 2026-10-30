@@ -5863,6 +5863,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
               if (isBladeBot) {
                 const smashHit = CombatSystem.resolveBladeHeavySlash(bot, p1, chargeRatio);
+                s.botAI.currentComboPause = s.botAI.comboPauseTicks;
                 if (smashHit.didHit) {
                   sounds.playBladeHit();
                   addSparks(p1.x, p1.y, '#e0f2fe', 26);
@@ -5878,6 +5879,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                 }
               } else {
                 const smashHit = CombatSystem.resolveHeavySmash(bot, p1, chargeRatio);
+                s.botAI.currentComboPause = s.botAI.comboPauseTicks;
                 if (smashHit.didHit) {
                   sounds.playHit();
                   addSparks(p1.x, p1.y, '#f59e0b', 24);
@@ -5895,6 +5897,9 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             } else {
               const isBladeBot = isBladeWeapon(bot.equippedWeapon);
               bot.comboStep = (bot.comboStep + 1) % 3;
+              if (bot.comboStep === 2) {
+                s.botAI.currentComboPause = s.botAI.comboPauseTicks;
+              }
               bot.comboWindowTicks = isBladeBot ? 34 : GameConstants.FistsComboWindowTicks;
               bot.attackCooldown = isBladeBot ? 14 : GameConstants.FistsCooldownTicks;
               PlayerFSM.tryTransition(bot, PlayerFSMState.MeleeAttack);
@@ -6008,7 +6013,8 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
               const count = wpn.pelletCount || 1;
               for (let i = 0; i < count; i++) {
-                const spreadAngle = ((Math.random() - 0.5) * ((wpn.accuracyDeg || 3) * Math.PI / 180)) / 2;
+                const aimOffset = (Math.random() - 0.5) * (s.botAI?.aimError ?? 0.12);
+                const spreadAngle = ((Math.random() - 0.5) * ((wpn.accuracyDeg || 3) * Math.PI / 180)) / 2 + aimOffset;
                 const speed = wpn.projectileSpeed || 900;
                 s.projectiles.push({
                   id: s.nextEntityId++,
@@ -7724,21 +7730,23 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         ctx.restore();
       });
 
-      // 3. PLATAFORMAS CON TEMÁTICA
+      // 3. PLATAFORMAS CON TEMÁTICA (UI-03: Contraste reforzado con bordes superiores claros)
       for (const plat of s.platforms) {
         if (plat.theme === 'desert_earth') {
-          // Tierra marrón con borde festoneado de arena superior
+          // Tierra marrón con borde superior de arena clara reflectante
           ctx.fillStyle = '#78461f';
           ctx.fillRect(plat.x, plat.y, plat.w, plat.h);
 
+          ctx.fillStyle = '#fef08a';
+          ctx.fillRect(plat.x, plat.y, plat.w, 3);
           ctx.fillStyle = '#e6b566';
-          ctx.fillRect(plat.x, plat.y, plat.w, 6);
+          ctx.fillRect(plat.x, plat.y + 3, plat.w, 4);
 
           // Puntos y textura arenosa
           ctx.fillStyle = '#d49b4b';
           for (let px = plat.x + 4; px < plat.x + plat.w; px += 14) {
             ctx.beginPath();
-            ctx.arc(px, plat.y + 6, 3, 0, Math.PI);
+            ctx.arc(px, plat.y + 7, 3, 0, Math.PI);
             ctx.fill();
           }
         } else if (plat.theme === 'hazard_stripe' || plat.label === 'CONVEYOR') {
@@ -7775,6 +7783,10 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           }
           ctx.restore();
 
+          // Borde superior claro reflectante
+          ctx.fillStyle = '#fed7aa';
+          ctx.fillRect(plat.x, plat.y, plat.w, 2);
+
           ctx.strokeStyle = '#475569';
           ctx.lineWidth = 1.5;
           ctx.strokeRect(plat.x, plat.y, plat.w, plat.h);
@@ -7783,8 +7795,11 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           ctx.fillStyle = '#1e293b';
           ctx.fillRect(plat.x, plat.y, plat.w, plat.h);
 
-          ctx.fillStyle = '#334155';
+          // Borde superior metálico claro
+          ctx.fillStyle = '#64748b';
           ctx.fillRect(plat.x, plat.y, plat.w, 4);
+          ctx.fillStyle = '#cbd5e1';
+          ctx.fillRect(plat.x, plat.y, plat.w, 1.5);
 
           // Remaches
           ctx.fillStyle = '#94a3b8';
@@ -7798,9 +7813,11 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           ctx.fillStyle = '#1e293b';
           ctx.fillRect(plat.x, plat.y, plat.w, plat.h);
 
-          // Borde superior de hormigón
-          ctx.fillStyle = '#334155';
+          // Borde superior de hormigón claro para alto contraste táctico
+          ctx.fillStyle = '#64748b';
           ctx.fillRect(plat.x, plat.y, plat.w, 4);
+          ctx.fillStyle = '#cbd5e1';
+          ctx.fillRect(plat.x, plat.y, plat.w, 1.5);
 
           // Textura de bloques de hormigón
           ctx.strokeStyle = '#0f172a';
@@ -7943,7 +7960,16 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         ctx.fillStyle = '#f8fafc';
         ctx.font = 'bold 9px monospace';
         ctx.textAlign = 'center';
-        ctx.fillText(wData.name.slice(0, 9), w.x, w.y + 14 + bobY);
+        // UI-04: Truncar dinámicamente según measureText con '…'
+        const maxTextW = 64;
+        let displayName = wData.name.toUpperCase();
+        if (ctx.measureText(displayName).width > maxTextW) {
+          while (displayName.length > 2 && ctx.measureText(displayName + '…').width > maxTextW) {
+            displayName = displayName.slice(0, -1);
+          }
+          displayName += '…';
+        }
+        ctx.fillText(displayName, w.x, w.y + 14 + bobY);
         ctx.fillStyle = wData.color;
         ctx.fillText('▼', w.x, w.y - 14 + bobY);
       }
@@ -8662,6 +8688,15 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           ctx.fillRect(drawX, drawY, charW, charH);
           ctx.fillStyle = '#f8fafc';
           ctx.fillRect(drawX + 18, drawY + 10, 8, 8);
+        }
+
+        // UI-03: Contorno de 1 px claro en el sprite del jugador (P1) para garantizar contraste sobre fondos oscuros
+        if (isP1) {
+          ctx.save();
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(drawX, drawY, charW, charH);
+          ctx.restore();
         }
 
         // Arma equipada en mano (proporcional al personaje aumentado)

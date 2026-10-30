@@ -258,7 +258,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
           <div className="border-t-2 border-b-2 border-white py-0.5 px-6 tracking-[0.25em] text-lg sm:text-2xl font-black text-white drop-shadow-[0_2px_4px_rgba(255,255,255,0.25)]">
             super<span className="text-red-500">N</span>
           </div>
-          <div className="text-[8px] text-red-500 tracking-[0.3em] mt-0.5 font-bold uppercase">
+          <div className="text-[11px] text-red-500 tracking-[0.25em] mt-0.5 font-bold uppercase">
             {isLocal1v1 ? 'DUEL 1 VS 1 — LOCAL MODE' : 'CUSTOM FIGHT — BATTLE ARENA'}
           </div>
         </div>
@@ -269,10 +269,10 @@ export const MainMenu: React.FC<MainMenuProps> = ({
               sounds.playPickup();
               onOpenArsenal();
             }}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-black border-2 border-white hover:bg-white hover:text-black transition text-[10px] cursor-pointer"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-black border-2 border-white hover:bg-white hover:text-black transition text-xs cursor-pointer"
             title="Ver Arsenal"
           >
-            <Swords className="w-3 h-3" />
+            <Swords className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">ARSENAL</span>
           </button>
 
@@ -281,7 +281,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
             className="p-1.5 bg-black border-2 border-white hover:bg-white hover:text-black transition text-white cursor-pointer"
             title={muted ? 'Activar sonido' : 'Silenciar'}
           >
-            {muted ? <VolumeX className="w-3.5 h-3.5 text-red-400" /> : <Volume2 className="w-3.5 h-3.5 text-green-400" />}
+            {muted ? <VolumeX className="w-4 h-4 text-red-400" /> : <Volume2 className="w-4 h-4 text-green-400" />}
           </button>
         </div>
       </header>
@@ -308,10 +308,10 @@ export const MainMenu: React.FC<MainMenuProps> = ({
               />
             </div>
 
-            <div className="text-[11px] font-black tracking-wider text-yellow-300">
+            <div className="text-xs font-black tracking-wider text-yellow-300">
               NINJA
             </div>
-            <div className="text-[8px] text-neutral-300 tracking-wider uppercase">
+            <div className="text-[11px] text-neutral-300 tracking-wider uppercase">
               INDEPENDENT
             </div>
           </div>
@@ -335,10 +335,10 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                 />
               </div>
 
-              <div className="text-[11px] font-black tracking-wider text-yellow-300">
+              <div className="text-xs font-black tracking-wider text-yellow-300">
                 NINJA (P2)
               </div>
-              <div className="text-[8px] text-neutral-300 tracking-wider uppercase">
+              <div className="text-[11px] text-neutral-300 tracking-wider uppercase">
                 INDEPENDENT
               </div>
             </div>
@@ -361,7 +361,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                     key={slotIdx}
                     className="w-36 sm:w-40 h-44 border border-dashed border-neutral-700 bg-black/40 flex flex-col items-center justify-center text-center opacity-40 select-none"
                   >
-                    <span className="text-[9px] text-neutral-600 font-black tracking-widest uppercase mb-1">
+                    <span className="text-xs text-neutral-500 font-black tracking-widest uppercase mb-1">
                       COM {slotIdx + 1}
                     </span>
                     <span className="text-[10px] text-neutral-500 font-bold tracking-widest">
@@ -418,7 +418,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                     >
                       ◀
                     </button>
-                    <div className="text-[9px] font-black tracking-wider text-yellow-300 uppercase truncate px-0.5">
+                    <div className="text-[11px] font-black tracking-wider text-yellow-300 uppercase truncate px-0.5">
                       {isRandom ? 'RANDOM' : arch?.name || slot.faction}
                     </div>
                     <button
@@ -446,12 +446,12 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                         setFocusedSlotIdx(slotIdx);
                         cycleSlotDifficulty(slotIdx, -1);
                       }}
-                      className="text-neutral-400 hover:text-white font-black text-[9px] px-0.5 cursor-pointer"
+                      className="text-neutral-400 hover:text-white font-black text-xs px-1 cursor-pointer"
                       title="Dificultad anterior"
                     >
                       ◄
                     </button>
-                    <span className="text-[8px] font-bold tracking-wider text-neutral-300 uppercase">
+                    <span className="text-[10px] sm:text-xs font-bold tracking-wider text-neutral-200 uppercase">
                       {slot.difficulty}
                     </span>
                     <button
@@ -462,7 +462,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                         setFocusedSlotIdx(slotIdx);
                         cycleSlotDifficulty(slotIdx, 1);
                       }}
-                      className="text-neutral-400 hover:text-white font-black text-[9px] px-0.5 cursor-pointer"
+                      className="text-neutral-400 hover:text-white font-black text-xs px-1 cursor-pointer"
                       title="Siguiente dificultad"
                     >
                       ►
@@ -529,8 +529,8 @@ export const MainMenu: React.FC<MainMenuProps> = ({
         </button>
       </main>
 
-      {/* ── BARRA INFERIOR / INSTRUCCIONES ── */}
-      <footer className="w-full max-w-4xl text-center py-1 text-[8px] sm:text-[9px] text-neutral-400 tracking-widest font-mono-code uppercase shrink-0">
+      {/* ── BARRA INFERIOR / INSTRUCCIONES (UI-09: >= 12px) ── */}
+      <footer className="w-full max-w-4xl text-center py-1.5 text-xs text-neutral-300 tracking-wider font-mono-code uppercase shrink-0">
         ↑↓←→ NAVEGAR · SPACE ACEPTAR · ESC VOLVER
       </footer>
 

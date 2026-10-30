@@ -1,6 +1,7 @@
 // =============================================================
 // BotFSM.ts — Máquina de estados de la IA del bot y control
 // Basado en BotExtended BotAI types + BotInfos.cs + BotController.cs
+// Actualizado con GDD v3 (Lote 8: IA que pelee como oponente humano)
 // =============================================================
 
 import { BotAIType } from './BotData';
@@ -30,20 +31,58 @@ export interface BotFSMData {
   jumpCooldown: number;
   pickupTicks: number;
   pickupCooldown: number;
+
+  // Lote 8: Parámetros adaptativos por dificultad
+  reactionTicks: number; // Ticks de retraso antes de reaccionar a una nueva amenaza
+  aimError: number; // Desviación angular de disparo en radianes
+  dodgeChance: number; // Probabilidad de esquiva (0.25 easy / 0.50 normal / 0.80 hard)
+  comboPauseTicks: number; // Pausa táctica tras encadenar golpes (35 / 20 / 8 ticks)
+  currentComboPause: number; // Contador activo de pausa tras combo
+  pendingState: BotAIState | null; // Estado deseado mientras transcurre el tiempo de reacción
+  pendingTimer: number; // Temporizador del tiempo de reacción
+  movementPattern: 'advance' | 'circle' | 'wait'; // Alternancia de fintas y patrones
+  movementPatternTicks: number; // Duración del patrón actual
 }
 
 export function createBotFSMData(aiType: BotAIType, difficulty?: string): BotFSMData {
+  const diff = (difficulty || 'normal').toLowerCase();
+  let reactionTicks = 18;
+  let dodgeChance = 0.50;
+  let aimError = 0.12;
+  let comboPauseTicks = 20;
+
+  if (diff === 'easy') {
+    reactionTicks = 28;
+    dodgeChance = 0.25;
+    aimError = 0.26;
+    comboPauseTicks = 35;
+  } else if (diff === 'hard') {
+    reactionTicks = 10;
+    dodgeChance = 0.80;
+    aimError = 0.03;
+    comboPauseTicks = 8;
+  }
+
   return {
     currentState: BotAIState.Idle,
     stateTicks: 0,
     aiType,
-    difficulty,
+    difficulty: diff,
     dodgeCooldown: 0,
-    strafeDirX: 1,
+    strafeDirX: Math.random() < 0.5 ? 1 : -1,
     strafeTicks: 0,
     jumpCooldown: 0,
     pickupTicks: 0,
     pickupCooldown: 0,
+    reactionTicks,
+    aimError,
+    dodgeChance,
+    comboPauseTicks,
+    currentComboPause: 0,
+    pendingState: null,
+    pendingTimer: 0,
+    movementPattern: 'advance',
+    movementPatternTicks: Math.floor(40 + Math.random() * 40),
   };
 }
 
@@ -66,8 +105,27 @@ export const BotAI = {
     ai.stateTicks++;
     if (ai.dodgeCooldown > 0) ai.dodgeCooldown--;
     if (ai.pickupCooldown > 0) ai.pickupCooldown--;
+    if (ai.currentComboPause > 0) ai.currentComboPause--;
+
+    // Actualizar temporizador de fintas y patrones dinámicos de movimiento
+    ai.movementPatternTicks--;
+    if (ai.movementPatternTicks <= 0) {
+      const roll = Math.random();
+      if (roll < 0.55) {
+        ai.movementPattern = 'advance';
+        ai.movementPatternTicks = 30 + Math.floor(Math.random() * 45);
+      } else if (roll < 0.82) {
+        ai.movementPattern = 'circle';
+        ai.strafeDirX = Math.random() < 0.5 ? 1 : -1;
+        ai.movementPatternTicks = 25 + Math.floor(Math.random() * 35);
+      } else {
+        ai.movementPattern = 'wait';
+        ai.movementPatternTicks = 15 + Math.floor(Math.random() * 20);
+      }
+    }
 
     if (!target || !target.isAlive) {
+      ai.currentState = BotAIState.Idle;
       return BotAIState.Idle;
     }
 
@@ -75,80 +133,93 @@ export const BotAI = {
       Math.pow(target.x - bot.x, 2) + Math.pow(target.y - bot.y, 2)
     );
 
-    // 1. Melee prioritario si está en rango cuerpo a cuerpo (combate inmediato)
+    // Calcular estado deseado según condiciones del combate
+    let desiredState = BotAIState.Chase;
+
+    // 1. Melee si está a distancia cuerpo a cuerpo
     if (dist <= GameConstants.AI_MeleeRange) {
       ai.pickupTicks = 0;
-      return BotAIState.Attack;
+      desiredState = BotAIState.Attack;
     }
-
-    // 2. Dodge: Bots con IA reactiva
-    const canDodge =
-      ai.aiType === BotAIType.Hard ||
-      ai.aiType === BotAIType.Soldier ||
-      ai.aiType === BotAIType.AssassinMelee ||
-      ai.aiType === BotAIType.AssassinRange ||
-      ai.aiType === BotAIType.Cowboy;
-
-    if (projectileIncoming && ai.dodgeCooldown <= 0 && canDodge) {
-      ai.dodgeCooldown = 40;
-      return BotAIState.Dodge;
+    // 2. Esquiva basada en probabilidad según dificultad (Lote 8: sin listas rígidas)
+    else if (projectileIncoming && ai.dodgeCooldown <= 0) {
+      if (Math.random() < ai.dodgeChance) {
+        ai.dodgeCooldown = Math.max(24, 46 - (ai.reactionTicks <= 10 ? 16 : 0));
+        ai.currentState = BotAIState.Dodge;
+        ai.pendingState = null;
+        ai.pendingTimer = 0;
+        return BotAIState.Dodge;
+      } else {
+        // Falló la probabilidad de esquiva: cooldown breve para no testear cada tick
+        ai.dodgeCooldown = 15;
+      }
     }
-
-    // 3. Flee: baja salud sin arma de fuego
-    if (
+    // 3. Huida con baja salud sin arma de fuego
+    else if (
       bot.health <= GameConstants.AI_FleeHPThreshold &&
       bot.equippedWeapon === WeaponType.Fists
     ) {
-      return BotAIState.Flee;
+      desiredState = BotAIState.Flee;
     }
-
-    // 4. Strafe y disparo con armas de fuego
-    const isFirearm =
+    // 4. Strafe a distancia si porta arma de fuego y tiene munición
+    else if (
       bot.equippedWeapon !== WeaponType.Fists &&
-      WeaponDatabase[bot.equippedWeapon]?.category === 'Firearm';
-
-    if (isFirearm && dist <= GameConstants.AI_DetectionRange) {
-      return BotAIState.Strafe;
+      WeaponDatabase[bot.equippedWeapon]?.category === 'Firearm' &&
+      bot.ammo > 0 &&
+      dist <= GameConstants.AI_DetectionRange
+    ) {
+      desiredState = BotAIState.Strafe;
     }
-
-    // 5. Recoger arma cercana (solo si no está en cooldown por fallo/arma inaccesible)
-    // Si el jugador está muy cerca (< 130px), el bot no le da la espalda para buscar armas
-    const canAttemptPickup =
+    // 5. Recoger arma si está desarmado y no está en rango de peligro inminente
+    else if (
       bot.equippedWeapon === WeaponType.Fists &&
       nearestWeaponDist <= GameConstants.AI_WpnSearchInSight &&
       ai.pickupCooldown <= 0 &&
-      dist > 120;
-
-    if (canAttemptPickup) {
-      ai.pickupTicks++;
-      // Si lleva más de 70 ticks (~1.1 s) intentando recoger un arma y no la consigue
-      // (por ejemplo, porque está en una cornisa superior), cancela la búsqueda
-      // y ataca agresivamente al jugador sin quedar congelado.
-      if (ai.pickupTicks > 70) {
-        ai.pickupCooldown = 180; // 3 segundos persiguiendo al jugador antes de reconsiderar armas
-        ai.pickupTicks = 0;
-        return BotAIState.Chase;
-      }
-      return BotAIState.Pickup;
-    } else {
-      ai.pickupTicks = 0;
-    }
-
-    // 6. Cobertura: poca vida con bala entrante
-    if (
-      (ai.aiType === BotAIType.Hard || ai.aiType === BotAIType.Soldier) &&
-      bot.health < 50 &&
-      projectileIncoming
+      dist > 110
     ) {
-      return BotAIState.Cover;
+      ai.pickupTicks++;
+      if (ai.pickupTicks > 70) {
+        ai.pickupCooldown = 180;
+        ai.pickupTicks = 0;
+        desiredState = BotAIState.Chase;
+      } else {
+        desiredState = BotAIState.Pickup;
+      }
+    }
+    // 6. Cobertura: baja salud bajo amenaza de proyectil
+    else if (bot.health < 45 && projectileIncoming) {
+      desiredState = BotAIState.Cover;
+    }
+    // 7. Persecución normal
+    else if (dist <= GameConstants.AI_DetectionRange) {
+      desiredState = BotAIState.Chase;
+    } else {
+      desiredState = BotAIState.Idle;
     }
 
-    // 7. Chase: Persecución activa del objetivo
-    if (dist <= GameConstants.AI_DetectionRange) {
-      return BotAIState.Chase;
+    // Retraso de tiempo de reacción humano (Lote 8: reactionTicks por dificultad)
+    // El combate melee inminente o defensa directa reacciona con rapidez; cambios tácticos aplican delay
+    if (desiredState === BotAIState.Attack && dist < 32) {
+      ai.currentState = desiredState;
+      ai.pendingState = null;
+      ai.pendingTimer = 0;
+    } else if (desiredState !== ai.currentState) {
+      if (ai.pendingState !== desiredState) {
+        ai.pendingState = desiredState;
+        ai.pendingTimer = ai.reactionTicks;
+      } else {
+        ai.pendingTimer--;
+        if (ai.pendingTimer <= 0) {
+          ai.currentState = desiredState;
+          ai.pendingState = null;
+        }
+      }
+    } else {
+      ai.pendingState = null;
+      ai.pendingTimer = 0;
     }
 
-    return BotAIState.Idle;
+    return ai.currentState;
   },
 
   computeInput(
@@ -175,10 +246,20 @@ export const BotAI = {
         break;
 
       case BotAIState.Chase:
-        if (target) {
-          moveX = target.x > bot.x ? 1 : -1;
+        // Pausa táctica tras combo: retroceder un paso en vez de acosar sin tregua
+        if (ai.currentComboPause > 0 && target) {
+          moveX = target.x > bot.x ? -0.65 : 0.65;
+        } else if (target) {
+          if (ai.movementPattern === 'wait') {
+            moveX = 0;
+          } else if (ai.movementPattern === 'circle') {
+            moveX = ai.strafeDirX * 0.75;
+          } else {
+            moveX = target.x > bot.x ? 1 : -1;
+          }
         }
-        // Saltar si el objetivo está arriba en una plataforma
+
+        // Salto para alcanzar plataformas elevadas
         if (bot.onGround && ai.jumpCooldown <= 0 && targetYDiff < -25) {
           jump = true;
           ai.jumpCooldown = 35;
@@ -186,37 +267,43 @@ export const BotAI = {
         break;
 
       case BotAIState.Attack:
-        melee = true;
-        if (targetDist > GameConstants.AI_MeleeRange * 0.4) {
-          moveX = target && target.x > bot.x ? 1 : -1;
-        }
-        // Si el objetivo está ligeramente por encima al atacar, salta para impactar
-        if (bot.onGround && targetYDiff < -20 && ai.jumpCooldown <= 0) {
-          jump = true;
-          ai.jumpCooldown = 30;
+        // Si está en pausa de combo, retrocede y no ataca de inmediato
+        if (ai.currentComboPause > 0 && target) {
+          moveX = target.x > bot.x ? -0.8 : 0.8;
+          melee = false;
+        } else {
+          melee = true;
+          if (targetDist > GameConstants.AI_MeleeRange * 0.4) {
+            moveX = target && target.x > bot.x ? 1 : -1;
+          }
+          if (bot.onGround && targetYDiff < -20 && ai.jumpCooldown <= 0) {
+            jump = true;
+            ai.jumpCooldown = 30;
+          }
         }
         break;
 
       case BotAIState.Strafe:
         ai.strafeTicks++;
-        if (ai.strafeTicks > 50) {
+        if (ai.strafeTicks > 45) {
           ai.strafeDirX = -ai.strafeDirX;
           ai.strafeTicks = 0;
         }
-        moveX = ai.strafeDirX * 0.6;
+        moveX = ai.strafeDirX * 0.65;
 
-        // Disparo
+        // Disparo si el arma no está en cooldown
         fire = bot.attackCooldown <= 0 && bot.ammo > 0;
 
-        // Ajustar distancia si está muy cerca
-        if (target && targetDist < 100) {
+        // Mantener distancia táctica con armas de fuego: retroceder si el rival se acerca
+        if (target && targetDist < 120) {
           moveX = bot.x > target.x ? 1 : -1;
         }
         break;
 
       case BotAIState.Dodge:
-        if (bot.onGround && bot.stamina >= GameConstants.StaminaCostRoll) {
-          crouch = true; // roll
+        // Opción Arcade: esquiva por cooldown sin consumir estamina
+        if (bot.onGround) {
+          crouch = true; // ejecuta rodada (roll)
           moveX = target && target.x > bot.x ? -1 : 1;
         } else if (bot.onGround && ai.jumpCooldown <= 0) {
           jump = true;
@@ -238,7 +325,6 @@ export const BotAI = {
         if (nearestWeaponPos) {
           moveX = nearestWeaponPos.x > bot.x ? 1 : -1;
           const yDiff = nearestWeaponPos.y - bot.y;
-          // Saltar para subir a la plataforma donde está el arma
           if (bot.onGround && yDiff < -20 && ai.jumpCooldown <= 0) {
             jump = true;
             ai.jumpCooldown = 35;

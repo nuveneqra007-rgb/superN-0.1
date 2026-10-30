@@ -53,6 +53,7 @@ export interface BotArchetypeData {
   damageDealtModifier: number;
   damageTakenModifier: number;
   meleeForceModifier: number;
+  lifestealOnHit?: number;
   equipWeaponChance: number;
   preferredWeapon?: WeaponType;
   description: string;
@@ -97,6 +98,7 @@ export const BotArchetypeDatabase: Record<BotFaction, BotArchetypeData> = {
     damageDealtModifier: GameConstants.DD_BelowNormal, // 0.90
     damageTakenModifier: GameConstants.DT_Normal, // 1.00
     meleeForceModifier: 1.1,
+    lifestealOnHit: 4,
     equipWeaponChance: 0.8,
     preferredWeapon: WeaponType.Machete,
     description: 'Peleador callejero que recupera 4 HP al golpear cuerpo a cuerpo y puede desarmar.',
@@ -250,6 +252,7 @@ export const BotArchetypeDatabase: Record<BotFaction, BotArchetypeData> = {
     damageDealtModifier: GameConstants.DD_High, // 1.25
     damageTakenModifier: GameConstants.DT_Resistant, // 0.75
     meleeForceModifier: 2.2,
+    lifestealOnHit: 5,
     equipWeaponChance: 1.0,
     preferredWeapon: WeaponType.Axe,
     description: 'Jefe implacable con gorra, torso al aire y hacha; roba 5 HP por impacto.',

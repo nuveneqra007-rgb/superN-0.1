@@ -551,14 +551,11 @@ export const CombatSystem = {
       PlayerFSM.tryTransition(target, PlayerFSMState.Hitstun);
     }
 
-    if (params.attacker) {
-      const upperName = params.attacker.name.toUpperCase();
-      if (upperName.includes('BIKER') || upperName.includes('MOTERO')) {
-        params.attacker.health = Math.min(params.attacker.maxHealth, params.attacker.health + 4);
-      }
-      if (upperName.includes('BERSERKER')) {
-        params.attacker.health = Math.min(params.attacker.maxHealth, params.attacker.health + 5);
-      }
+    if (params.attacker && params.attacker.lifestealOnHit && params.attacker.lifestealOnHit > 0) {
+      params.attacker.health = Math.min(
+        params.attacker.maxHealth,
+        params.attacker.health + params.attacker.lifestealOnHit
+      );
     }
 
     return {

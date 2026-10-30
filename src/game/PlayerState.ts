@@ -85,6 +85,7 @@ export interface PlayerState {
   damageDealtModifier: number;
   damageTakenModifier: number;
   meleeForceModifier: number;
+  lifestealOnHit?: number;
 
   // Animación de caminata sincronizada con spritesheet
   animFrame: number;

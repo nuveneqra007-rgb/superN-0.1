@@ -35,6 +35,7 @@ import {
 import { CONTROLS, isAnyPressed, CONTROLS_TEXT } from '../game/Controls';
 
 export const ENGINE_MAX_BOTS = 1;
+export const START_WITH_GRENADES = false;
 
 interface ArenaCanvasProps {
   gameMode?: GameMode;
@@ -427,15 +428,15 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     p1Ammo: 0,
     p1MaxAmmo: -1,
     p1GrenadeType: GrenadeType.Frag,
-    p1GrenadeCount: 3,
-    p1GrenadeTotal: 3,
+    p1GrenadeCount: START_WITH_GRENADES ? 3 : 0,
+    p1GrenadeTotal: START_WITH_GRENADES ? 3 : 0,
     p1GrenadeMax: GRENADE_MAX_CAPACITY,
     botHealth: botArch.maxHealth,
     botMaxHealth: botArch.maxHealth,
     botWeapon: WeaponType.Fists,
     botAmmo: 0,
     botGrenadeType: GrenadeType.Frag,
-    botGrenadeCount: 3,
+    botGrenadeCount: START_WITH_GRENADES ? 3 : 0,
     round: 1,
     maxRounds,
     p1Score: 0,
@@ -826,10 +827,10 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     p1.damageDealtModifier = pArch.damageDealtModifier;
     p1.damageTakenModifier = pArch.damageTakenModifier;
     p1.meleeForceModifier = pArch.meleeForceModifier;
-    p1.equippedWeapon = WeaponType.Katana;
-    p1.characterState = 'arma_una_mano';
-    p1.weaponState = 'arma_una_mano';
+    p1.equippedWeapon = WeaponType.Fists;
     p1.ammo = 0;
+    p1.characterState = 'desarmado';
+    p1.weaponState = 'desarmado';
     p1.isSwordAttacking = false;
     p1.swordComboStep = 0;
     p1.swordAnimFrame = 0;
@@ -837,6 +838,14 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     p1.swordHasHit = false;
     p1.swordComboBuffered = false;
     p1.swordComboWindowTicks = 0;
+    p1.isTwoHandAttacking = false;
+    p1.twoHandAnimFrame = 0;
+    p1.twoHandAnimTimer = 0;
+    p1.twoHandHasHit = false;
+    p1.isOneHandAttacking = false;
+    p1.oneHandAnimFrame = 0;
+    p1.oneHandAnimTimer = 0;
+    p1.oneHandHasHit = false;
 
     const bot = createPlayerState(2, p2Label, gameMode !== 'local1v1', spawnBot.x, spawnBot.y);
     bot.maxHealth = arch.maxHealth;
@@ -845,6 +854,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     bot.damageDealtModifier = arch.damageDealtModifier;
     bot.damageTakenModifier = arch.damageTakenModifier;
     bot.meleeForceModifier = arch.meleeForceModifier;
+    bot.lifestealOnHit = arch.lifestealOnHit ?? 0;
     bot.equippedWeapon = WeaponType.Fists;
     bot.ammo = 0;
     bot.characterState = 'desarmado';
@@ -1087,8 +1097,8 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       projectiles: [],
       worldWeapons,
       weaponSlots,
-      p1Grenades: createGrenadeInventory(GRENADE_MAX_CAPACITY, GrenadeType.Frag, GRENADE_INITIAL_COUNT),
-      botGrenades: createGrenadeInventory(GRENADE_MAX_CAPACITY, GrenadeType.Frag, GRENADE_INITIAL_COUNT),
+      p1Grenades: createGrenadeInventory(GRENADE_MAX_CAPACITY, GrenadeType.Frag, START_WITH_GRENADES ? GRENADE_INITIAL_COUNT : 0),
+      botGrenades: createGrenadeInventory(GRENADE_MAX_CAPACITY, GrenadeType.Frag, START_WITH_GRENADES ? GRENADE_INITIAL_COUNT : 0),
       grenadePickups: [],
       smokeClouds: [],
       flashbangFlash: 0,
@@ -1196,10 +1206,21 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     s.p1.damageDealtModifier = pArch.damageDealtModifier;
     s.p1.damageTakenModifier = pArch.damageTakenModifier;
     s.p1.meleeForceModifier = pArch.meleeForceModifier;
-    s.p1.equippedWeapon = WeaponType.Katana;
+    s.p1.equippedWeapon = WeaponType.Fists;
     s.p1.ammo = 0;
-    s.p1.characterState = 'arma_una_mano';
-    s.p1.weaponState = 'arma_una_mano';
+    s.p1.characterState = 'desarmado';
+    s.p1.weaponState = 'desarmado';
+    s.p1.isSwordAttacking = false;
+    s.p1.swordComboStep = 0;
+    s.p1.swordAnimFrame = 0;
+    s.p1.swordAnimTimer = 0;
+    s.p1.swordHasHit = false;
+    s.p1.swordComboBuffered = false;
+    s.p1.swordComboWindowTicks = 0;
+    s.p1.isOneHandAttacking = false;
+    s.p1.oneHandAnimFrame = 0;
+    s.p1.oneHandAnimTimer = 0;
+    s.p1.oneHandHasHit = false;
     s.p1.isTwoHandAttacking = false;
     s.p1.twoHandAnimFrame = 0;
     s.p1.twoHandAnimTimer = 0;
@@ -1233,6 +1254,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     s.bot.damageDealtModifier = arch.damageDealtModifier;
     s.bot.damageTakenModifier = arch.damageTakenModifier;
     s.bot.meleeForceModifier = arch.meleeForceModifier;
+    s.bot.lifestealOnHit = arch.lifestealOnHit ?? 0;
     s.bot.equippedWeapon = WeaponType.Fists;
     s.bot.ammo = 0;
     s.bot.characterState = 'desarmado';
@@ -1308,8 +1330,8 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     s.particles = [];
     s.fireZones = [];
     s.floatingTexts = [];
-    s.p1Grenades = createGrenadeInventory(GRENADE_MAX_CAPACITY, GrenadeType.Frag, GRENADE_INITIAL_COUNT);
-    s.botGrenades = createGrenadeInventory(GRENADE_MAX_CAPACITY, GrenadeType.Frag, GRENADE_INITIAL_COUNT);
+    s.p1Grenades = createGrenadeInventory(GRENADE_MAX_CAPACITY, GrenadeType.Frag, START_WITH_GRENADES ? GRENADE_INITIAL_COUNT : 0);
+    s.botGrenades = createGrenadeInventory(GRENADE_MAX_CAPACITY, GrenadeType.Frag, START_WITH_GRENADES ? GRENADE_INITIAL_COUNT : 0);
     s.grenadePickups = [];
     s.smokeClouds = [];
     s.flashbangFlash = 0;
@@ -1634,9 +1656,14 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           if (!target.isAlive) return;
           const dist = Math.hypot(target.x - pr.x, target.y - pr.y);
           if (dist < gCfg.explosionRadius) {
-            target.health = Math.max(0, target.health - gCfg.damage);
-            target.hitstunTicks = gCfg.stunTicks || 70;
-            PlayerFSM.tryTransition(target, PlayerFSMState.Hitstun);
+            const kbDir = target.x >= pr.x ? 1 : -1;
+            CombatSystem.applyHit(target, {
+              damage: gCfg.damage,
+              kbX: kbDir * 80,
+              kbY: -60,
+              stunTicks: gCfg.stunTicks || 70,
+              screenShake: 12,
+            });
             s.floatingTexts.push({
               id: s.nextEntityId++,
               text: '¡CEGADO / ATURDIDO!',
@@ -1686,23 +1713,6 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       // Destello blanco de golpe (Hit Flash Feedback: 2 frames)
       if (p1.hitFlashTicks > 0) p1.hitFlashTicks--;
       if (bot.hitFlashTicks > 0) bot.hitFlashTicks--;
-
-      // Detección reactiva de daño para destello inmediato y partículas de sangre/chispa
-      if ((p1 as any)._prevHealth !== undefined && p1.health < (p1 as any)._prevHealth) {
-        const dmg = (p1 as any)._prevHealth - p1.health;
-        p1.hitFlashTicks = 2;
-        addSparks(p1.x, p1.y, '#ffffff', 8);
-        addBloodParticles(p1.x, p1.y, -p1.velocityX, dmg);
-      }
-      (p1 as any)._prevHealth = p1.health;
-
-      if ((bot as any)._prevHealth !== undefined && bot.health < (bot as any)._prevHealth) {
-        const dmg = (bot as any)._prevHealth - bot.health;
-        bot.hitFlashTicks = 2;
-        addSparks(bot.x, bot.y, '#ffffff', 8);
-        addBloodParticles(bot.x, bot.y, -bot.velocityX, dmg);
-      }
-      (bot as any)._prevHealth = bot.health;
 
       // Anuncios
       if (s.announcementTicks > 0) {
@@ -2362,43 +2372,10 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                 sounds.playDryFire();
               }
             }
-          } else if (p1.attackCooldown <= 0 && !p1.isPistolShooting) {
-            // Disparo táctico con pistola reglamentaria del Ninja (Tecla M)
-            const wpn = getWeapon(WeaponType.Pistol);
-            p1.isPistolShooting = true;
-            p1.pistolAnimFrame = 0;
-            p1.pistolAnimTimer = 0;
-            p1.pistolHasFired = true;
-            s.p1Controller.isShootingPistol = true;
-
-            p1.attackCooldown = Math.max(wpn.cooldownTicks, 14);
-            PlayerFSM.tryTransition(p1, PlayerFSMState.RangedFire);
-            sounds.playGunshot('pistol');
-
-            const dir = p1.facingRight ? 1 : -1;
-            const muzzleX = p1.x + dir * 28;
-            const muzzleY = p1.y - 6;
-
-            addSparks(muzzleX, muzzleY, '#fde047', 8);
-            s.screenShake = 3;
-
-            const speed = wpn.projectileSpeed || 900;
-            s.projectiles.push({
-              id: s.nextEntityId++,
-              x: muzzleX,
-              y: muzzleY,
-              vx: dir * speed,
-              vy: 0,
-              damage: wpn.damage * p1.damageDealtModifier,
-              onFireDuration: 0,
-              explosionRadius: 0,
-              shooterId: p1.id,
-              weaponType: WeaponType.Pistol,
-              pelletCount: 1,
-              lifeTicks: 0,
-              maxLifeTicks: 60,
-              color: '#facc15',
-            });
+          } else if (p1.attackCooldown <= 0) {
+            // Sin arma de fuego equipada: sonido corto de clic en seco y cooldown de 20 ticks
+            p1.attackCooldown = 20;
+            sounds.playDryFire();
           }
         }
 
@@ -2781,22 +2758,21 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                 addSparks(bot.x, bot.y, '#f59e0b', 16);
               }
 
-              s.screenShake = 7;
-              bot.velocityX = p1FacingDir * 170;
-              bot.hitstunTicks = 16;
-              PlayerFSM.tryTransition(bot, PlayerFSMState.Hitstun);
-
-              bot.health = Math.max(0, bot.health - finalDmg);
-              if (bot.health <= 0) {
-                bot.health = 0;
-                bot.isAlive = false;
-                PlayerFSM.tryTransition(bot, PlayerFSMState.Dead);
-                sounds.playHit();
-              }
+              const hitRes = CombatSystem.applyHit(bot, {
+                damage: finalDmg,
+                kbX: p1FacingDir * 170,
+                stunTicks: GameConstants.HitstunTicksLight,
+                attacker: p1,
+                weaponType: p1.equippedWeapon,
+                screenShake: 7,
+              });
+              s.screenShake = hitRes.screenShake;
+              s.hitStopTicks = hitRes.hitStop;
+              addBloodParticles(bot.x, bot.y, p1FacingDir, hitRes.finalDamage);
 
               s.floatingTexts.push({
                 id: s.nextEntityId++,
-                text: `¡${wpn.name.toUpperCase()}! -${Math.round(finalDmg)}`,
+                text: `¡${wpn.name.toUpperCase()}! -${Math.round(hitRes.finalDamage)}`,
                 x: bot.x,
                 y: bot.y - 32,
                 color: isBlade ? '#38bdf8' : '#f59e0b',
@@ -3358,6 +3334,10 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
               sounds.playHit();
               let damage = 12;
               let shake = 5;
+              let kbX = p1FacingDir * 110;
+              let kbY: number | undefined = undefined;
+              let causedKnockdown = false;
+              let stunTicks = GameConstants.HitstunTicksLight;
               let text = '¡PUÑETAZO!';
               let textColor = '#38bdf8';
 
@@ -3365,49 +3345,51 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                 // Fila 1: Puñetazo
                 damage = 12 * p1.damageDealtModifier;
                 shake = 5;
+                kbX = p1FacingDir * 110;
+                stunTicks = GameConstants.HitstunTicksLight;
                 text = `¡PUÑETAZO! -${Math.round(damage)}`;
                 textColor = '#38bdf8';
-                bot.velocityX = p1FacingDir * 110;
-                bot.hitstunTicks = 14;
-                PlayerFSM.tryTransition(bot, PlayerFSMState.Hitstun);
                 addSparks(bot.x, bot.y, '#38bdf8', 14);
               } else if (p1.meleeComboStep === 1) {
                 // Fila 2: Patada
                 damage = 18 * p1.damageDealtModifier;
                 shake = 8;
+                kbX = p1FacingDir * 200;
+                stunTicks = GameConstants.HitstunTicksLight;
                 text = `¡PATADA! -${Math.round(damage)}`;
                 textColor = '#f59e0b';
-                bot.velocityX = p1FacingDir * 200;
-                bot.hitstunTicks = 18;
-                PlayerFSM.tryTransition(bot, PlayerFSMState.Hitstun);
                 addSparks(bot.x, bot.y, '#f59e0b', 18);
                 addSparks(bot.x, bot.y, '#ffffff', 12);
               } else {
                 // Fila 3: Uppercut (Lanzamiento vertical demoledor y derribo)
                 damage = 28 * p1.damageDealtModifier;
                 shake = 14;
+                kbX = p1FacingDir * 240;
+                kbY = -390;
+                s.p2Controller.vy = -390;
+                causedKnockdown = true;
+                stunTicks = GameConstants.HitstunTicksStrong;
                 text = `¡UPPERCUT! -${Math.round(damage)}`;
                 textColor = '#ef4444';
-                bot.velocityX = p1FacingDir * 240;
-                bot.velocityY = -390;
-                s.p2Controller.vy = -390;
-                bot.onGround = false;
-                bot.knockdownTicks = 45;
-                PlayerFSM.tryTransition(bot, PlayerFSMState.KnockedDown);
                 sounds.playHeavySmash();
                 addSparks(bot.x, bot.y - 12, '#ef4444', 26);
                 addSparks(bot.x, bot.y - 12, '#fde047', 20);
                 addSparks(bot.x, bot.y - 12, '#ffffff', 16);
               }
 
-              s.screenShake = shake;
-              bot.health = Math.max(0, bot.health - damage);
-              if (bot.health <= 0) {
-                bot.health = 0;
-                bot.isAlive = false;
-                PlayerFSM.tryTransition(bot, PlayerFSMState.Dead);
-                sounds.playHit();
-              }
+              const hitRes = CombatSystem.applyHit(bot, {
+                damage,
+                kbX,
+                kbY,
+                stunTicks,
+                causedKnockdown,
+                attacker: p1,
+                weaponType: WeaponType.Fists,
+                screenShake: shake,
+              });
+              s.screenShake = hitRes.screenShake;
+              s.hitStopTicks = hitRes.hitStop;
+              addBloodParticles(bot.x, bot.y, p1FacingDir, hitRes.finalDamage);
 
               s.floatingTexts.push({
                 id: s.nextEntityId++,
@@ -4409,22 +4391,21 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                   addSparks(p1.x, p1.y, '#f59e0b', 16);
                 }
 
-                s.screenShake = 7;
-                p1.velocityX = p2FacingDir * 170;
-                p1.hitstunTicks = 16;
-                PlayerFSM.tryTransition(p1, PlayerFSMState.Hitstun);
-
-                p1.health = Math.max(0, p1.health - finalDmg);
-                if (p1.health <= 0) {
-                  p1.health = 0;
-                  p1.isAlive = false;
-                  PlayerFSM.tryTransition(p1, PlayerFSMState.Dead);
-                  sounds.playHit();
-                }
+                const hitRes = CombatSystem.applyHit(p1, {
+                  damage: finalDmg,
+                  kbX: p2FacingDir * 170,
+                  stunTicks: GameConstants.HitstunTicksLight,
+                  attacker: bot,
+                  weaponType: bot.equippedWeapon,
+                  screenShake: 7,
+                });
+                s.screenShake = hitRes.screenShake;
+                s.hitStopTicks = hitRes.hitStop;
+                addBloodParticles(p1.x, p1.y, p2FacingDir, hitRes.finalDamage);
 
                 s.floatingTexts.push({
                   id: s.nextEntityId++,
-                  text: `¡${wpn.name.toUpperCase()}! -${Math.round(finalDmg)}`,
+                  text: `¡${wpn.name.toUpperCase()}! -${Math.round(hitRes.finalDamage)}`,
                   x: p1.x,
                   y: p1.y - 32,
                   color: isBlade ? '#38bdf8' : '#f59e0b',
@@ -4903,53 +4884,59 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                 sounds.playHit();
                 let damage = 12;
                 let shake = 5;
+                let kbX = p2FacingDir * 110;
+                let kbY: number | undefined = undefined;
+                let causedKnockdown = false;
+                let stunTicks = GameConstants.HitstunTicksLight;
                 let text = '¡PUÑETAZO J2!';
-                let textColor = '#f43f5e';
+                let textColor = '#38bdf8';
 
                 if (bot.meleeComboStep === 0) {
                   damage = 12 * bot.damageDealtModifier;
                   shake = 5;
+                  kbX = p2FacingDir * 110;
+                  stunTicks = GameConstants.HitstunTicksLight;
                   text = `¡PUÑETAZO J2! -${Math.round(damage)}`;
                   textColor = '#38bdf8';
-                  p1.velocityX = p2FacingDir * 110;
-                  p1.hitstunTicks = 14;
-                  PlayerFSM.tryTransition(p1, PlayerFSMState.Hitstun);
                   addSparks(p1.x, p1.y, '#38bdf8', 14);
                 } else if (bot.meleeComboStep === 1) {
                   damage = 18 * bot.damageDealtModifier;
                   shake = 8;
+                  kbX = p2FacingDir * 200;
+                  stunTicks = GameConstants.HitstunTicksLight;
                   text = `¡PATADA J2! -${Math.round(damage)}`;
                   textColor = '#f59e0b';
-                  p1.velocityX = p2FacingDir * 200;
-                  p1.hitstunTicks = 18;
-                  PlayerFSM.tryTransition(p1, PlayerFSMState.Hitstun);
                   addSparks(p1.x, p1.y, '#f59e0b', 18);
                   addSparks(p1.x, p1.y, '#ffffff', 12);
                 } else {
                   damage = 28 * bot.damageDealtModifier;
                   shake = 14;
+                  kbX = p2FacingDir * 240;
+                  kbY = -390;
+                  s.p1Controller.vy = -390;
+                  causedKnockdown = true;
+                  stunTicks = GameConstants.HitstunTicksStrong;
                   text = `¡UPPERCUT J2! -${Math.round(damage)}`;
                   textColor = '#ef4444';
-                  p1.velocityX = p2FacingDir * 240;
-                  p1.velocityY = -390;
-                  s.p1Controller.vy = -390;
-                  p1.onGround = false;
-                  p1.knockdownTicks = 45;
-                  PlayerFSM.tryTransition(p1, PlayerFSMState.KnockedDown);
                   sounds.playHeavySmash();
                   addSparks(p1.x, p1.y - 12, '#ef4444', 26);
                   addSparks(p1.x, p1.y - 12, '#fde047', 20);
                   addSparks(p1.x, p1.y - 12, '#ffffff', 16);
                 }
 
-                s.screenShake = shake;
-                p1.health = Math.max(0, p1.health - damage);
-                if (p1.health <= 0) {
-                  p1.health = 0;
-                  p1.isAlive = false;
-                  PlayerFSM.tryTransition(p1, PlayerFSMState.Dead);
-                  sounds.playHit();
-                }
+                const hitRes = CombatSystem.applyHit(p1, {
+                  damage,
+                  kbX,
+                  kbY,
+                  stunTicks,
+                  causedKnockdown,
+                  attacker: bot,
+                  weaponType: WeaponType.Fists,
+                  screenShake: shake,
+                });
+                s.screenShake = hitRes.screenShake;
+                s.hitStopTicks = hitRes.hitStop;
+                addBloodParticles(p1.x, p1.y, p2FacingDir, hitRes.finalDamage);
 
                 s.floatingTexts.push({
                   id: s.nextEntityId++,
@@ -5493,8 +5480,16 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         p1.fsm === PlayerFSMState.GetUp ||
         p1.fsm === PlayerFSMState.Hitstun
       ) {
-        PhysicsStep.tick(p1, s.platforms);
-        s.p1Controller.setPosition(p1.x, p1.y);
+        const p1Vel = s.p1Controller.getVelocity();
+        if (p1.fsm !== PlayerFSMState.Hitstun && p1.fsm !== PlayerFSMState.KnockedDown) {
+          p1.velocityX = p1Vel.vx;
+          p1.velocityY = p1Vel.vy;
+        }
+        PhysicsStep.tick(p1, s.platforms, ARENA_WIDTH);
+        s.p1Controller.x = p1.x;
+        s.p1Controller.y = p1.y;
+        s.p1Controller.setVelocity(p1.velocityX, p1.velocityY);
+        s.p1Controller.isOnFloor = p1.onGround;
         s.p1Controller.facingRight = p1.facingRight;
       }
 
@@ -5505,19 +5500,29 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           bot.fsm === PlayerFSMState.GetUp ||
           bot.fsm === PlayerFSMState.Hitstun
         ) {
-          PhysicsStep.tick(bot, s.platforms);
-          s.p2Controller.setPosition(bot.x, bot.y);
+          const p2Vel = s.p2Controller.getVelocity();
+          if (bot.fsm !== PlayerFSMState.Hitstun && bot.fsm !== PlayerFSMState.KnockedDown) {
+            bot.velocityX = p2Vel.vx;
+            bot.velocityY = p2Vel.vy;
+          }
+          PhysicsStep.tick(bot, s.platforms, ARENA_WIDTH);
+          s.p2Controller.x = bot.x;
+          s.p2Controller.y = bot.y;
+          s.p2Controller.setVelocity(bot.velocityX, bot.velocityY);
+          s.p2Controller.isOnFloor = bot.onGround;
           s.p2Controller.facingRight = bot.facingRight;
         }
       } else {
-        PhysicsStep.tick(bot, s.platforms);
+        PhysicsStep.tick(bot, s.platforms, ARENA_WIDTH);
       }
       PlayerFSM.tick(p1);
       PlayerFSM.tick(bot);
 
       // Sincronización inmediata al levantarse automáticamente hacia Idle
       if (p1.fsm === PlayerFSMState.Idle && (prevP1Fsm === PlayerFSMState.KnockedDown || prevP1Fsm === PlayerFSMState.GetUp)) {
-        s.p1Controller.setPosition(p1.x, p1.y);
+        s.p1Controller.x = p1.x;
+        s.p1Controller.y = p1.y;
+        s.p1Controller.setVelocity(p1.velocityX, p1.velocityY);
         s.p1Controller.isOnFloor = p1.onGround;
         s.p1Controller.facingRight = p1.facingRight;
         s.p1Controller.state = ControllerState.Idle;
@@ -5525,7 +5530,9 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
       if (bot.fsm === PlayerFSMState.Idle && (prevBotFsm === PlayerFSMState.KnockedDown || prevBotFsm === PlayerFSMState.GetUp)) {
         if (gameMode === 'local1v1') {
-          s.p2Controller.setPosition(bot.x, bot.y);
+          s.p2Controller.x = bot.x;
+          s.p2Controller.y = bot.y;
+          s.p2Controller.setVelocity(bot.velocityX, bot.velocityY);
           s.p2Controller.isOnFloor = bot.onGround;
           s.p2Controller.facingRight = bot.facingRight;
           s.p2Controller.state = ControllerState.Idle;
@@ -6288,29 +6295,23 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             pr.y >= target.y - 25 &&
             pr.y <= target.y + 25
           ) {
-            const finalDmg = pr.damage * target.damageTakenModifier;
-            target.health = Math.max(0, target.health - finalDmg);
+            const dir = pr.vx > 0 ? 1 : -1;
+            const attacker = pr.shooterId === p1.id ? p1 : bot;
+            const hitRes = CombatSystem.applyHit(target, {
+              damage: pr.damage,
+              kbX: dir * 65,
+              stunTicks: GameConstants.HitstunTicksLight,
+              attacker,
+              screenShake: 5,
+            });
             target.fireTicks = Math.max(target.fireTicks, pr.onFireDuration);
             target.isOnFire = target.fireTicks > 0;
 
             sounds.playHit();
             addSparks(pr.x, pr.y, '#ef4444', 10);
-            s.screenShake = 5;
-
-            // Knockback leve según la dirección de la bala
-            const dir = pr.vx > 0 ? 1 : -1;
-            target.velocityX = dir * 65;
-
-            // Si la salud llega a 0 o menos, muere inmediatamente
-            if (target.health <= 0) {
-              target.health = 0;
-              target.isAlive = false;
-              PlayerFSM.tryTransition(target, PlayerFSMState.Dead);
-              sounds.playHit();
-            } else {
-              target.hitstunTicks = GameConstants.HitstunTicksLight;
-              PlayerFSM.tryTransition(target, PlayerFSMState.Hitstun);
-            }
+            s.screenShake = hitRes.screenShake;
+            s.hitStopTicks = hitRes.hitStop;
+            addBloodParticles(target.x, target.y, dir, hitRes.finalDamage);
 
             if (target.id === p1.id) {
               p1.isMeleeComboAttacking = false;
@@ -6374,7 +6375,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
             s.floatingTexts.push({
               id: s.nextEntityId++,
-              text: `-${Math.round(finalDmg)}`,
+              text: `-${Math.round(hitRes.finalDamage)}`,
               x: target.x,
               y: target.y - 25,
               color: '#ef4444',
@@ -8097,7 +8098,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         // Icono y Texto del Arma Equipada P1 con munición (UI-04 y UI-10)
         const p1Wpn = getWeapon(s.p1.equippedWeapon);
         const p1AmmoStr = s.p1.ammo > 0 ? ` [${s.p1.ammo}]` : '';
-        const p1RawName = (p1Wpn?.name || s.p1.equippedWeapon || 'KATANA').toUpperCase();
+        const p1RawName = (p1Wpn?.name || s.p1.equippedWeapon || 'PUÑOS DESNUDOS').toUpperCase();
         const p1WpnName = truncateText(p1RawName + p1AmmoStr, 125);
         const p1WImg = s.weaponImages[s.p1.equippedWeapon];
         const p1HasIcon = p1WImg && p1WImg.complete && p1WImg.naturalWidth > 0;

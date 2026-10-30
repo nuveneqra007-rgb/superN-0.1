@@ -20,13 +20,13 @@ export interface PhysicsRect {
 export const PhysicsStep = {
   deltaTime: 1 / 60,
 
-  tick(p: PlayerState, platforms: PhysicsRect[]): void {
+  tick(p: PlayerState, platforms: PhysicsRect[], arenaWidth: number = 960): void {
     if (!p.isAlive) return;
 
     this.applyGravity(p);
     this.applyMovement(p);
     this.resolveCollisions(p, platforms);
-    this.clampToBounds(p);
+    this.clampToBounds(p, arenaWidth);
   },
 
   applyGravity(p: PlayerState): void {
@@ -132,13 +132,13 @@ export const PhysicsStep = {
     }
   },
 
-  clampToBounds(p: PlayerState): void {
+  clampToBounds(p: PlayerState, arenaWidth: number = 960): void {
     const hw = GameConstants.HitboxStand.x / 2;
     if (p.x < hw) {
       p.x = hw;
       p.velocityX = 0;
-    } else if (p.x > 960 - hw) {
-      p.x = 960 - hw;
+    } else if (p.x > arenaWidth - hw) {
+      p.x = arenaWidth - hw;
       p.velocityX = 0;
     }
 

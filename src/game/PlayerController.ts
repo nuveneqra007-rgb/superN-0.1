@@ -681,4 +681,19 @@ export class PlayerController {
     this.isInvulnerable = false;
     this._hitboxHeight = PLAYER_CONFIG.HITBOX_HEIGHT_STAND;
   }
+
+  /**
+   * Obtener velocidad vectorial actual del controlador
+   */
+  public getVelocity(): { vx: number; vy: number } {
+    return { vx: this.vx, vy: this.vy };
+  }
+
+  /**
+   * Establecer velocidad vectorial del controlador para sincronización bidireccional
+   */
+  public setVelocity(vx: number, vy: number): void {
+    this.vx = vx;
+    this.vy = vy;
+  }
 }

@@ -34,3 +34,107 @@
 .animate-landing-enter {
   animation: landingEnter 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
+
+@keyframes neonFlicker {
+  0%, 100% {
+    opacity: 1;
+    filter: drop-shadow(0 0 16px rgba(239, 68, 68, 0.8)) drop-shadow(0 0 32px rgba(185, 28, 28, 0.5));
+  }
+  4% {
+    opacity: 0.3;
+    filter: drop-shadow(0 0 2px rgba(239, 68, 68, 0.15));
+  }
+  7% {
+    opacity: 0.95;
+    filter: drop-shadow(0 0 16px rgba(239, 68, 68, 0.8));
+  }
+  11% {
+    opacity: 0.2;
+    filter: drop-shadow(0 0 1px rgba(239, 68, 68, 0.1));
+  }
+  15% {
+    opacity: 1;
+    filter: drop-shadow(0 0 14px rgba(239, 68, 68, 0.75));
+  }
+  19% {
+    opacity: 0.4;
+    filter: drop-shadow(0 0 3px rgba(239, 68, 68, 0.2));
+  }
+  24%, 86% {
+    opacity: 1;
+    filter: drop-shadow(0 0 16px rgba(239, 68, 68, 0.8)) drop-shadow(0 0 32px rgba(185, 28, 28, 0.5));
+  }
+  89% {
+    opacity: 0.5;
+    filter: drop-shadow(0 0 3px rgba(239, 68, 68, 0.25));
+  }
+  92% {
+    opacity: 1;
+    filter: drop-shadow(0 0 16px rgba(239, 68, 68, 0.8));
+  }
+}
+
+@keyframes triangleNudgeLeft {
+  0%, 100% {
+    transform: translateX(0);
+  }
+  50% {
+    transform: translateX(-4px);
+  }
+}
+
+@keyframes triangleNudgeRight {
+  0%, 100% {
+    transform: translateX(0);
+  }
+  50% {
+    transform: translateX(4px);
+  }
+}
+
+@keyframes beaconPulse {
+  0%, 100% {
+    opacity: 1;
+    filter: drop-shadow(0 0 6px #ef4444);
+  }
+  50% {
+    opacity: 0.15;
+    filter: none;
+  }
+}
+
+@keyframes windowFlicker {
+  0%, 90%, 100% {
+    opacity: 0.85;
+  }
+  92% {
+    opacity: 0.2;
+  }
+  95% {
+    opacity: 0.9;
+  }
+  97% {
+    opacity: 0.35;
+  }
+}
+
+.animate-neon-flicker {
+  animation: neonFlicker 0.65s linear;
+}
+
+.animate-nudge-left {
+  animation: triangleNudgeLeft 0.8s ease-in-out infinite;
+}
+
+.animate-nudge-right {
+  animation: triangleNudgeRight 0.8s ease-in-out infinite;
+}
+
+.animate-beacon {
+  animation: beaconPulse 1.4s ease-in-out infinite;
+}
+
+.animate-window-flicker {
+  animation: windowFlicker 4.5s infinite;
+}
+

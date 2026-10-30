@@ -16,6 +16,20 @@ interface LandingScreenProps {
   onEnter: () => void;
 }
 
+// Sprite Pixel Art en base64 para Gymrat como respaldo garantizado contra problemas de caché/ruta
+const GYMRAT_SPRITE_BASE64 =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEUAAABLCAYAAAAmh0pZAAADk0lEQVR4AeyasXLTQBCG1xTUKZ2KFAy14AHAj8IwdDQ8AEWY4RWoYHgWw1AzrhmKUMVlBlzRmD3Fe/ol78mS7uRTnM3c5tar83+rT7c5Wc4Dsp89AgZlDwmRQTEoCgElZCvFoCgElJCtFIOiEFBCtlIMikJACdlKMSgKASVkK8WgKASU0OmuFOVku4ZioWx5otTGknlbLJS82Y80u0FRwCaDsv34ioaaklfWUDIoWc8i8eQGRQEaBWX77jmJofbszRfqY/jeKfhRUKZwAmPkYFAUqlFQZh++kRhd/yKx2i4UKDEco+SVNRQFJWvmI05uUBS4sVBmrFmalJHrOVa188dEO5tyyVQJk31DiDDEj10pojNSn0e2DUrfRwLVGcBOVAXrHt7c1Y/kf9UGJX92mTIwKAr4JhRfMvKZpnMPjw5ktyl7ZVIXwp0IfT7mc2A/S2tCyZLE1CY1KMoVcVD8csVSKZf+7qYLfXdzJoZ6uJugj2PQD42ZQik5KJir+UzAoDCEZusEJbTUpYxcj6WHJRB6bzMRef319z8SQx0+7suc/VFbJyijZjBBcYOiXBQHZcbx0lwZiMlTNNeHSqOxvFkmvr149JDEWtRGLSUHpWXu+3noGFDuHNkmlLKM+CxmUkau59dVw8cC6Fcj/ANsV3oYxp0ISw/jIT9UwqyfvJSaUHgOawZFWQNtUNRScuXUx3BOLJlaPPDdEI45pt8G5Zh5TGoug6Jcjq5QfCmxRsjnQ7dtPp+TWFEUVOzs6acfpNn5558kdqvgf/u5aiUL/9XgRyZ0ukJJOOX0pQyKco1GgbLZbEhsvV6TmDJ/GZKxri8D1S+8MfOlxIdDPh+Kb6NAiU8rr4JBUfjHQvHLGz+b/H37jMSuXz8hsdVqRSvFZKzr8QYPNTl3Pxf7o7ZYKKMml0u8M5RcCeaYdwgUv4wby7vKH74vwpsuHqDuGrUx+DgCdBpz+RxYM3kbAiV5ElMTNCjKFUkHBZY6Pj3jObFk+KXa/JgupaQqJAymg5IwqdxSBkW5Al2h+L/2L4sLEnv//Q+JDSgZTGdsfZzroN8VykGhUxpgUJSrGYSyXC63YlIurr84OyOxy+WKxIjI7yDU4Ue0Xe90xUTb9aLtepbspc/jB7cglMGKJ/BGg6JcxCCUxWJBi53h+65ubkjsclGQGI/xOwj7B5toux4HXyXSR82+fhBKX6G7O34/c4Oyz4T+AwAA//9ZbFPuAAAABklEQVQDAD60V3dfWp08AAAAAElFTkSuQmCC';
+
+interface ProtagonistItem {
+  id: string;
+  name: string;
+  title: string;
+  accentColor: string;
+  tag: string;
+  spriteUrl: string;
+  fallbackUrl?: string;
+}
+
 export const LandingScreen: React.FC<LandingScreenProps> = ({ onEnter }) => {
   const [isSelected, setIsSelected] = useState<boolean>(true);
   const [isFlickering, setIsFlickering] = useState<boolean>(false);
@@ -67,7 +81,7 @@ export const LandingScreen: React.FC<LandingScreenProps> = ({ onEnter }) => {
   }, [handleEnter]);
 
   // Lista de protagonistas urbanos con sus sprites pixel art oficiales
-  const protagonists = useMemo(
+  const protagonists: ProtagonistItem[] = useMemo(
     () => [
       {
         id: 'ninja',
@@ -84,6 +98,7 @@ export const LandingScreen: React.FC<LandingScreenProps> = ({ onEnter }) => {
         accentColor: '#f97316',
         tag: 'FUERZA BRUTA',
         spriteUrl: '/assets/sprites/player/gymrat.png',
+        fallbackUrl: GYMRAT_SPRITE_BASE64,
       },
       {
         id: 'santaclo',
@@ -334,22 +349,9 @@ export const LandingScreen: React.FC<LandingScreenProps> = ({ onEnter }) => {
       </svg>
 
       {/* ─────────────────────────────────────────────────────────────
-          HEADER SUPERIOR DISCRETO (ESTADO RETRO ARCADE)
+          BORDE SUPERIOR LIMPIO (SIN TEXTO — SOLO FONDO Y CIUDAD)
           ───────────────────────────────────────────────────────────── */}
-      <header className="relative z-30 w-full max-w-5xl px-6 pt-5 flex items-center justify-between text-[10px] tracking-widest text-neutral-400">
-        <div className="flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-red-600 animate-pulse shadow-[0_0_8px_#ef4444]" />
-          <span className="text-neutral-300">SISTEMA ACTIVO</span>
-          <span className="text-neutral-600">|</span>
-          <span className="text-neutral-400 hidden sm:inline">SUPERFIGHTERS PROTOCOL</span>
-        </div>
-        <div className="flex items-center gap-3">
-          <span className="text-amber-500/80 bg-amber-950/40 border border-amber-600/30 px-2 py-0.5 rounded text-[9px]">
-            BUILD v1.0.4-NOIR
-          </span>
-          <span className="text-neutral-500 hidden sm:inline">60 FPS</span>
-        </div>
-      </header>
+      <div className="relative z-30 w-full max-w-5xl px-6 pt-5" />
 
       {/* ─────────────────────────────────────────────────────────────
           CAPA 4: UI CENTRAL — LOGO CON PARPADEO NEÓN Y BOTÓN PIXEL ART
@@ -611,6 +613,19 @@ export const LandingScreen: React.FC<LandingScreenProps> = ({ onEnter }) => {
                   <img
                     src={hero.spriteUrl}
                     alt={hero.name}
+                    onError={(e) => {
+                      const img = e.currentTarget;
+                      if (!img.dataset.failedOnce) {
+                        img.dataset.failedOnce = '1';
+                        if (hero.id === 'gymrat') {
+                          img.src = '/assets/sprites/player/Gymrat.png';
+                          return;
+                        }
+                      }
+                      if (hero.fallbackUrl && img.src !== hero.fallbackUrl) {
+                        img.src = hero.fallbackUrl;
+                      }
+                    }}
                     className="relative z-10 w-auto h-14 sm:h-18 object-contain filter drop-shadow-[0_0_8px_rgba(239,68,68,0.75)] group-hover:scale-115 group-hover:drop-shadow-[0_0_14px_rgba(239,68,68,1)] transition-all duration-200"
                     style={{
                       imageRendering: 'pixelated',

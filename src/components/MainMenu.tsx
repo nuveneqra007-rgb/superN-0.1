@@ -49,8 +49,12 @@ interface ProtagonistVisual {
   name: string;
   tag: string;
   spriteUrl: string;
+  fallbackUrl?: string;
   isPlayable: boolean;
 }
+
+const GYMRAT_SPRITE_BASE64 =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEUAAABLCAYAAAAmh0pZAAADk0lEQVR4AeyasXLTQBCG1xTUKZ2KFAy14AHAj8IwdDQ8AEWY4RWoYHgWw1AzrhmKUMVlBlzRmD3Fe/ol78mS7uRTnM3c5tar83+rT7c5Wc4Dsp89AgZlDwmRQTEoCgElZCvFoCgElJCtFIOiEFBCtlIMikJACdlKMSgKASVkK8WgKASU0OmuFOVku4ZioWx5otTGknlbLJS82Y80u0FRwCaDsv34ioaaklfWUDIoWc8i8eQGRQEaBWX77jmJofbszRfqY/jeKfhRUKZwAmPkYFAUqlFQZh++kRhd/yKx2i4UKDEco+SVNRQFJWvmI05uUBS4sVBmrFmalJHrOVa188dEO5tyyVQJk31DiDDEj10pojNSn0e2DUrfRwLVGcBOVAXrHt7c1Y/kf9UGJX92mTIwKAr4JhRfMvKZpnMPjw5ktyl7ZVIXwp0IfT7mc2A/S2tCyZLE1CY1KMoVcVD8csVSKZf+7qYLfXdzJoZ6uJugj2PQD42ZQik5KJir+UzAoDCEZusEJbTUpYxcj6WHJRB6bzMRef319z8SQx0+7suc/VFbJyijZjBBcYOiXBQHZcbx0lwZiMlTNNeHSqOxvFkmvr149JDEWtRGLSUHpWXu+3noGFDuHNkmlLKM+CxmUkau59dVw8cC6Fcj/ANsV3oYxp0ISw/jIT9UwqyfvJSaUHgOawZFWQNtUNRScuXUx3BOLJlaPPDdEI45pt8G5Zh5TGoug6Jcjq5QfCmxRsjnQ7dtPp+TWFEUVOzs6acfpNn5558kdqvgf/u5aiUL/9XgRyZ0ukJJOOX0pQyKco1GgbLZbEhsvV6TmDJ/GZKxri8D1S+8MfOlxIdDPh+Kb6NAiU8rr4JBUfjHQvHLGz+b/H37jMSuXz8hsdVqRSvFZKzr8QYPNTl3Pxf7o7ZYKKMml0u8M5RcCeaYdwgUv4wby7vKH74vwpsuHqDuGrUx+DgCdBpz+RxYM3kbAiV5ElMTNCjKFUkHBZY6Pj3jObFk+KXa/JgupaQqJAymg5IwqdxSBkW5Al2h+L/2L4sLEnv//Q+JDSgZTGdsfZzroN8VykGhUxpgUJSrGYSyXC63YlIurr84OyOxy+WKxIjI7yDU4Ue0Xe90xUTb9aLtepbspc/jB7cglMGKJ/BGg6JcxCCUxWJBi53h+65ubkjsclGQGI/xOwj7B5toux4HXyXSR82+fhBKX6G7O34/c4Oyz4T+AwAA//9ZbFPuAAAABklEQVQDAD60V3dfWp08AAAAAElFTkSuQmCC';
 
 const PROTAGONISTS: ProtagonistVisual[] = [
   {
@@ -65,6 +69,7 @@ const PROTAGONISTS: ProtagonistVisual[] = [
     name: 'GYMRAT',
     tag: 'PRÓXIMAMENTE',
     spriteUrl: '/assets/sprites/player/gymrat.png',
+    fallbackUrl: GYMRAT_SPRITE_BASE64,
     isPlayable: false,
   },
   {
@@ -287,27 +292,70 @@ export const MainMenu: React.FC<MainMenuProps> = ({
 
   return (
     <div className="relative w-full h-full max-h-screen flex flex-col justify-between items-center bg-black text-white font-pixel overflow-hidden p-2 sm:p-3 select-none">
-      {/* ── FONDO RETRO DE SUPERFIGHTERS (REJILLA TÁCTICA ROJA) ── */}
+      {/* ── FONDO PARALLAX DE CIUDAD NOIR (MISMO FONDO DE PORTADA) ── */}
       <div
-        className="absolute inset-0 pointer-events-none -z-20 opacity-35"
+        className="absolute inset-0 pointer-events-none -z-30"
         style={{
-          backgroundImage: `
-            linear-gradient(to right, rgba(220, 38, 38, 0.22) 1px, transparent 1px),
-            linear-gradient(to bottom, rgba(220, 38, 38, 0.22) 1px, transparent 1px)
-          `,
-          backgroundSize: '36px 36px',
+          background:
+            'radial-gradient(ellipse at 50% 30%, #1A0505 0%, #120409 38%, #090614 75%, #050510 100%)',
         }}
       />
-      <div className="absolute inset-0 pointer-events-none -z-10 bg-[radial-gradient(circle_at_center,rgba(185,28,28,0.18)_0%,rgba(0,0,0,0.85)_75%)]" />
+
+      {/* Siluetas de la ciudad con ventanas y balizas pulsantes */}
+      <svg
+        className="absolute bottom-0 left-0 w-full h-[55vh] min-h-[280px] pointer-events-none -z-20 opacity-50"
+        viewBox="0 0 1200 400"
+        preserveAspectRatio="none"
+        style={{ shapeRendering: 'crispEdges' }}
+      >
+        <defs>
+          <linearGradient id="skylineFarGradMain" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#120c1d" />
+            <stop offset="100%" stopColor="#06050e" />
+          </linearGradient>
+        </defs>
+
+        <g fill="url(#skylineFarGradMain)">
+          <rect x="0" y="90" width="75" height="310" />
+          <rect x="150" y="60" width="95" height="340" />
+          <line x1="197" y1="15" x2="197" y2="35" stroke="#251c3d" strokeWidth="2" />
+          <circle cx="197" cy="15" r="3" fill="#ef4444" className="animate-beacon" />
+          <rect x="365" y="80" width="110" height="320" />
+          <rect x="520" y="40" width="160" height="360" />
+          <circle cx="600" cy="2" r="3.5" fill="#ef4444" className="animate-beacon" />
+          <rect x="830" y="75" width="105" height="325" />
+          <rect x="1055" y="50" width="145" height="350" />
+          <circle cx="1120" cy="20" r="3" fill="#ef4444" className="animate-beacon" />
+        </g>
+
+        <g fill="#f59e0b">
+          <rect x="165" y="90" width="5" height="8" opacity="0.75" />
+          <rect x="210" y="120" width="5" height="8" opacity="0.65" />
+          <rect x="400" y="110" width="6" height="6" opacity="0.8" />
+          <rect x="580" y="80" width="6" height="8" opacity="0.7" />
+          <rect x="620" y="80" width="6" height="8" opacity="0.6" />
+          <rect x="850" y="100" width="6" height="8" opacity="0.7" />
+          <rect x="1105" y="120" width="5" height="8" opacity="0.7" />
+        </g>
+      </svg>
+
+      {/* Capa de contraste y textura CRT suave */}
+      <div
+        className="pointer-events-none absolute inset-0 -z-10"
+        style={{
+          background:
+            'radial-gradient(circle at 50% 50%, transparent 40%, rgba(5, 5, 16, 0.6) 80%, rgba(0, 0, 0, 0.95) 100%)',
+        }}
+      />
 
       {/* ── CABECERA / LOGO ESTILO SUPERFIGHTERS CLÁSICO ── */}
-      <header className="w-full max-w-4xl flex items-center justify-between px-2 pt-1 pb-1 shrink-0">
+      <header className="w-full max-w-5xl flex items-center justify-between px-3 pt-2 pb-1 shrink-0 z-10">
         <button
           onClick={() => {
             sounds.playPickup();
             onBackToLanding();
           }}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-black border-2 border-white hover:bg-white hover:text-black transition text-[10px] cursor-pointer"
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-black/80 backdrop-blur-sm border-2 border-white hover:bg-white hover:text-black transition text-[10px] cursor-pointer"
           title="Volver (ESC)"
         >
           <span>[ESC] BACK</span>
@@ -328,7 +376,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
               sounds.playPickup();
               onOpenArsenal();
             }}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-black border-2 border-white hover:bg-white hover:text-black transition text-xs cursor-pointer"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-black/80 backdrop-blur-sm border-2 border-white hover:bg-white hover:text-black transition text-xs cursor-pointer"
             title="Ver Arsenal"
           >
             <Swords className="w-3.5 h-3.5" />
@@ -337,7 +385,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
 
           <button
             onClick={toggleSound}
-            className="p-1.5 bg-black border-2 border-white hover:bg-white hover:text-black transition text-white cursor-pointer"
+            className="p-1.5 bg-black/80 backdrop-blur-sm border-2 border-white hover:bg-white hover:text-black transition text-white cursor-pointer"
             title={muted ? 'Activar sonido' : 'Silenciar'}
           >
             {muted ? <VolumeX className="w-4 h-4 text-red-400" /> : <Volume2 className="w-4 h-4 text-green-400" />}
@@ -346,25 +394,44 @@ export const MainMenu: React.FC<MainMenuProps> = ({
       </header>
 
       {/* ── CONTENIDO PRINCIPAL ── */}
-      <main className="w-full max-w-5xl flex-1 flex flex-col justify-center items-center py-1 px-1 min-h-0 overflow-y-auto">
-        {/* PLAYER 1 CENTRADO ARRIBA */}
-        <div className="flex items-center justify-center gap-4 mb-3">
+      <main className="w-full max-w-5xl flex-1 flex flex-col justify-center items-center py-1 px-1 min-h-0 overflow-y-auto z-10">
+        {/* ── ÁREA DE PREVISUALIZACIÓN CENTRAL CON RIM LIGHT ── */}
+        <div className="flex items-center justify-center gap-6 mb-2.5">
+          {/* Tarjeta de Selección PLAYER 1 */}
           <div
             onClick={() => setFocusedPanel('p1')}
-            className={`w-48 sm:w-56 bg-black border-2 p-2.5 flex flex-col items-center justify-between text-center transition cursor-pointer ${
-              focusedPanel === 'p1' ? 'border-white shadow-[0_0_12px_rgba(255,255,255,0.4)]' : 'border-neutral-500'
+            className={`w-48 sm:w-56 bg-black/75 backdrop-blur-sm border-2 p-2.5 flex flex-col items-center justify-between text-center transition cursor-pointer ${
+              focusedPanel === 'p1' ? 'border-yellow-400 shadow-[0_0_16px_rgba(250,204,21,0.45)] ring-1 ring-yellow-400' : 'border-white hover:border-neutral-300'
             }`}
           >
-            <div className="text-xs font-black tracking-widest text-white border-b border-white/40 pb-1 w-full uppercase">
-              PLAYER 1
+            <div className="text-xs font-black tracking-widest text-white border-b border-white/40 pb-1 w-full uppercase flex items-center justify-between">
+              <span>PLAYER 1</span>
+              <span className="text-[9px] text-yellow-300 font-bold">[ P1 ]</span>
             </div>
 
-            <div className="w-20 h-20 my-1.5 rounded-lg border-2 border-white bg-black flex items-center justify-center p-1.5 relative shadow-inner overflow-hidden">
+            {/* Avatar / Sprite con Rim Light */}
+            <div className="relative w-24 h-24 my-1.5 rounded border border-white/80 bg-black/80 flex items-center justify-center p-1.5 shadow-inner overflow-hidden">
+              {/* Rim light halo rojo */}
+              <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(239,68,68,0.35)_0%,transparent_75%)]" />
               <img
                 src={currentProtagonist.spriteUrl}
                 alt={currentProtagonist.name}
-                className="max-h-full max-w-full object-contain [image-rendering:pixelated]"
+                onError={(e) => {
+                  const img = e.currentTarget;
+                  if (!img.dataset.failedOnce) {
+                    img.dataset.failedOnce = '1';
+                    if (currentProtagonist.id === 'gymrat') {
+                      img.src = '/assets/sprites/player/Gymrat.png';
+                      return;
+                    }
+                  }
+                  if (currentProtagonist.fallbackUrl && img.src !== currentProtagonist.fallbackUrl) {
+                    img.src = currentProtagonist.fallbackUrl;
+                  }
+                }}
+                className="relative z-10 max-h-full max-w-full object-contain filter drop-shadow-[0_0_8px_rgba(239,68,68,0.7)] [image-rendering:pixelated] hover:scale-110 transition-transform"
               />
+              <div className="absolute bottom-0 w-12 h-[2px] bg-red-500 shadow-[0_0_6px_#ef4444]" />
             </div>
 
             <div className="flex items-center justify-between w-full px-1">
@@ -374,12 +441,12 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                   e.stopPropagation();
                   cyclePlayerProtagonist(-1);
                 }}
-                className="text-xs text-neutral-400 hover:text-white px-1 font-bold cursor-pointer transition select-none"
+                className="text-xs text-neutral-400 hover:text-white px-1 font-bold cursor-pointer transition select-none active:scale-125"
                 title="Personaje anterior"
               >
                 ◀
               </button>
-              <div className="text-xs font-black tracking-wider text-yellow-300">
+              <div className="text-xs font-black tracking-wider text-yellow-300 uppercase truncate">
                 {currentProtagonist.name}
               </div>
               <button
@@ -388,14 +455,14 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                   e.stopPropagation();
                   cyclePlayerProtagonist(1);
                 }}
-                className="text-xs text-neutral-400 hover:text-white px-1 font-bold cursor-pointer transition select-none"
+                className="text-xs text-neutral-400 hover:text-white px-1 font-bold cursor-pointer transition select-none active:scale-125"
                 title="Siguiente personaje"
               >
                 ▶
               </button>
             </div>
 
-            <div className={`text-[10px] tracking-wider uppercase font-bold mt-0.5 ${
+            <div className={`text-[9px] tracking-wider uppercase font-bold mt-0.5 ${
               currentProtagonist.isPlayable ? 'text-emerald-400' : 'text-amber-400/90'
             }`}>
               {currentProtagonist.tag}
@@ -405,27 +472,30 @@ export const MainMenu: React.FC<MainMenuProps> = ({
           {isLocal1v1 && (
             <div
               onClick={() => setFocusedPanel('com')}
-              className={`w-48 sm:w-56 bg-black border-2 p-2.5 flex flex-col items-center justify-between text-center transition cursor-pointer ${
-                focusedPanel === 'com' ? 'border-white shadow-[0_0_12px_rgba(255,255,255,0.4)]' : 'border-neutral-500'
+              className={`w-48 sm:w-56 bg-black/75 backdrop-blur-sm border-2 p-2.5 flex flex-col items-center justify-between text-center transition cursor-pointer ${
+                focusedPanel === 'com' ? 'border-yellow-400 shadow-[0_0_16px_rgba(250,204,21,0.45)] ring-1 ring-yellow-400' : 'border-white hover:border-neutral-300'
               }`}
             >
-              <div className="text-xs font-black tracking-widest text-white border-b border-white/40 pb-1 w-full uppercase">
-                PLAYER 2
+              <div className="text-xs font-black tracking-widest text-white border-b border-white/40 pb-1 w-full uppercase flex items-center justify-between">
+                <span>PLAYER 2</span>
+                <span className="text-[9px] text-yellow-300 font-bold">[ P2 ]</span>
               </div>
 
-              <div className="w-20 h-20 my-1.5 rounded-lg border-2 border-white bg-black flex items-center justify-center p-1.5 relative shadow-inner">
+              <div className="relative w-24 h-24 my-1.5 rounded border border-white/80 bg-black/80 flex items-center justify-center p-1.5 shadow-inner">
+                <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(56,189,248,0.3)_0%,transparent_75%)]" />
                 <img
                   src="/assets/sprites/player/ninja.png"
                   alt="Ninja J2"
-                  className="max-h-full max-w-full object-contain [image-rendering:pixelated]"
+                  className="relative z-10 max-h-full max-w-full object-contain filter drop-shadow-[0_0_8px_rgba(56,189,248,0.7)] [image-rendering:pixelated]"
                 />
+                <div className="absolute bottom-0 w-12 h-[2px] bg-cyan-400 shadow-[0_0_6px_#38bdf8]" />
               </div>
 
-              <div className="text-xs font-black tracking-wider text-yellow-300">
+              <div className="text-xs font-black tracking-wider text-yellow-300 uppercase">
                 NINJA (P2)
               </div>
-              <div className="text-[11px] text-neutral-300 tracking-wider uppercase">
-                INDEPENDENT
+              <div className="text-[9px] text-neutral-400 tracking-wider uppercase font-bold mt-0.5">
+                DUELO LOCAL
               </div>
             </div>
           )}
@@ -445,13 +515,16 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                 return (
                   <div
                     key={slotIdx}
-                    className="w-36 sm:w-40 h-44 border border-dashed border-neutral-700 bg-black/40 flex flex-col items-center justify-center text-center opacity-40 select-none"
+                    className="w-36 sm:w-40 h-44 border-2 border-dashed border-neutral-700/60 bg-black/40 backdrop-blur-sm flex flex-col items-center justify-center text-center opacity-45 select-none"
                   >
-                    <span className="text-xs text-neutral-500 font-black tracking-widest uppercase mb-1">
+                    <span className="text-[10px] text-neutral-500 font-black tracking-widest uppercase mb-2">
                       COM {slotIdx + 1}
                     </span>
-                    <span className="text-[10px] text-neutral-500 font-bold tracking-widest">
-                      - EMPTY -
+                    <div className="w-14 h-14 rounded border border-neutral-700/50 bg-black/50 flex items-center justify-center relative">
+                      <span className="text-3xl font-black text-neutral-600/70 select-none">?</span>
+                    </div>
+                    <span className="text-[8px] text-neutral-500 font-mono-code tracking-widest uppercase mt-2">
+                      [ VACÍO ]
                     </span>
                   </div>
                 );
@@ -464,10 +537,10 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                     setFocusedPanel('com');
                     setFocusedSlotIdx(slotIdx);
                   }}
-                  className={`w-36 sm:w-40 bg-black border-2 p-2 flex flex-col items-center justify-between text-center transition cursor-pointer ${
+                  className={`w-36 sm:w-40 bg-black/75 backdrop-blur-sm border-2 p-2 flex flex-col items-center justify-between text-center transition cursor-pointer ${
                     isSlotFocused
-                      ? 'border-white shadow-[0_0_12px_rgba(255,255,255,0.4)] scale-105'
-                      : 'border-neutral-500'
+                      ? 'border-yellow-400 shadow-[0_0_14px_rgba(250,204,21,0.45)] ring-1 ring-yellow-400 scale-105'
+                      : 'border-white hover:border-neutral-300'
                   }`}
                 >
                   <div className="text-[10px] font-black tracking-widest text-white border-b border-white/30 pb-0.5 w-full uppercase">
@@ -564,10 +637,10 @@ export const MainMenu: React.FC<MainMenuProps> = ({
         {!isLocal1v1 && (
           <div
             onClick={() => setFocusedPanel('bots')}
-            className={`w-full max-w-sm bg-black border-2 p-2 flex flex-col items-center justify-center text-center transition cursor-pointer mb-2.5 ${
+            className={`w-full max-w-sm bg-black/75 backdrop-blur-sm border-2 p-2 flex flex-col items-center justify-center text-center transition cursor-pointer mb-2.5 ${
               focusedPanel === 'bots'
-                ? 'border-white shadow-[0_0_12px_rgba(255,255,255,0.3)]'
-                : 'border-neutral-500'
+                ? 'border-yellow-400 shadow-[0_0_14px_rgba(250,204,21,0.4)] ring-1 ring-yellow-400'
+                : 'border-white hover:border-neutral-300'
             }`}
           >
             <div className="text-[10px] tracking-widest text-white uppercase mb-1.5 font-bold">
@@ -589,7 +662,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                     }}
                     className={`px-3 py-1 text-xs font-black tracking-wider transition cursor-pointer ${
                       isSelected
-                        ? 'border-2 border-white bg-black text-white scale-110 shadow-[0_0_8px_rgba(255,255,255,0.5)]'
+                        ? 'border-2 border-yellow-400 bg-yellow-950/60 text-yellow-300 scale-110 shadow-[0_0_8px_rgba(250,204,21,0.6)]'
                         : 'text-neutral-400 hover:text-white border border-transparent'
                     }`}
                   >
@@ -605,10 +678,10 @@ export const MainMenu: React.FC<MainMenuProps> = ({
         <button
           onClick={handleConfirm}
           onMouseEnter={() => setFocusedPanel('accept')}
-          className={`px-6 py-2 bg-black border-2 text-xs sm:text-sm font-black tracking-[0.2em] text-white hover:bg-white hover:text-black transition uppercase cursor-pointer shadow-lg active:scale-95 ${
+          className={`px-6 py-2 bg-black/80 backdrop-blur-sm border-2 text-xs sm:text-sm font-black tracking-[0.2em] transition uppercase cursor-pointer shadow-lg active:scale-95 ${
             focusedPanel === 'accept'
-              ? 'border-white bg-neutral-900 shadow-[0_0_16px_rgba(255,255,255,0.5)]'
-              : 'border-neutral-400'
+              ? 'border-yellow-400 text-yellow-300 bg-neutral-900/90 shadow-[0_0_16px_rgba(250,204,21,0.5)] scale-105'
+              : 'border-white text-white hover:border-yellow-400 hover:text-yellow-300'
           }`}
         >
           <span>[ SPACE ] ACCEPT : SELECT STAGE ➔</span>

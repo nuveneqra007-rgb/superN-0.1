@@ -44,6 +44,38 @@ type ComOption = 'RANDOM' | BotFaction;
 const COM_OPTIONS: ComOption[] = ['RANDOM', ...CANONICAL_BOT_FACTIONS];
 const DIFFICULTIES: ('easy' | 'normal' | 'hard')[] = ['easy', 'normal', 'hard'];
 
+interface ProtagonistVisual {
+  id: string;
+  name: string;
+  tag: string;
+  spriteUrl: string;
+  isPlayable: boolean;
+}
+
+const PROTAGONISTS: ProtagonistVisual[] = [
+  {
+    id: 'ninja',
+    name: 'NINJA',
+    tag: 'JUGABLE',
+    spriteUrl: '/assets/sprites/player/ninja.png',
+    isPlayable: true,
+  },
+  {
+    id: 'gymrat',
+    name: 'GYMRAT',
+    tag: 'PRÓXIMAMENTE',
+    spriteUrl: '/assets/sprites/player/gymrat.png',
+    isPlayable: false,
+  },
+  {
+    id: 'santaclo',
+    name: 'SANTA CLAUS',
+    tag: 'PRÓXIMAMENTE',
+    spriteUrl: '/assets/sprites/player/santaclo.png',
+    isPlayable: false,
+  },
+];
+
 export const MainMenu: React.FC<MainMenuProps> = ({
   gameMode,
   selectedPlayerFaction,
@@ -61,6 +93,10 @@ export const MainMenu: React.FC<MainMenuProps> = ({
   const isLocal1v1 = gameMode === 'local1v1';
   const [muted, setMuted] = useState<boolean>(sounds.getMuted());
   const [showMatchSetup, setShowMatchSetup] = useState<boolean>(initialShowMatchSetup);
+
+  // Protagonista visual seleccionado para P1 (Ninja, Gymrat, Santa Claus)
+  const [protagonistIdx, setProtagonistIdx] = useState<number>(0);
+  const currentProtagonist = PROTAGONISTS[protagonistIdx];
 
   // Número de bots seleccionados (1–5)
   const [numBots, setNumBots] = useState<number>(1);
@@ -87,6 +123,11 @@ export const MainMenu: React.FC<MainMenuProps> = ({
     sounds.setMuted(next);
     setMuted(next);
   };
+
+  const cyclePlayerProtagonist = useCallback((delta: -1 | 1) => {
+    sounds.playPickup();
+    setProtagonistIdx((prev) => (prev + delta + PROTAGONISTS.length) % PROTAGONISTS.length);
+  }, []);
 
   // Navegar facción de un slot de bot
   const cycleSlotFaction = useCallback((slotIdx: number, delta: -1 | 1) => {
@@ -201,7 +242,9 @@ export const MainMenu: React.FC<MainMenuProps> = ({
       // Navegación con flechas
       if (key === 'ArrowLeft') {
         e.preventDefault();
-        if (focusedPanel === 'com') {
+        if (focusedPanel === 'p1') {
+          cyclePlayerProtagonist(-1);
+        } else if (focusedPanel === 'com') {
           cycleSlotFaction(focusedSlotIdx, -1);
         } else if (focusedPanel === 'bots') {
           cycleNumBots(-1);
@@ -210,12 +253,12 @@ export const MainMenu: React.FC<MainMenuProps> = ({
         }
       } else if (key === 'ArrowRight') {
         e.preventDefault();
-        if (focusedPanel === 'com') {
+        if (focusedPanel === 'p1') {
+          cyclePlayerProtagonist(1);
+        } else if (focusedPanel === 'com') {
           cycleSlotFaction(focusedSlotIdx, 1);
         } else if (focusedPanel === 'bots') {
           cycleNumBots(1);
-        } else if (focusedPanel === 'p1') {
-          setFocusedPanel('com');
         }
       } else if (key === 'ArrowUp') {
         e.preventDefault();
@@ -240,7 +283,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [focusedPanel, focusedSlotIdx, cycleSlotFaction, cycleNumBots, handleConfirm, onBackToLanding, showMatchSetup]);
+  }, [focusedPanel, focusedSlotIdx, cycleSlotFaction, cycleNumBots, cyclePlayerProtagonist, handleConfirm, onBackToLanding, showMatchSetup]);
 
   return (
     <div className="relative w-full h-full max-h-screen flex flex-col justify-between items-center bg-black text-white font-pixel overflow-hidden p-2 sm:p-3 select-none">
@@ -316,19 +359,46 @@ export const MainMenu: React.FC<MainMenuProps> = ({
               PLAYER 1
             </div>
 
-            <div className="w-20 h-20 my-1.5 rounded-lg border-2 border-white bg-black flex items-center justify-center p-1.5 relative shadow-inner">
+            <div className="w-20 h-20 my-1.5 rounded-lg border-2 border-white bg-black flex items-center justify-center p-1.5 relative shadow-inner overflow-hidden">
               <img
-                src={ninjaArchetype.spriteUrl || '/assets/sprites/player/ninja.png'}
-                alt="Ninja"
+                src={currentProtagonist.spriteUrl}
+                alt={currentProtagonist.name}
                 className="max-h-full max-w-full object-contain [image-rendering:pixelated]"
               />
             </div>
 
-            <div className="text-xs font-black tracking-wider text-yellow-300">
-              NINJA
+            <div className="flex items-center justify-between w-full px-1">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  cyclePlayerProtagonist(-1);
+                }}
+                className="text-xs text-neutral-400 hover:text-white px-1 font-bold cursor-pointer transition select-none"
+                title="Personaje anterior"
+              >
+                ◀
+              </button>
+              <div className="text-xs font-black tracking-wider text-yellow-300">
+                {currentProtagonist.name}
+              </div>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  cyclePlayerProtagonist(1);
+                }}
+                className="text-xs text-neutral-400 hover:text-white px-1 font-bold cursor-pointer transition select-none"
+                title="Siguiente personaje"
+              >
+                ▶
+              </button>
             </div>
-            <div className="text-[11px] text-neutral-300 tracking-wider uppercase">
-              INDEPENDENT
+
+            <div className={`text-[10px] tracking-wider uppercase font-bold mt-0.5 ${
+              currentProtagonist.isPlayable ? 'text-emerald-400' : 'text-amber-400/90'
+            }`}>
+              {currentProtagonist.tag}
             </div>
           </div>
 

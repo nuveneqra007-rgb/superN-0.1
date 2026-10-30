@@ -87,8 +87,8 @@ export const LandingScreen: React.FC<LandingScreenProps> = ({ onEnter }) => {
       },
       {
         id: 'santaclo',
-        name: 'SANTA CLO',
-        title: 'VETERANO NOIR',
+        name: 'SANTA CLAUS',
+        title: 'SANTA CLAUS SUPERVIVIENTE',
         accentColor: '#ef4444',
         tag: 'SUPERVIVIENTE',
         spriteUrl: '/assets/sprites/player/santaclo.png',

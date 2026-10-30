@@ -500,6 +500,7 @@ interface ExplosiveBarrelEntity {
   maxHealth: number;
   vx?: number;
   vy?: number;
+  lastHitterId?: number;
 }
 
 interface ConveyorEntity {
@@ -1108,26 +1109,65 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     return didHitAny;
   };
 
+  /**
+   * P-D1: Selección y fijación de objetivo dinámico por bot.
+   * Reevalúa solo cuando inst.targetEvalTicks llegue a 0 (cada 30 ticks).
+   * Prioriza venganza (<180 ticks) y luego enemigo más cercano con desempate por vida.
+   */
   const pickTarget = (inst: BotInstance, allFighters: PlayerState[]): PlayerState | null => {
-    const self = inst.state;
-    const opponents = allFighters.filter((f) => f.id !== self.id && f.isAlive);
-    if (opponents.length === 0) return null;
-
-    if (self.lastAttackerId !== undefined && (self.lastHitTicks || 0) <= 180) {
-      const revengeTarget = opponents.find((f) => f.id === self.lastAttackerId);
-      if (revengeTarget) return revengeTarget;
+    const enemies = allFighters.filter((f) => f.id !== inst.id && f.isAlive);
+    if (enemies.length === 0) {
+      inst.currentTargetId = undefined;
+      return null;
     }
 
-    opponents.sort((a, b) => {
-      const distA = Math.hypot(a.x - self.x, a.y - self.y);
-      const distB = Math.hypot(b.x - self.x, b.y - self.y);
-      if (Math.abs(distA - distB) < 15) {
-        return a.health - b.health;
-      }
-      return distA - distB;
-    });
+    if (inst.targetEvalTicks === undefined) inst.targetEvalTicks = 0;
 
-    return opponents[0] || null;
+    let currentTarget =
+      inst.currentTargetId !== undefined
+        ? enemies.find((e) => e.id === inst.currentTargetId)
+        : undefined;
+
+    if (inst.targetEvalTicks > 0 && currentTarget) {
+      inst.targetEvalTicks--;
+      return currentTarget;
+    }
+
+    // Reevalúa solo cuando inst.targetEvalTicks llegue a 0, cada 30 ticks
+    inst.targetEvalTicks = 30;
+
+    // Prioridad 1: Venganza contra el último atacante si fue golpeado recientemente (<180 ticks = 3s)
+    if (
+      inst.state.lastAttackerId !== undefined &&
+      (inst.state.lastHitTicks ?? 999) < 180
+    ) {
+      const revengeTarget = enemies.find((e) => e.id === inst.state.lastAttackerId);
+      if (revengeTarget) {
+        inst.currentTargetId = revengeTarget.id;
+        return revengeTarget;
+      }
+    }
+
+    // Prioridad 2: Enemigo más cercano, desempate por menor vida si distancias son similares (<15px)
+    let bestTarget = enemies[0];
+    let bestDist = Math.hypot(bestTarget.x - inst.state.x, bestTarget.y - inst.state.y);
+
+    for (let i = 1; i < enemies.length; i++) {
+      const e = enemies[i];
+      const dist = Math.hypot(e.x - inst.state.x, e.y - inst.state.y);
+      if (dist < bestDist - 15) {
+        bestTarget = e;
+        bestDist = dist;
+      } else if (Math.abs(dist - bestDist) <= 15) {
+        if (e.health < bestTarget.health) {
+          bestTarget = e;
+          bestDist = dist;
+        }
+      }
+    }
+
+    inst.currentTargetId = bestTarget.id;
+    return bestTarget;
   };
 
   // ─────────────────────────────────────────────────────────────
@@ -1986,15 +2026,31 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           });
         }
         if ((code === 'KeyY' || key === 'y') && gameMode === 'local1v1') {
-          if (stateRef.current.bots[0]) cycleGrenadeType(stateRef.current.bots[0].grenades); // TODO multi-bot
+          const p2Bot = stateRef.current.bots.find((b) => b.id === 2) || stateRef.current.bots[0];
+          if (p2Bot) {
+            const nextType = cycleGrenadeType(p2Bot.grenades);
+            const gCfg = GRENADE_DATABASE[nextType];
+            sounds.playPickup();
+            stateRef.current.floatingTexts.push({
+              id: stateRef.current.nextEntityId++,
+              text: `DEBUG J2: ${gCfg.shortName} (${p2Bot.grenades.ammo[nextType]} disp.)`,
+              x: p2Bot.state.x,
+              y: p2Bot.state.y - 35,
+              color: gCfg.color,
+              life: 30,
+            });
+          }
         }
         if (code === 'KeyB' || key === 'b') {
           stateRef.current.botQuiet = !stateRef.current.botQuiet;
           setBotPracticeMode(stateRef.current.botQuiet);
-          const bState = stateRef.current.bots[0]?.state; // TODO multi-bot
+          for (const b of stateRef.current.bots) {
+            b.quiet = stateRef.current.botQuiet;
+          }
+          const bState = stateRef.current.bots[0]?.state;
           stateRef.current.floatingTexts.push({
             id: stateRef.current.nextEntityId++,
-            text: stateRef.current.botQuiet ? 'BOT: QUIETO (PRÁCTICA)' : 'BOT: IA ACTIVA',
+            text: stateRef.current.botQuiet ? 'BOTS: QUIETOS (PRÁCTICA)' : 'BOTS: IA ACTIVA',
             x: bState?.x ?? 760,
             y: (bState?.y ?? 460) - 45,
             color: stateRef.current.botQuiet ? '#38bdf8' : '#ef4444',
@@ -2041,7 +2097,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     radius: number,
     damage: number,
     spawnFire: boolean,
-    _shooterId?: number
+    shooterId?: number
   ) => {
     if (!stateRef.current) return;
     const s = stateRef.current;
@@ -2061,24 +2117,41 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       });
     }
 
-    // Daño a combatientes
-    [s.p1, ...s.bots.map((b) => b.state)].forEach((target) => {
+    const allFighters = [s.p1, ...s.bots.map((b) => b.state)];
+    const attacker = shooterId !== undefined ? allFighters.find((f) => f.id === shooterId) : undefined;
+
+    // Daño a combatientes mediante CombatSystem.applyHit con falloff, stun y hit-stop
+    allFighters.forEach((target) => {
       if (!target.isAlive) return;
       const dist = Math.hypot(target.x - x, target.y - y);
       if (dist < radius) {
         const falloff = 1 - dist / radius;
-        const dealt = damage * falloff * target.damageTakenModifier;
-        target.health = Math.max(0, target.health - dealt);
+        const dealt = damage * falloff;
+        const kbDir = target.x >= x ? 1 : -1;
+        const kbDist = Math.max(0.2, falloff);
+
+        const hitRes = CombatSystem.applyHit(target, {
+          damage: dealt,
+          kbX: kbDir * (180 + 220 * kbDist),
+          kbY: -180 - 160 * kbDist,
+          stunTicks: GameConstants.HitstunTicksStrong,
+          hitStop: 5,
+          causedKnockdown: true,
+          attacker,
+          screenShake: 14,
+        });
+
         target.fireTicks = 180;
         target.isOnFire = true;
 
-        if (target.health <= 0) {
-          target.health = 0;
-          target.isAlive = false;
-          PlayerFSM.tryTransition(target, PlayerFSMState.Dead);
-          sounds.playHit();
-        } else {
-          PlayerFSM.tryTransition(target, PlayerFSMState.KnockedDown);
+        if (target.id === s.p1.id) {
+          s.p1Controller.setPosition(target.x, target.y);
+          s.p1Controller.vx = target.velocityX;
+          s.p1Controller.vy = target.velocityY;
+        } else if (target.id === 2 && gameMode === 'local1v1') {
+          s.p2Controller.setPosition(target.x, target.y);
+          s.p2Controller.vx = target.velocityX;
+          s.p2Controller.vy = target.velocityY;
         }
 
         target.isMeleeComboAttacking = false;
@@ -2094,7 +2167,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
         s.floatingTexts.push({
           id: s.nextEntityId++,
-          text: `-${Math.round(dealt)}`,
+          text: `-${Math.round(hitRes.finalDamage)}`,
           x: target.x,
           y: target.y - 35,
           color: '#f97316',
@@ -2115,6 +2188,9 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       const dist = Math.hypot(b.x + b.w / 2 - x, b.y + b.h / 2 - y);
       if (dist < radius) {
         b.health -= damage * (1 - dist / radius);
+        if (shooterId !== undefined) {
+          b.lastHitterId = shooterId;
+        }
       }
     });
   };
@@ -2131,7 +2207,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     pr: ProjectileEntity
   ) => {
     if (pr.weaponType === WeaponType.C4) {
-      createExplosion(pr.x, pr.y, 85, pr.damage || 60, false);
+      createExplosion(pr.x, pr.y, 85, pr.damage || 60, false, pr.shooterId);
       addSparks(pr.x, pr.y, '#ef4444', 35);
       addSparks(pr.x, pr.y, '#f97316', 25);
       s.screenShake = 22;
@@ -2140,7 +2216,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     }
 
     if (pr.weaponType === WeaponType.Mine) {
-      createExplosion(pr.x, pr.y, 60, pr.damage || 45, false);
+      createExplosion(pr.x, pr.y, 60, pr.damage || 45, false, pr.shooterId);
       addSparks(pr.x, pr.y, '#f59e0b', 28);
       s.screenShake = 14;
       sounds.playExplosion();
@@ -2156,7 +2232,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
     switch (gType) {
       case GrenadeType.Frag: {
-        createExplosion(pr.x, pr.y, gCfg.explosionRadius, gCfg.damage, false);
+        createExplosion(pr.x, pr.y, gCfg.explosionRadius, gCfg.damage, false, pr.shooterId);
         addSparks(pr.x, pr.y, '#f97316', 30);
         addSparks(pr.x, pr.y, '#e2e8f0', 20);
         addSparks(pr.x, pr.y, '#34d399', 15);
@@ -2192,11 +2268,35 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           });
         }
 
-        [s.p1, ...s.bots.map((b) => b.state)].forEach((target) => {
+        const allSmokeFighters = [s.p1, ...s.bots.map((b) => b.state)];
+        const smokeAttacker = pr.shooterId !== undefined ? allSmokeFighters.find((f) => f.id === pr.shooterId) : undefined;
+
+        allSmokeFighters.forEach((target) => {
           if (!target.isAlive) return;
           const dist = Math.hypot(target.x - pr.x, target.y - pr.y);
           if (dist < gCfg.explosionRadius) {
-            target.health = Math.max(0, target.health - gCfg.damage);
+            const falloff = 1 - dist / gCfg.explosionRadius;
+            const dealt = gCfg.damage * falloff;
+            const kbDir = target.x >= pr.x ? 1 : -1;
+            CombatSystem.applyHit(target, {
+              damage: dealt,
+              kbX: kbDir * 35 * falloff,
+              kbY: -20 * falloff,
+              stunTicks: 14,
+              hitStop: 2,
+              causedKnockdown: false,
+              attacker: smokeAttacker,
+              screenShake: 4,
+            });
+            if (target.id === s.p1.id) {
+              s.p1Controller.setPosition(target.x, target.y);
+              s.p1Controller.vx = target.velocityX;
+              s.p1Controller.vy = target.velocityY;
+            } else if (target.id === 2 && gameMode === 'local1v1') {
+              s.p2Controller.setPosition(target.x, target.y);
+              s.p2Controller.vx = target.velocityX;
+              s.p2Controller.vy = target.velocityY;
+            }
           }
         });
 
@@ -2220,7 +2320,10 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         addSparks(pr.x, pr.y, '#ffffff', 25);
         addSparks(pr.x, pr.y, '#38bdf8', 15);
 
-        [s.p1, ...s.bots.map((b) => b.state)].forEach((target) => {
+        const allFlashFighters = [s.p1, ...s.bots.map((b) => b.state)];
+        const flashAttacker = pr.shooterId !== undefined ? allFlashFighters.find((f) => f.id === pr.shooterId) : undefined;
+
+        allFlashFighters.forEach((target) => {
           if (!target.isAlive) return;
           const dist = Math.hypot(target.x - pr.x, target.y - pr.y);
           if (dist < gCfg.explosionRadius) {
@@ -2230,8 +2333,19 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
               kbX: kbDir * 80,
               kbY: -60,
               stunTicks: gCfg.stunTicks || 70,
+              hitStop: 4,
+              attacker: flashAttacker,
               screenShake: 12,
             });
+            if (target.id === s.p1.id) {
+              s.p1Controller.setPosition(target.x, target.y);
+              s.p1Controller.vx = target.velocityX;
+              s.p1Controller.vy = target.velocityY;
+            } else if (target.id === 2 && gameMode === 'local1v1') {
+              s.p2Controller.setPosition(target.x, target.y);
+              s.p2Controller.vx = target.velocityX;
+              s.p2Controller.vy = target.velocityY;
+            }
             s.floatingTexts.push({
               id: s.nextEntityId++,
               text: '¡CEGADO / ATURDIDO!',
@@ -2249,7 +2363,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         sounds.playExplosion();
         addSparks(pr.x, pr.y, '#f97316', 30);
         addSparks(pr.x, pr.y, '#93c5fd', 15);
-        createExplosion(pr.x, pr.y, gCfg.explosionRadius, gCfg.damage, true);
+        createExplosion(pr.x, pr.y, gCfg.explosionRadius, gCfg.damage, true, pr.shooterId);
         break;
       }
     }
@@ -2276,7 +2390,6 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
       s.worldTick++;
       const p1 = s.p1;
-      const bot = s.bot;
       const keys = s.keys;
       const allFighters = [s.p1, ...s.bots.map((b) => b.state)];
 
@@ -2573,7 +2686,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         const throwJustPressed = p1Combat.throwJust;
 
         const grabbedTarget = p1.isGrappling && p1.grabbedTargetId !== null
-          ? (s.bots.find((b) => b.id === p1.grabbedTargetId)?.state || (bot.id === p1.grabbedTargetId ? bot : null))
+          ? (s.bots.find((b) => b.id === p1.grabbedTargetId)?.state || null)
           : null;
 
         if (p1.isGrappling && grabbedTarget) {
@@ -4666,7 +4779,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             !bot.isGrappling &&
             !bot.isThrowing
           ) {
-            const hasGrenadesInInventory = getTotalGrenades(s.botGrenades) > 0;
+            const hasGrenadesInInventory = getTotalGrenades(inst.grenades) > 0;
             if (bot.attackCooldown <= 0) {
               if (isThrowable && bot.ammo > 0) {
                 bot.isThrowing = true;
@@ -5357,7 +5470,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                     life: 30,
                   });
                 } else {
-                  const thrownType = consumeGrenade(s.botGrenades);
+                  const thrownType = consumeGrenade(inst.grenades);
                   if (thrownType) {
                     sounds.playGunshot('grenade');
                     const gCfg = GRENADE_DATABASE[thrownType];
@@ -5386,7 +5499,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
                     s.floatingTexts.push({
                       id: s.nextEntityId++,
-                      text: `¡${gCfg.shortName}! (${s.botGrenades.ammo[thrownType]} rest.)`,
+                      text: `¡${gCfg.shortName}! (${inst.grenades.ammo[thrownType]} rest.)`,
                       x: bot.x,
                       y: bot.y - 32,
                       color: gCfg.color,
@@ -5635,7 +5748,10 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             }
           }
         } else {
-          // IA DE COMBATE (BOT RIVAL ORIGINAL vsBOT)
+          // IA DE COMBATE (BOT RIVAL vsBOT / MULTI-BOT)
+          // P-D1: Selección y fijación de objetivo dinámico por bot (reevalúa cada 30 ticks)
+          const target = pickTarget(inst, allFighters) || p1;
+
           let nearestWpnDist = 9999;
           let nearestWpnPos: { x: number; y: number } | null = null;
           for (const w of s.worldWeapons) {
@@ -5653,6 +5769,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             }
           }
 
+          // P-D1: Esquivar proyectiles cuenta los de cualquier luchador distinto del bot
           let projIncoming = false;
           for (const pr of s.projectiles) {
             if (pr.shooterId !== bot.id && Math.hypot(pr.x - bot.x, pr.y - bot.y) < 160) {
@@ -5661,12 +5778,12 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             }
           }
 
-          const aiState = BotAI.evaluate(bot, s.botAI, p1, projIncoming, nearestWpnDist);
-          const botInput = s.botQuiet
+          const aiState = BotAI.evaluate(bot, inst.ai, target, projIncoming, nearestWpnDist);
+          const botInput = inst.quiet
             ? { moveX: 0, jump: false, crouch: false, melee: false, fire: false }
-            : BotAI.computeInput(bot, s.botAI, p1, aiState, nearestWpnPos);
+            : BotAI.computeInput(bot, inst.ai, target, aiState, nearestWpnPos);
 
-          if (s.botQuiet && bot.onGround && bot.fsm !== PlayerFSMState.KnockedDown && bot.fsm !== PlayerFSMState.GetUp && bot.fsm !== PlayerFSMState.Hitstun) {
+          if (inst.quiet && bot.onGround && bot.fsm !== PlayerFSMState.KnockedDown && bot.fsm !== PlayerFSMState.GetUp && bot.fsm !== PlayerFSMState.Hitstun) {
             bot.velocityX = 0;
             if (bot.fsm === PlayerFSMState.Run || bot.fsm === PlayerFSMState.Walk) {
               PlayerFSM.tryTransition(bot, PlayerFSMState.Idle);
@@ -5676,13 +5793,13 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           // Salto de ayuda si el bot choca contra un escalón del terreno mientras corre
           if (
             bot.onGround &&
-            s.botAI.jumpCooldown <= 0 &&
+            inst.ai.jumpCooldown <= 0 &&
             Math.abs(botInput.moveX) > 0.4 &&
             Math.abs(bot.velocityX) < 25 &&
             (aiState === BotAIState.Chase || aiState === BotAIState.Pickup)
           ) {
             botInput.jump = true;
-            s.botAI.jumpCooldown = 40;
+            inst.ai.jumpCooldown = 40;
           }
 
           // Recuperación activa de derribo para bot IA
@@ -5736,38 +5853,47 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             sounds.playJump();
           }
 
-          // ── COMBATE MELEE AVANZADO IA (vsBot) ──
+          // ── COMBATE MELEE AVANZADO IA (vsBot) DIRIGIDO AL OBJETIVO ──
           const botFacingDir = bot.facingRight ? 1 : -1;
-          const targetDist = Math.hypot(p1.x - bot.x, p1.y - bot.y);
+          const targetDist = Math.hypot(target.x - bot.x, target.y - bot.y);
 
-          if (bot.isGrappling && bot.grabbedTargetId === p1.id) {
+          if (bot.isGrappling && bot.grabbedTargetId === target.id) {
             bot.grappleTicks++;
-            p1.x = bot.x + botFacingDir * 24;
-            p1.y = bot.y;
-            p1.velocityX = 0;
-            p1.velocityY = 0;
-            p1.isGrabbed = true;
-            s.p1Controller.setPosition(p1.x, p1.y);
-            s.p1Controller.vx = 0;
-            s.p1Controller.vy = 0;
+            target.x = bot.x + botFacingDir * 24;
+            target.y = bot.y;
+            target.velocityX = 0;
+            target.velocityY = 0;
+            target.isGrabbed = true;
+            if (target.id === s.p1.id) {
+              s.p1Controller.setPosition(target.x, target.y);
+              s.p1Controller.vx = 0;
+              s.p1Controller.vy = 0;
+            } else {
+              const tInst = s.bots.find((b) => b.id === target.id);
+              if (tInst?.controller) {
+                tInst.controller.setPosition(target.x, target.y);
+                tInst.controller.vx = 0;
+                tInst.controller.vy = 0;
+              }
+            }
 
             if (bot.grappleTicks >= 25) {
               sounds.playThrow();
-              const throwDirX = p1.x > 480 ? -1 : 1;
-              const throwHit = CombatSystem.resolveThrow(bot, p1, throwDirX, true);
+              const throwDirX = target.x > 480 ? -1 : 1;
+              const throwHit = CombatSystem.resolveThrow(bot, target, throwDirX, true);
 
               bot.isGrappling = false;
               bot.grabbedTargetId = null;
-              p1.isGrabbed = false;
+              target.isGrabbed = false;
               bot.attackCooldown = 30;
               s.screenShake = 10;
-              addSparks(p1.x, p1.y, '#ef4444', 18);
+              addSparks(target.x, target.y, '#ef4444', 18);
 
               s.floatingTexts.push({
                 id: s.nextEntityId++,
                 text: `¡LANZAMIENTO BOT! -${Math.round(throwHit.damageDealt)}`,
-                x: p1.x,
-                y: p1.y - 35,
+                x: target.x,
+                y: target.y - 35,
                 color: '#ef4444',
                 life: 38,
               });
@@ -5779,15 +5905,18 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
               bot.fsm === PlayerFSMState.Run ||
               bot.fsm === PlayerFSMState.Crouch)
           ) {
-            const canGrapple = targetDist < 38 && p1.isAlive && !p1.isGrabbed && !s.p1Controller.isInvulnerable && bot.onGround;
+            const isTargetInvuln =
+              target.invulnerabilityTicks > 0 ||
+              (target.id === s.p1.id && s.p1Controller.isInvulnerable);
+            const canGrapple = targetDist < 38 && target.isAlive && !target.isGrabbed && !isTargetInvuln && bot.onGround;
             const canSlide = targetDist > 35 && targetDist < 75 && Math.abs(bot.velocityX) > 90 && bot.onGround;
-            const canHeavySmash = p1.fsm === PlayerFSMState.KnockedDown || p1.fsm === PlayerFSMState.Hitstun;
+            const canHeavySmash = target.fsm === PlayerFSMState.KnockedDown || target.fsm === PlayerFSMState.Hitstun;
 
             if (canGrapple && Math.random() < 0.28) {
               bot.isGrappling = true;
-              bot.grabbedTargetId = p1.id;
+              bot.grabbedTargetId = target.id;
               bot.grappleTicks = 0;
-              p1.isGrabbed = true;
+              target.isGrabbed = true;
               sounds.playGrapple();
               s.floatingTexts.push({
                 id: s.nextEntityId++,
@@ -5803,7 +5932,9 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
               bot.slideTicks = 18;
               bot.attackCooldown = isBladeBot ? 25 : 30;
               bot.velocityX = botFacingDir * (isBladeBot ? 460 : 430);
-              s.p2Controller.vx = bot.velocityX;
+              if (inst.controller) {
+                inst.controller.vx = bot.velocityX;
+              }
               if (isBladeBot) {
                 sounds.playSwordSwing();
                 sounds.playSlide();
@@ -5814,32 +5945,32 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
               addSparks(bot.x, bot.y + 16, isBladeBot ? '#e0f2fe' : '#94a3b8', 14);
 
               if (isBladeBot) {
-                const slideHit = CombatSystem.resolveBladeDashSlash(bot, p1);
+                const slideHit = CombatSystem.resolveBladeDashSlash(bot, target);
                 if (slideHit.didHit) {
                   sounds.playBladeHit();
                   s.screenShake = 9;
-                  addSparks(p1.x, p1.y + 12, '#ef4444', 18);
-                  addSparks(p1.x, p1.y + 12, '#ffffff', 12);
+                  addSparks(target.x, target.y + 12, '#ef4444', 18);
+                  addSparks(target.x, target.y + 12, '#ffffff', 12);
                   s.floatingTexts.push({
                     id: s.nextEntityId++,
                     text: `¡TAJO RASANTE BOT! -${Math.round(slideHit.damageDealt)}`,
-                    x: p1.x,
-                    y: p1.y - 25,
+                    x: target.x,
+                    y: target.y - 25,
                     color: '#ef4444',
                     life: 35,
                   });
                 }
               } else {
-                const slideHit = CombatSystem.resolveSlideTackle(bot, p1);
+                const slideHit = CombatSystem.resolveSlideTackle(bot, target);
                 if (slideHit.didHit) {
                   sounds.playHit();
                   s.screenShake = 8;
-                  addSparks(p1.x, p1.y + 12, '#ef4444', 16);
+                  addSparks(target.x, target.y + 12, '#ef4444', 16);
                   s.floatingTexts.push({
                     id: s.nextEntityId++,
                     text: `¡BARRIDA BOT! -${Math.round(slideHit.damageDealt)}`,
-                    x: p1.x,
-                    y: p1.y - 25,
+                    x: target.x,
+                    y: target.y - 25,
                     color: '#ef4444',
                     life: 35,
                   });
@@ -5858,37 +5989,39 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
               PlayerFSM.tryTransition(bot, PlayerFSMState.MeleeAttack);
 
               bot.velocityX = botFacingDir * (isBladeBot ? 280 : 240);
-              s.p2Controller.vx = bot.velocityX;
+              if (inst.controller) {
+                inst.controller.vx = bot.velocityX;
+              }
               s.screenShake = 14;
 
               if (isBladeBot) {
-                const smashHit = CombatSystem.resolveBladeHeavySlash(bot, p1, chargeRatio);
-                s.botAI.currentComboPause = s.botAI.comboPauseTicks;
+                const smashHit = CombatSystem.resolveBladeHeavySlash(bot, target, chargeRatio);
+                inst.ai.currentComboPause = inst.ai.comboPauseTicks;
                 if (smashHit.didHit) {
                   sounds.playBladeHit();
-                  addSparks(p1.x, p1.y, '#e0f2fe', 26);
-                  addSparks(p1.x, p1.y, '#ef4444', 18);
+                  addSparks(target.x, target.y, '#e0f2fe', 26);
+                  addSparks(target.x, target.y, '#ef4444', 18);
                   s.floatingTexts.push({
                     id: s.nextEntityId++,
                     text: `¡TAJO DEMOLEDOR BOT! -${Math.round(smashHit.damageDealt)}`,
-                    x: p1.x,
-                    y: p1.y - 35,
+                    x: target.x,
+                    y: target.y - 35,
                     color: '#ef4444',
                     life: 45,
                   });
                 }
               } else {
-                const smashHit = CombatSystem.resolveHeavySmash(bot, p1, chargeRatio);
-                s.botAI.currentComboPause = s.botAI.comboPauseTicks;
+                const smashHit = CombatSystem.resolveHeavySmash(bot, target, chargeRatio);
+                inst.ai.currentComboPause = inst.ai.comboPauseTicks;
                 if (smashHit.didHit) {
                   sounds.playHit();
-                  addSparks(p1.x, p1.y, '#f59e0b', 24);
-                  addSparks(p1.x, p1.y, '#ef4444', 16);
+                  addSparks(target.x, target.y, '#f59e0b', 24);
+                  addSparks(target.x, target.y, '#ef4444', 16);
                   s.floatingTexts.push({
                     id: s.nextEntityId++,
                     text: `¡HEAVY SMASH BOT! -${Math.round(smashHit.damageDealt)}`,
-                    x: p1.x,
-                    y: p1.y - 35,
+                    x: target.x,
+                    y: target.y - 35,
                     color: '#f59e0b',
                     life: 45,
                   });
@@ -5898,7 +6031,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
               const isBladeBot = isBladeWeapon(bot.equippedWeapon);
               bot.comboStep = (bot.comboStep + 1) % 3;
               if (bot.comboStep === 2) {
-                s.botAI.currentComboPause = s.botAI.comboPauseTicks;
+                inst.ai.currentComboPause = inst.ai.comboPauseTicks;
               }
               bot.comboWindowTicks = isBladeBot ? 34 : GameConstants.FistsComboWindowTicks;
               bot.attackCooldown = isBladeBot ? 14 : GameConstants.FistsCooldownTicks;
@@ -5906,28 +6039,28 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
               if (isBladeBot) {
                 sounds.playSwordSwing();
-                if (s.p1Controller.isInvulnerable) {
+                if (isTargetInvuln) {
                   s.floatingTexts.push({
                     id: s.nextEntityId++,
                     text: '¡ESQUIVADO!',
-                    x: p1.x,
-                    y: p1.y - 25,
+                    x: target.x,
+                    y: target.y - 25,
                     color: '#38bdf8',
                     life: 25,
                   });
                 } else {
-                  const hit = CombatSystem.resolveBladeMelee(bot, p1);
+                  const hit = CombatSystem.resolveBladeMelee(bot, target);
                   if (hit.didHit) {
                     sounds.playBladeHit();
-                    addSparks(p1.x, p1.y, '#e0f2fe', 18);
-                    addSparks(p1.x, p1.y, '#ef4444', 14);
+                    addSparks(target.x, target.y, '#e0f2fe', 18);
+                    addSparks(target.x, target.y, '#ef4444', 14);
                     s.screenShake = bot.comboStep === 2 ? 9 : 5;
                     const bladeComboNames = ['¡TAJO HORIZONTAL!', '¡CLEAVE DESCENDENTE!', '¡CORTE FINAL!'];
                     s.floatingTexts.push({
                       id: s.nextEntityId++,
                       text: `${bladeComboNames[bot.comboStep]} BOT -${Math.round(hit.damageDealt)}`,
-                      x: p1.x,
-                      y: p1.y - 25,
+                      x: target.x,
+                      y: target.y - 25,
                       color: '#ef4444',
                       life: 35,
                     });
@@ -5935,27 +6068,27 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                 }
               } else {
                 sounds.playPunch();
-                if (s.p1Controller.isInvulnerable) {
+                if (isTargetInvuln) {
                   s.floatingTexts.push({
                     id: s.nextEntityId++,
                     text: '¡ESQUIVADO!',
-                    x: p1.x,
-                    y: p1.y - 25,
+                    x: target.x,
+                    y: target.y - 25,
                     color: '#38bdf8',
                     life: 25,
                   });
                 } else {
-                  const hit = CombatSystem.resolveMelee(bot, p1);
+                  const hit = CombatSystem.resolveMelee(bot, target);
                   if (hit.didHit) {
                     sounds.playHit();
-                    addSparks(p1.x, p1.y, '#ef4444', 12);
+                    addSparks(target.x, target.y, '#ef4444', 12);
                     s.screenShake = bot.comboStep === 2 ? 8 : 5;
                     const comboNames = ['¡JAB!', '¡CROSS!', '¡PATADA!'];
                     s.floatingTexts.push({
                       id: s.nextEntityId++,
                       text: `${comboNames[bot.comboStep]} -${Math.round(hit.damageDealt)}`,
-                      x: p1.x,
-                      y: p1.y - 25,
+                      x: target.x,
+                      y: target.y - 25,
                       color: '#ef4444',
                       life: 35,
                     });
@@ -5974,8 +6107,9 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             });
 
             s.barrels.forEach((barrel) => {
-              if (Math.hypot(bot.x - (barrel.x + barrel.w / 2), barrel.y - (barrel.y + barrel.h / 2)) < 45) {
+              if (Math.hypot(bot.x - (barrel.x + barrel.w / 2), bot.y - (barrel.y + barrel.h / 2)) < 45) {
                 barrel.health -= 15;
+                barrel.lastHitterId = bot.id;
                 barrel.vx = botFacingDir * 240;
                 sounds.playHit();
                 addSparks(barrel.x + 12, barrel.y + 16, '#ef4444', 8);
@@ -6013,7 +6147,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
               const count = wpn.pelletCount || 1;
               for (let i = 0; i < count; i++) {
-                const aimOffset = (Math.random() - 0.5) * (s.botAI?.aimError ?? 0.12);
+                const aimOffset = (Math.random() - 0.5) * (inst.ai?.aimError ?? 0.12);
                 const spreadAngle = ((Math.random() - 0.5) * ((wpn.accuracyDeg || 3) * Math.PI / 180)) / 2 + aimOffset;
                 const speed = wpn.projectileSpeed || 900;
                 s.projectiles.push({
@@ -6045,7 +6179,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             bot.fsm !== PlayerFSMState.KnockedDown &&
             Math.random() < 0.03
           ) {
-            const thrownType = consumeGrenade(s.botGrenades);
+            const thrownType = consumeGrenade(inst.grenades);
             if (thrownType) {
               bot.attackCooldown = 55;
               sounds.playGunshot('grenade');
@@ -6075,7 +6209,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
               s.floatingTexts.push({
                 id: s.nextEntityId++,
-                text: `¡${gCfg.shortName} BOT! (${s.botGrenades.ammo[thrownType]} rest.)`,
+                text: `¡${gCfg.shortName} BOT! (${inst.grenades.ammo[thrownType]} rest.)`,
                 x: bot.x,
                 y: bot.y - 32,
                 color: gCfg.color,
@@ -6091,7 +6225,6 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       // 3. FÍSICAS DE JUGADORES Y ESTADOS
       // ─────────────────────────────────────────────────────────
       const prevP1Fsm = p1.fsm;
-      const prevBotFsm = bot.fsm;
 
       if (
         !p1.isAlive ||
@@ -6111,31 +6244,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         s.p1Controller.isOnFloor = p1.onGround;
         s.p1Controller.facingRight = p1.facingRight;
       }
-
-      if (gameMode === 'local1v1') {
-        if (
-          !bot.isAlive ||
-          bot.fsm === PlayerFSMState.KnockedDown ||
-          bot.fsm === PlayerFSMState.GetUp ||
-          bot.fsm === PlayerFSMState.Hitstun
-        ) {
-          const p2Vel = s.p2Controller.getVelocity();
-          if (bot.fsm !== PlayerFSMState.Hitstun && bot.fsm !== PlayerFSMState.KnockedDown) {
-            bot.velocityX = p2Vel.vx;
-            bot.velocityY = p2Vel.vy;
-          }
-          PhysicsStep.tick(bot, s.platforms, ARENA_WIDTH);
-          s.p2Controller.x = bot.x;
-          s.p2Controller.y = bot.y;
-          s.p2Controller.setVelocity(bot.velocityX, bot.velocityY);
-          s.p2Controller.isOnFloor = bot.onGround;
-          s.p2Controller.facingRight = bot.facingRight;
-        }
-      } else {
-        PhysicsStep.tick(bot, s.platforms, ARENA_WIDTH);
-      }
       PlayerFSM.tick(p1);
-      PlayerFSM.tick(bot);
 
       // Sincronización inmediata al levantarse automáticamente hacia Idle
       if (p1.fsm === PlayerFSMState.Idle && (prevP1Fsm === PlayerFSMState.KnockedDown || prevP1Fsm === PlayerFSMState.GetUp)) {
@@ -6147,21 +6256,8 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         s.p1Controller.state = ControllerState.Idle;
       }
 
-      if (bot.fsm === PlayerFSMState.Idle && (prevBotFsm === PlayerFSMState.KnockedDown || prevBotFsm === PlayerFSMState.GetUp)) {
-        if (gameMode === 'local1v1') {
-          s.p2Controller.x = bot.x;
-          s.p2Controller.y = bot.y;
-          s.p2Controller.setVelocity(bot.velocityX, bot.velocityY);
-          s.p2Controller.isOnFloor = bot.onGround;
-          s.p2Controller.facingRight = bot.facingRight;
-          s.p2Controller.state = ControllerState.Idle;
-        }
-      }
-
       // Decrementar cooldown de cambio de ranura y mantener munición activa en sincronía
       if (p1.slotCooldownTicks && p1.slotCooldownTicks > 0) p1.slotCooldownTicks--;
-      if (bot.slotCooldownTicks && bot.slotCooldownTicks > 0) bot.slotCooldownTicks--;
-
       if (p1.inventory) {
         if (p1.inventory.activeSlot === 'handgun' && p1.inventory.handgun) {
           p1.inventory.handgun.ammo = p1.ammo;
@@ -6169,16 +6265,59 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           p1.inventory.primary.ammo = p1.ammo;
         }
       }
-      if (bot.inventory) {
-        if (bot.inventory.activeSlot === 'handgun' && bot.inventory.handgun) {
-          bot.inventory.handgun.ammo = bot.ammo;
-        } else if (bot.inventory.activeSlot === 'primary' && bot.inventory.primary) {
-          bot.inventory.primary.ammo = bot.ammo;
-        }
-      }
-
       CombatSystem.tickFireDamage(p1);
-      CombatSystem.tickFireDamage(bot);
+
+      // Físicas, FSM y estado de inventario para cada bot
+      for (const inst of s.bots) {
+        const b = inst.state;
+        const prevBotFsm = b.fsm;
+
+        if (inst.controller && gameMode === 'local1v1') {
+          if (
+            !b.isAlive ||
+            b.fsm === PlayerFSMState.KnockedDown ||
+            b.fsm === PlayerFSMState.GetUp ||
+            b.fsm === PlayerFSMState.Hitstun
+          ) {
+            const p2Vel = inst.controller.getVelocity();
+            if (b.fsm !== PlayerFSMState.Hitstun && b.fsm !== PlayerFSMState.KnockedDown) {
+              b.velocityX = p2Vel.vx;
+              b.velocityY = p2Vel.vy;
+            }
+            PhysicsStep.tick(b, s.platforms, ARENA_WIDTH);
+            inst.controller.x = b.x;
+            inst.controller.y = b.y;
+            inst.controller.setVelocity(b.velocityX, b.velocityY);
+            inst.controller.isOnFloor = b.onGround;
+            inst.controller.facingRight = b.facingRight;
+          }
+        } else {
+          PhysicsStep.tick(b, s.platforms, ARENA_WIDTH);
+        }
+        PlayerFSM.tick(b);
+
+        if (b.fsm === PlayerFSMState.Idle && (prevBotFsm === PlayerFSMState.KnockedDown || prevBotFsm === PlayerFSMState.GetUp)) {
+          if (inst.controller && gameMode === 'local1v1') {
+            inst.controller.x = b.x;
+            inst.controller.y = b.y;
+            inst.controller.setVelocity(b.velocityX, b.velocityY);
+            inst.controller.isOnFloor = b.onGround;
+            inst.controller.facingRight = b.facingRight;
+            inst.controller.state = ControllerState.Idle;
+          }
+        }
+
+        if (b.slotCooldownTicks && b.slotCooldownTicks > 0) b.slotCooldownTicks--;
+        if (b.inventory) {
+          if (b.inventory.activeSlot === 'handgun' && b.inventory.handgun) {
+            b.inventory.handgun.ammo = b.ammo;
+          } else if (b.inventory.activeSlot === 'primary' && b.inventory.primary) {
+            b.inventory.primary.ammo = b.ammo;
+          }
+        }
+
+        CombatSystem.tickFireDamage(b);
+      }
 
       // ─────────────────────────────────────────────────────────
       // GESTIÓN DE ESTADOS Y ANIMACIÓN SINCRONIZADA CON SPRITESHEET
@@ -6228,44 +6367,47 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         p1.animSpeed = 1.0;
       }
 
-      // 2. BOT / J2: Detección de movimiento horizontal y animación sincronizada
-      const botSpeed = Math.abs(bot.velocityX);
-      const botIsMovingState =
-        bot.isAlive &&
-        bot.onGround &&
-        botSpeed > 8 &&
-        bot.fsm !== PlayerFSMState.Roll &&
-        bot.fsm !== PlayerFSMState.KnockedDown &&
-        bot.fsm !== PlayerFSMState.GetUp &&
-        bot.fsm !== PlayerFSMState.Hitstun &&
-        bot.fsm !== PlayerFSMState.Dead;
+      // 2. BOTS / J2: Detección de movimiento horizontal y animación sincronizada
+      for (const inst of s.bots) {
+        const b = inst.state;
+        const bSpeed = Math.abs(b.velocityX);
+        const bIsMovingState =
+          b.isAlive &&
+          b.onGround &&
+          bSpeed > 8 &&
+          b.fsm !== PlayerFSMState.Roll &&
+          b.fsm !== PlayerFSMState.KnockedDown &&
+          b.fsm !== PlayerFSMState.GetUp &&
+          b.fsm !== PlayerFSMState.Hitstun &&
+          b.fsm !== PlayerFSMState.Dead;
 
-      bot.isMovingHorizontally = botIsMovingState;
+        b.isMovingHorizontally = bIsMovingState;
 
-      if (botIsMovingState) {
-        const isRunning = botSpeed >= PLAYER_CONFIG.RUN_THRESHOLD && !!s.botSheetConfig?.hasRunSheet;
-        const totalFrames = isRunning
-          ? (s.botSheetConfig?.runTotalFrames || 6)
-          : (s.botSheetConfig?.totalFrames || 14);
+        if (bIsMovingState) {
+          const isRunning = bSpeed >= PLAYER_CONFIG.RUN_THRESHOLD && !!s.botSheetConfig?.hasRunSheet;
+          const totalFrames = isRunning
+            ? (s.botSheetConfig?.runTotalFrames || 6)
+            : (s.botSheetConfig?.totalFrames || 14);
 
-        const strideDistancePx = isRunning ? 64 : 54;
-        const distanceThisFrame = botSpeed * (1 / 60);
-        const framesToAdvance = (distanceThisFrame / strideDistancePx) * totalFrames;
+          const strideDistancePx = isRunning ? 64 : 54;
+          const distanceThisFrame = bSpeed * (1 / 60);
+          const framesToAdvance = (distanceThisFrame / strideDistancePx) * totalFrames;
 
-        bot.animFrameTimer += framesToAdvance;
-        if (bot.animFrameTimer >= 1) {
-          const step = Math.floor(bot.animFrameTimer);
-          bot.animFrame = (bot.animFrame + step) % totalFrames;
-          bot.animFrameTimer -= step;
+          b.animFrameTimer += framesToAdvance;
+          if (b.animFrameTimer >= 1) {
+            const step = Math.floor(b.animFrameTimer);
+            b.animFrame = (b.animFrame + step) % totalFrames;
+            b.animFrameTimer -= step;
+          }
+
+          if (is1v1Mode && Math.abs(b.velocityX) > 2) {
+            b.facingRight = b.velocityX > 0;
+          }
+        } else {
+          b.animFrame = 0;
+          b.animFrameTimer = 0;
+          b.animSpeed = 1.0;
         }
-
-        if (is1v1Mode && Math.abs(bot.velocityX) > 2) {
-          bot.facingRight = bot.velocityX > 0;
-        }
-      } else {
-        bot.animFrame = 0;
-        bot.animFrameTimer = 0;
-        bot.animSpeed = 1.0;
       }
 
       // ─────────────────────────────────────────────────────────
@@ -6289,15 +6431,21 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           p1.x += pushAmount;
         }
 
-        // Empujar Bot si está sobre la cinta
-        if (
-          bot.isAlive &&
-          bot.x >= conv.x - 10 &&
-          bot.x <= conv.x + conv.w + 10 &&
-          bot.y >= conv.y - 12 &&
-          bot.y <= conv.y + conv.h + 8
-        ) {
-          bot.x += pushAmount;
+        // Empujar bots si están sobre la cinta
+        for (const inst of s.bots) {
+          const b = inst.state;
+          if (
+            b.isAlive &&
+            b.x >= conv.x - 10 &&
+            b.x <= conv.x + conv.w + 10 &&
+            b.y >= conv.y - 12 &&
+            b.y <= conv.y + conv.h + 8
+          ) {
+            b.x += pushAmount;
+            if (inst.controller && gameMode === 'local1v1') {
+              inst.controller.x += pushAmount;
+            }
+          }
         }
 
         // Empujar armas y medkits que caigan sobre la cinta
@@ -6335,55 +6483,45 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             s.screenShake = 10;
             addSparks(press.x + press.w / 2, press.currentY + press.h, '#f97316', 16);
 
-            // Verificar aplastamiento de P1
-            if (
-              p1.isAlive &&
-              Math.abs(p1.x - (press.x + press.w / 2)) < press.w / 2 + 10 &&
-              p1.y >= press.currentY &&
-              p1.y <= press.currentY + press.h + 30
-            ) {
-              p1.health = Math.max(0, p1.health - press.crushDamage);
-              if (p1.health <= 0) {
-                p1.health = 0;
-                p1.isAlive = false;
-                PlayerFSM.tryTransition(p1, PlayerFSMState.Dead);
-              } else {
-                PlayerFSM.tryTransition(p1, PlayerFSMState.KnockedDown);
+            // P-D2: Daño por prensa a todos los combatientes mediante CombatSystem.applyHit
+            allFighters.forEach((target) => {
+              if (
+                target.isAlive &&
+                Math.abs(target.x - (press.x + press.w / 2)) < press.w / 2 + 10 &&
+                target.y >= press.currentY &&
+                target.y <= press.currentY + press.h + 30
+              ) {
+                CombatSystem.applyHit(target, {
+                  damage: press.crushDamage,
+                  kbX: 0,
+                  kbY: 40,
+                  stunTicks: GameConstants.HitstunTicksStrong,
+                  hitStop: 5,
+                  causedKnockdown: true,
+                  screenShake: 12,
+                });
+                if (target.id === s.p1.id) {
+                  s.p1Controller.setPosition(target.x, target.y);
+                  s.p1Controller.vx = target.velocityX;
+                  s.p1Controller.vy = target.velocityY;
+                } else {
+                  const tInst = s.bots.find((b) => b.id === target.id);
+                  if (tInst?.controller) {
+                    tInst.controller.setPosition(target.x, target.y);
+                    tInst.controller.vx = target.velocityX;
+                    tInst.controller.vy = target.velocityY;
+                  }
+                }
+                s.floatingTexts.push({
+                  id: s.nextEntityId++,
+                  text: '¡APLASTADO!',
+                  x: target.x,
+                  y: target.y - 30,
+                  color: '#ef4444',
+                  life: 45,
+                });
               }
-              s.floatingTexts.push({
-                id: s.nextEntityId++,
-                text: '¡APLASTADO!',
-                x: p1.x,
-                y: p1.y - 30,
-                color: '#ef4444',
-                life: 45,
-              });
-            }
-
-            // Verificar aplastamiento del Bot
-            if (
-              bot.isAlive &&
-              Math.abs(bot.x - (press.x + press.w / 2)) < press.w / 2 + 10 &&
-              bot.y >= press.currentY &&
-              bot.y <= press.currentY + press.h + 30
-            ) {
-              bot.health = Math.max(0, bot.health - press.crushDamage);
-              if (bot.health <= 0) {
-                bot.health = 0;
-                bot.isAlive = false;
-                PlayerFSM.tryTransition(bot, PlayerFSMState.Dead);
-              } else {
-                PlayerFSM.tryTransition(bot, PlayerFSMState.KnockedDown);
-              }
-              s.floatingTexts.push({
-                id: s.nextEntityId++,
-                text: '¡APLASTADO!',
-                x: bot.x,
-                y: bot.y - 30,
-                color: '#ef4444',
-                life: 45,
-              });
-            }
+            });
           }
         } else if (press.tick > 125 && press.tick <= 155) {
           press.currentY = press.baseY + press.maxDrop;
@@ -6410,17 +6548,36 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           if (barrel.x < 15) { barrel.x = 15; barrel.vx = -barrel.vx * 0.4; }
           if (barrel.x + barrel.w > ARENA_WIDTH - 15) { barrel.x = ARENA_WIDTH - 15 - barrel.w; barrel.vx = -barrel.vx * 0.4; }
 
-          // Barriles en movimiento a gran velocidad impactando a combatientes
+          // P-D2: Barriles en movimiento a gran velocidad impactando a combatientes (CombatSystem.applyHit)
           const currentVx = barrel.vx;
           if (Math.abs(currentVx) > 85) {
-            [s.p1, s.bot].forEach((target) => {
+            allFighters.forEach((target) => {
               if (!target.isAlive) return;
               if (Math.hypot((barrel.x + barrel.w / 2) - target.x, (barrel.y + barrel.h / 2) - target.y) < 32) {
                 barrel.health -= 15;
-                target.health = Math.max(0, target.health - 16);
-                target.velocityX = currentVx * 0.75;
-                target.velocityY = -150;
-                PlayerFSM.tryTransition(target, PlayerFSMState.KnockedDown);
+                const barrelAttacker = barrel.lastHitterId !== undefined ? allFighters.find((f) => f.id === barrel.lastHitterId) : undefined;
+                CombatSystem.applyHit(target, {
+                  damage: 16,
+                  kbX: currentVx * 0.75,
+                  kbY: -150,
+                  stunTicks: GameConstants.HitstunTicksStrong,
+                  hitStop: 4,
+                  causedKnockdown: true,
+                  attacker: barrelAttacker,
+                  screenShake: 8,
+                });
+                if (target.id === s.p1.id) {
+                  s.p1Controller.setPosition(target.x, target.y);
+                  s.p1Controller.vx = target.velocityX;
+                  s.p1Controller.vy = target.velocityY;
+                } else {
+                  const tInst = s.bots.find((b) => b.id === target.id);
+                  if (tInst?.controller) {
+                    tInst.controller.setPosition(target.x, target.y);
+                    tInst.controller.vx = target.velocityX;
+                    tInst.controller.vy = target.velocityY;
+                  }
+                }
                 sounds.playHit();
                 addSparks(target.x, target.y, '#f97316', 15);
                 s.floatingTexts.push({
@@ -6514,7 +6671,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       for (let i = s.barrels.length - 1; i >= 0; i--) {
         const barrel = s.barrels[i];
         if (barrel.health <= 0) {
-          createExplosion(barrel.x + barrel.w / 2, barrel.y + barrel.h / 2, 95, 55, true);
+          createExplosion(barrel.x + barrel.w / 2, barrel.y + barrel.h / 2, 95, 55, true, barrel.lastHitterId);
           s.floatingTexts.push({
             id: s.nextEntityId++,
             text: '¡BARRIL EXPLOSIVO!',
@@ -6550,21 +6707,24 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           continue;
         }
 
-        // Bot recoge
-        if (bot.isAlive && Math.hypot(med.x - bot.x, med.y - bot.y) < 32) {
-          bot.health = Math.min(bot.maxHealth, bot.health + 35);
-          sounds.playMedkit();
-          addSparks(med.x, med.y, '#22c55e', 14);
-          s.floatingTexts.push({
-            id: s.nextEntityId++,
-            text: '+35 HP',
-            x: bot.x,
-            y: bot.y - 30,
-            color: '#22c55e',
-            life: 45,
-          });
-          s.medkits.splice(i, 1);
-          continue;
+        // Bots recogen
+        for (const inst of s.bots) {
+          const b = inst.state;
+          if (b.isAlive && Math.hypot(med.x - b.x, med.y - b.y) < 32) {
+            b.health = Math.min(b.maxHealth, b.health + 35);
+            sounds.playMedkit();
+            addSparks(med.x, med.y, '#22c55e', 14);
+            s.floatingTexts.push({
+              id: s.nextEntityId++,
+              text: '+35 HP',
+              x: b.x,
+              y: b.y - 30,
+              color: '#22c55e',
+              life: 45,
+            });
+            s.medkits.splice(i, 1);
+            break;
+          }
         }
       }
 
@@ -6603,22 +6763,25 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           }
         }
 
-        // Bot / J2 pickup
-        if (bot.isAlive && Math.hypot(gp.x - bot.x, gp.y - bot.y) < 32) {
-          if (canAddGrenade(s.botGrenades)) {
-            const added = addGrenades(s.botGrenades, gp.type, gp.amount);
-            sounds.playPickup();
-            addSparks(gp.x, gp.y, gCfg.color, 12);
-            s.floatingTexts.push({
-              id: s.nextEntityId++,
-              text: `+${added} ${gCfg.shortName} (${s.botGrenades.ammo[gp.type]}/${GRENADE_MAX_CAPACITY})`,
-              x: bot.x,
-              y: bot.y - 30,
-              color: gCfg.color,
-              life: 45,
-            });
-            s.grenadePickups.splice(i, 1);
-            continue;
+        // Bots / J2 pickup
+        for (const inst of s.bots) {
+          const b = inst.state;
+          if (b.isAlive && Math.hypot(gp.x - b.x, gp.y - b.y) < 32) {
+            if (canAddGrenade(inst.grenades)) {
+              const added = addGrenades(inst.grenades, gp.type, gp.amount);
+              sounds.playPickup();
+              addSparks(gp.x, gp.y, gCfg.color, 12);
+              s.floatingTexts.push({
+                id: s.nextEntityId++,
+                text: `+${added} ${gCfg.shortName} (${inst.grenades.ammo[gp.type]}/${GRENADE_MAX_CAPACITY})`,
+                x: b.x,
+                y: b.y - 30,
+                color: gCfg.color,
+                life: 45,
+              });
+              s.grenadePickups.splice(i, 1);
+              break;
+            }
           }
         }
       }

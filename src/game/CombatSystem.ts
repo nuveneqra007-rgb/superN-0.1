@@ -534,6 +534,11 @@ export const CombatSystem = {
     const hitStop = params.hitStop ?? (causedKnockdown ? 6 : 4);
     const screenShake = params.screenShake ?? (causedKnockdown ? 14 : 7);
 
+    if (params.attacker) {
+      target.lastAttackerId = params.attacker.id;
+      target.lastHitTicks = 0;
+    }
+
     if (target.health <= 0) {
       target.health = 0;
       target.isAlive = false;
@@ -543,10 +548,6 @@ export const CombatSystem = {
         params.attacker.kills++;
       }
     } else {
-      if (params.attacker) {
-        target.lastAttackerId = params.attacker.id;
-        target.lastHitTicks = 0;
-      }
       if (causedKnockdown) {
         target.onGround = false;
         target.knockdownTicks = 45;

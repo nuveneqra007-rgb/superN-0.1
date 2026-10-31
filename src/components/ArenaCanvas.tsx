@@ -336,8 +336,8 @@ export const CHARACTER_SPRITESHEETS: Record<string, SpritesheetDef> = {
   // ── GYMRAT (PROTAGONISTA BRAWLER) ──
   [BotFaction.Gymrat]: {
     idleUrl: '/assets/sprites/player/gymrat.png',
-    walkSheetUrl: '/assets/aistudio/image_effc215b.png',
-    runSheetUrl: '/assets/aistudio/image_d9b6c0f7.png',
+    walkSheetUrl: '/assets/sprites/player/gymrat_walk.png',
+    runSheetUrl: '/assets/sprites/player/gymrat_run.png',
     rollSheetUrl: '/assets/aistudio/image_e759561c.png',
     jumpSheetUrl: '/assets/aistudio/image_eaab78e9.png',
     meleeSheetUrl: '/assets/aistudio/image_2e9f4148.png',
@@ -6517,9 +6517,17 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           : (s.p1SheetConfig?.totalFrames || 6);
 
         // Distancia de zancada adaptada (más amplia en carrera rápida)
-        const strideDistancePx = isRunning ? 64 : 46;
+        const isGymratP1 = (playerFaction || BotFaction.Ninja) === BotFaction.Gymrat;
+        const strideDistancePx = isRunning ? 64 : (isGymratP1 ? 80 : 46);
         const distanceThisFrame = p1Speed * (1 / 60);
-        const framesToAdvance = (distanceThisFrame / strideDistancePx) * totalFrames;
+        // Para Gymrat:
+        // - Carrera (isRunning): 12 a 15 FPS (~13.5 FPS)
+        // - Caminar (!isRunning): 8 a 10 FPS (~9 FPS)
+        const framesToAdvance = isGymratP1
+          ? (isRunning
+              ? (13.5 / 60) * Math.min(1.25, Math.max(0.85, p1Speed / PLAYER_CONFIG.RUN_THRESHOLD))
+              : (9.0 / 60) * Math.min(1.2, Math.max(0.75, p1Speed / 110)))
+          : (distanceThisFrame / strideDistancePx) * totalFrames;
 
         p1.animFrameTimer += framesToAdvance;
         if (p1.animFrameTimer >= 1) {
@@ -6561,9 +6569,14 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             ? (s.botSheetConfig?.runTotalFrames || 6)
             : (s.botSheetConfig?.totalFrames || 14);
 
-          const strideDistancePx = isRunning ? 64 : 54;
+          const isGymratBot = inst.faction === BotFaction.Gymrat;
+          const strideDistancePx = isRunning ? 64 : (isGymratBot ? 80 : 54);
           const distanceThisFrame = bSpeed * (1 / 60);
-          const framesToAdvance = (distanceThisFrame / strideDistancePx) * totalFrames;
+          const framesToAdvance = isGymratBot
+            ? (isRunning
+                ? (13.5 / 60) * Math.min(1.25, Math.max(0.85, bSpeed / PLAYER_CONFIG.RUN_THRESHOLD))
+                : (9.0 / 60) * Math.min(1.2, Math.max(0.75, bSpeed / 110)))
+            : (distanceThisFrame / strideDistancePx) * totalFrames;
 
           b.animFrameTimer += framesToAdvance;
           if (b.animFrameTimer >= 1) {

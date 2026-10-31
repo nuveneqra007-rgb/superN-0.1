@@ -140,7 +140,7 @@ export const CHARACTERS: CharacterDef[] = [
     accentColor: '#f97316',
     idleUrl: '/assets/characters/gymrat/idle.png',
     portraitUrl: '/assets/characters/gymrat/idle.png',
-    playable: false, // Bloqueado hasta integrar sus hojas de animación
+    playable: true,
     drawScale: 1.08,
     stats: {
       hp: 125,
@@ -148,6 +148,20 @@ export const CHARACTERS: CharacterDef[] = [
       meleeDamageMult: 1.25,
     },
     startWeapon: 'Fist',
+    sheets: {
+      walk: {
+        url: '/assets/sprites/player/gymrat_walk.png',
+        cols: 6,
+        rows: 1,
+        totalFrames: 6,
+      },
+      run: {
+        url: '/assets/sprites/player/gymrat_run.png',
+        cols: 6,
+        rows: 1,
+        totalFrames: 6,
+      },
+    },
   },
   {
     id: 'santaclo',

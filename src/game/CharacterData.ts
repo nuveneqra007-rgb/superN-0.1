@@ -173,6 +173,26 @@ export const CHARACTERS: CharacterDef[] = [
         rows: 1,
         totalFrames: 6,
       },
+      melee: {
+        url: '/assets/sprites/player/gymrat_melee.png',
+        cols: 6,
+        rows: 1,
+        totalFrames: 6,
+        hitFrame: 1,
+      },
+      oneHandAttack: {
+        url: '/assets/sprites/player/gymrat_one_hand_attack.png',
+        cols: 5,
+        rows: 1,
+        totalFrames: 5,
+        hitFrame: 2,
+      },
+      pistolShoot: {
+        url: '/assets/sprites/player/gymrat_pistol_shoot.png',
+        cols: 4,
+        rows: 1,
+        totalFrames: 4,
+      },
     },
   },
   {

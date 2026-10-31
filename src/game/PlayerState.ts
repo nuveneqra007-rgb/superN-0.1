@@ -155,6 +155,7 @@ export interface PlayerState {
   pistolAnimFrame?: number;
   pistolAnimTimer?: number;
   pistolHasFired?: boolean;
+  pistolHasRecoilApplied?: boolean;
 
   // Set de animación de Ataque a dos manos (Rifles/Escopetas) (rifle_shoot - 4 frames con retroceso en frame 3)
   isRifleShooting?: boolean;

@@ -338,8 +338,8 @@ export const CHARACTER_SPRITESHEETS: Record<string, SpritesheetDef> = {
     idleUrl: '/assets/sprites/player/gymrat.png',
     walkSheetUrl: '/assets/sprites/player/gymrat_walk.png',
     runSheetUrl: '/assets/sprites/player/gymrat_run.png',
-    rollSheetUrl: '/assets/aistudio/image_e759561c.png',
-    jumpSheetUrl: '/assets/aistudio/image_eaab78e9.png',
+    rollSheetUrl: '/assets/sprites/player/gymrat_roll.png',
+    jumpSheetUrl: '/assets/sprites/player/gymrat_jump.png',
     meleeSheetUrl: '/assets/aistudio/image_2e9f4148.png',
     oneHandAttackSheetUrl: '/assets/aistudio/image_2a1be181.png',
     twoHandAttackSheetUrl: '/assets/aistudio/image_83b492a7.png',
@@ -362,11 +362,11 @@ export const CHARACTER_SPRITESHEETS: Record<string, SpritesheetDef> = {
     runCols: 6,
     runRows: 1,
     runTotalFrames: 6,
-    rollCols: 7,
+    rollCols: 6,
     rollRows: 1,
-    rollTotalFrames: 7,
-    jumpCols: 3,
-    jumpRows: 2,
+    rollTotalFrames: 6,
+    jumpCols: 6,
+    jumpRows: 1,
     jumpTotalFrames: 6,
     meleeCols: 3,
     meleeRows: 2,
@@ -2761,12 +2761,31 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           p1.facingRight = s.p1Controller.facingRight;
           p1.onGround = s.p1Controller.isOnFloor;
 
+          const isGymratP1 = (playerFaction || BotFaction.Ninja) === BotFaction.Gymrat;
+          if (isGymratP1) {
+            if (!p1.gymratPrevOnGround && p1.onGround) {
+              p1.gymratLandingTicks = 6;
+            }
+            p1.gymratPrevOnGround = p1.onGround;
+
+            if (p1.gymratLandingTicks && p1.gymratLandingTicks > 0) {
+              if (Math.abs(p1.velocityX) > 20 || p1Input.moveDir !== 0) {
+                p1.gymratLandingTicks = 0;
+              } else {
+                p1.gymratLandingTicks--;
+              }
+            }
+          }
+
           if (s.p1Controller.state === ControllerState.Roll) {
             if (!prevRoll) {
               sounds.playRoll();
               p1.rollTicks = GameConstants.RollDurationTicks;
             }
             p1.fsm = PlayerFSMState.Roll;
+            if (s.p1Controller.isInvulnerable) {
+              p1.invulnerabilityTicks = Math.max(p1.invulnerabilityTicks, 2);
+            }
             if (Math.random() < 0.65) {
               const dustDir = p1.facingRight ? -1 : 1;
               s.particles.push({
@@ -4476,12 +4495,30 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             bot.facingRight = s.p2Controller.facingRight;
             bot.onGround = s.p2Controller.isOnFloor;
 
+            if (bot.name.toUpperCase().includes('GYMRAT')) {
+              if (!bot.gymratPrevOnGround && bot.onGround) {
+                bot.gymratLandingTicks = 6;
+              }
+              bot.gymratPrevOnGround = bot.onGround;
+
+              if (bot.gymratLandingTicks && bot.gymratLandingTicks > 0) {
+                if (Math.abs(bot.velocityX) > 20 || p2Input.moveDir !== 0) {
+                  bot.gymratLandingTicks = 0;
+                } else {
+                  bot.gymratLandingTicks--;
+                }
+              }
+            }
+
             if (s.p2Controller.state === ControllerState.Roll) {
               if (!prevRoll) {
                 sounds.playRoll();
                 bot.rollTicks = GameConstants.RollDurationTicks;
               }
               bot.fsm = PlayerFSMState.Roll;
+              if (s.p2Controller.isInvulnerable) {
+                bot.invulnerabilityTicks = Math.max(bot.invulnerabilityTicks, 2);
+              }
               if (Math.random() < 0.65) {
                 const dustDir = bot.facingRight ? -1 : 1;
                 s.particles.push({
@@ -8861,30 +8898,50 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           jumpSheet.complete &&
           jumpSheet.naturalWidth > 0
         ) {
-          const jumpCols = cfg.jumpCols || 3;
-          const jumpRows = cfg.jumpRows || 2;
+          const isGymrat =
+            p.name.toUpperCase().includes('GYMRAT') ||
+            (isP1 && (playerFaction || BotFaction.Ninja) === BotFaction.Gymrat);
+
+          const jumpCols = cfg.jumpCols || (isGymrat ? 6 : 3);
+          const jumpRows = cfg.jumpRows || (isGymrat ? 1 : 2);
           const totalJumpFrames = cfg.jumpTotalFrames || 6;
 
           const jumpFrameW = jumpSheet.naturalWidth / jumpCols;
           const jumpFrameH = jumpSheet.naturalHeight / jumpRows;
 
-          // Sincronización precisa con el arco de física vertical:
-          // Frame 0: Impulso inicial / despegue (vy < -350)
-          // Frame 1: Ascenso veloz (vy entre -350 y -100)
-          // Frame 2: Ápice / cúspide del salto (vy entre -100 y +120)
-          // Frame 3: Comienzo del descenso (vy entre +120 y +320)
-          // Frame 4: Caída libre en el aire (se mantiene aquí mientras siga cayendo en el aire)
           let jumpFrame = 0;
-          if (p.velocityY < -350) {
-            jumpFrame = 0;
-          } else if (p.velocityY < -100) {
-            jumpFrame = 1;
-          } else if (p.velocityY < 120) {
-            jumpFrame = 2;
-          } else if (p.velocityY < 320) {
-            jumpFrame = 3;
+          if (isGymrat) {
+            // Lógica de Física (Gymrat):
+            // Frame 1 (idx 0): Reposo (antes de saltar)
+            // Frames 2 y 3 (idx 1 y 2): Impulso (cuando presionas el botón de salto y sube)
+            // Frames 4 y 5 (idx 3 y 4): Caída (pausa en frame 4 mientras cae en el aire sin loop)
+            if (p.velocityY < -260) {
+              jumpFrame = 1; // Frame 2: Impulso inicial de despegue
+            } else if (p.velocityY < -40) {
+              jumpFrame = 2; // Frame 3: Impulso en ascenso
+            } else if (p.velocityY < 160) {
+              jumpFrame = 3; // Frame 4: Transición en el ápice / inicio de caída
+            } else {
+              jumpFrame = 4; // Frame 5: Caída libre pausada en el aire
+            }
           } else {
-            jumpFrame = 4; // Pausa y se mantiene en el frame de caída si sigue en el aire
+            // Sincronización precisa con el arco de física vertical para Ninja y bots estándar (intacto):
+            // Frame 0: Impulso inicial / despegue (vy < -350)
+            // Frame 1: Ascenso veloz (vy entre -350 y -100)
+            // Frame 2: Ápice / cúspide del salto (vy entre -100 y +120)
+            // Frame 3: Comienzo del descenso (vy entre +120 y +320)
+            // Frame 4: Caída libre en el aire (se mantiene aquí mientras siga cayendo en el aire)
+            if (p.velocityY < -350) {
+              jumpFrame = 0;
+            } else if (p.velocityY < -100) {
+              jumpFrame = 1;
+            } else if (p.velocityY < 120) {
+              jumpFrame = 2;
+            } else if (p.velocityY < 320) {
+              jumpFrame = 3;
+            } else {
+              jumpFrame = 4; // Pausa y se mantiene en el frame de caída si sigue en el aire
+            }
           }
 
           const safeFrame = Math.min(totalJumpFrames - 1, Math.max(0, jumpFrame));
@@ -8974,6 +9031,50 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           }
           ctx.stroke();
           ctx.restore();
+        } else if (
+          (p.name.toUpperCase().includes('GYMRAT') || (isP1 && (playerFaction || BotFaction.Ninja) === BotFaction.Gymrat)) &&
+          p.onGround &&
+          (p.gymratLandingTicks || 0) > 0 &&
+          !isWalking &&
+          !isRolling &&
+          !isBladeAttacking &&
+          jumpSheet &&
+          jumpSheet.complete &&
+          jumpSheet.naturalWidth > 0
+        ) {
+          // Frame 6 (índice 5): Aterrizaje al colisionar con el suelo
+          const jumpCols = cfg?.jumpCols || 6;
+          const jumpRows = cfg?.jumpRows || 1;
+          const jumpFrameW = jumpSheet.naturalWidth / jumpCols;
+          const jumpFrameH = jumpSheet.naturalHeight / jumpRows;
+          const safeFrame = 5;
+          const col = safeFrame % jumpCols;
+          const row = Math.floor(safeFrame / jumpCols);
+          const sx = col * jumpFrameW;
+          const sy = row * jumpFrameH;
+          ctx.drawImage(jumpSheet, sx, sy, jumpFrameW, jumpFrameH, drawX, drawY, charW, charH);
+        } else if (
+          (p.name.toUpperCase().includes('GYMRAT') || (isP1 && (playerFaction || BotFaction.Ninja) === BotFaction.Gymrat)) &&
+          p.onGround &&
+          p.fsm === PlayerFSMState.Crouch &&
+          !isWalking &&
+          !isRolling &&
+          !isBladeAttacking &&
+          jumpSheet &&
+          jumpSheet.complete &&
+          jumpSheet.naturalWidth > 0
+        ) {
+          // Frame 1 (índice 0): Reposo antes de saltar / agachado
+          const jumpCols = cfg?.jumpCols || 6;
+          const jumpRows = cfg?.jumpRows || 1;
+          const jumpFrameW = jumpSheet.naturalWidth / jumpCols;
+          const jumpFrameH = jumpSheet.naturalHeight / jumpRows;
+          const safeFrame = 0;
+          const col = safeFrame % jumpCols;
+          const row = Math.floor(safeFrame / jumpCols);
+          const sx = col * jumpFrameW;
+          const sy = row * jumpFrameH;
+          ctx.drawImage(jumpSheet, sx, sy, jumpFrameW, jumpFrameH, drawX, drawY, charW, charH);
         } else if (
           isWalking &&
           ((cfg?.hasRunSheet && Math.abs(p.velocityX) >= PLAYER_CONFIG.RUN_THRESHOLD && runSheet && runSheet.complete && runSheet.naturalWidth > 0) ||

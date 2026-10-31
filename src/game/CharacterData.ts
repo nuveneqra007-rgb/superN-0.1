@@ -161,6 +161,18 @@ export const CHARACTERS: CharacterDef[] = [
         rows: 1,
         totalFrames: 6,
       },
+      jump: {
+        url: '/assets/sprites/player/gymrat_jump.png',
+        cols: 6,
+        rows: 1,
+        totalFrames: 6,
+      },
+      roll: {
+        url: '/assets/sprites/player/gymrat_roll.png',
+        cols: 6,
+        rows: 1,
+        totalFrames: 6,
+      },
     },
   },
   {

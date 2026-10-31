@@ -108,6 +108,10 @@ export interface PlayerState {
   animSpeed: number;
   isMovingHorizontally: boolean;
 
+  // Animación de aterrizaje vinculada a la física (Gymrat)
+  gymratLandingTicks?: number;
+  gymratPrevOnGround?: boolean;
+
   // Nuevas mecánicas avanzadas de melee (Heavy Smash, Slide, Grapple)
   heavyChargeTicks: number;
   isChargingHeavy: boolean;

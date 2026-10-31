@@ -4,9 +4,9 @@
 // divisorias, ajusta la caja del personaje y alinea el punto de contacto al suelo.
 // ==============================================================================
 
-const fs = require('fs');
-const path = require('path');
-const { PNG } = require('pngjs');
+import fs from 'fs';
+import path from 'path';
+import { PNG } from 'pngjs';
 
 function sliceGymratWalk() {
   const inputPath = path.resolve('public/assets/aistudio/image_effc215b.png');
@@ -308,9 +308,242 @@ function sliceGymratRun() {
   console.log(`[Run] Generado: ${CW * 6}x${CH} (6 frames, torso centrado y pies alineados)`);
 }
 
-if (require.main === module) {
-  sliceGymratWalk();
-  sliceGymratRun();
+function sliceGymratJump() {
+  const inputPath = path.resolve('public/assets/aistudio/image_eaab78e9.png');
+  if (!fs.existsSync(inputPath)) {
+    console.error('No se encontró el archivo de origen para jump:', inputPath);
+    return;
+  }
+
+  const srcBuf = fs.readFileSync(inputPath);
+  const srcPng = PNG.sync.read(srcBuf);
+
+  const boxes = [
+    { f: 0, x0: 10, x1: 300, y0: 12, y1: 384, groundY: 374 },
+    { f: 1, x0: 325, x1: 618, y0: 12, y1: 384, groundY: 374 },
+    { f: 2, x0: 642, x1: 930, y0: 12, y1: 384, groundY: 374 },
+    { f: 3, x0: 10, x1: 300, y0: 612, y1: 1018, groundY: 380 },
+    { f: 4, x0: 325, x1: 618, y0: 612, y1: 1018, groundY: 380 },
+    { f: 5, x0: 642, x1: 930, y0: 612, y1: 1018, groundY: 380 },
+  ];
+
+  const CW = 300;
+  const CH = 400;
+  const targetGroundY = CH - 15;
+  const targetCenterX = CW / 2;
+
+  const outPng = new PNG({ width: CW * 6, height: CH });
+  outPng.data.fill(0); // 100% transparente
+
+  boxes.forEach(({ f, x0, x1, y0, y1, groundY }) => {
+    const W = x1 - x0 + 1, H = y1 - y0 + 1;
+    const isChar = new Uint8Array(W * H);
+    const queue = [];
+
+    // Semilla en el color de piel de Gymrat
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const idx = ((y0 + y) * srcPng.width + (x0 + x)) * 4;
+        const r = srcPng.data[idx], g = srcPng.data[idx + 1], b = srcPng.data[idx + 2];
+        if (r > 150 && g > 80 && (r - b) > 40) {
+          isChar[y * W + x] = 1;
+          queue.push([x, y]);
+        }
+      }
+    }
+
+    // Flood fill para contornos negros, botas y calzón evitando el tablero de ajedrez
+    let head = 0;
+    while (head < queue.length) {
+      const [x, y] = queue[head++];
+      const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]];
+      for (const [dx, dy] of dirs) {
+        const nx = x + dx, ny = y + dy;
+        if (nx >= 0 && nx < W && ny >= 0 && ny < H) {
+          const npos = ny * W + nx;
+          if (!isChar[npos]) {
+            const idx = ((y0 + ny) * srcPng.width + (x0 + nx)) * 4;
+            const r = srcPng.data[idx], g = srcPng.data[idx + 1], b = srcPng.data[idx + 2];
+            const maxC = Math.max(r, g, b);
+            const minC = Math.min(r, g, b);
+            // El tablero gris tiene baja saturación (maxC - minC <= 14) y brillo >= 65
+            const isChecker = (maxC - minC <= 14) && minC >= 65;
+            if (!isChecker) {
+              isChar[npos] = 1;
+              queue.push([nx, ny]);
+            }
+          }
+        }
+      }
+    }
+
+    // Centro del torso ponderado para alinear el pivote
+    let sumX = 0, count = 0;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        if (isChar[y * W + x]) {
+          sumX += x;
+          count++;
+        }
+      }
+    }
+    const avgX = count > 0 ? (sumX / count) : (W / 2);
+
+    const cellStartX = f * CW;
+    const offsetX = Math.round(cellStartX + targetCenterX - avgX);
+    const offsetY = targetGroundY - groundY;
+
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        if (isChar[y * W + x]) {
+          const destX = offsetX + x;
+          const destY = offsetY + y;
+          if (destX >= cellStartX && destX < cellStartX + CW && destY >= 0 && destY < CH) {
+            const srcIdx = ((y0 + y) * srcPng.width + (x0 + x)) * 4;
+            const destIdx = (destY * outPng.width + destX) * 4;
+            outPng.data[destIdx] = srcPng.data[srcIdx];
+            outPng.data[destIdx + 1] = srcPng.data[srcIdx + 1];
+            outPng.data[destIdx + 2] = srcPng.data[srcIdx + 2];
+            outPng.data[destIdx + 3] = 255;
+          }
+        }
+      }
+    }
+  });
+
+  const outBuf = PNG.sync.write(outPng);
+  const targets = [
+    'public/assets/sprites/player/gymrat_jump.png',
+    'assets/sprites/player/gymrat_jump.png',
+    'public/assets/characters/gymrat/jump.png',
+  ];
+
+  for (const t of targets) {
+    const dir = path.dirname(t);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(t, outBuf);
+  }
+  console.log(`[Jump] Generado: ${CW * 6}x${CH} (6 frames: reposo, impulso x2, caída x2, aterrizaje)`);
 }
 
-module.exports = { sliceGymratWalk, sliceGymratRun };
+function sliceGymratRoll() {
+  const inputPath = path.resolve('public/assets/aistudio/image_e759561c.png');
+  if (!fs.existsSync(inputPath)) {
+    console.error('No se encontró el archivo de origen para roll:', inputPath);
+    return;
+  }
+
+  const srcBuf = fs.readFileSync(inputPath);
+  const srcPng = PNG.sync.read(srcBuf);
+
+  const cells = [
+    { f: 0, x0: 0, x1: 313, y0: 0, y1: 511, groundY: 387 },
+    { f: 1, x0: 314, x1: 627, y0: 0, y1: 511, groundY: 387 },
+    { f: 2, x0: 628, x1: 941, y0: 0, y1: 511, groundY: 387 },
+    { f: 3, x0: 0, x1: 313, y0: 512, y1: 1023, groundY: 483 },
+    { f: 4, x0: 314, x1: 627, y0: 512, y1: 1023, groundY: 483 },
+    { f: 5, x0: 628, x1: 941, y0: 512, y1: 1023, groundY: 483 },
+  ];
+
+  const CW = 300;
+  const CH = 400;
+  const targetGroundY = CH - 15;
+  const targetCenterX = CW / 2;
+
+  const outPng = new PNG({ width: CW * 6, height: CH });
+  outPng.data.fill(0);
+
+  cells.forEach(({ f, x0, x1, y0, y1, groundY }) => {
+    const W = x1 - x0 + 1, H = y1 - y0 + 1;
+    const isChar = new Uint8Array(W * H);
+    const queue = [];
+
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const idx = ((y0 + y) * srcPng.width + (x0 + x)) * 4;
+        const r = srcPng.data[idx], g = srcPng.data[idx + 1], b = srcPng.data[idx + 2];
+        if (r > 150 && g > 80 && (r - b) > 40) {
+          isChar[y * W + x] = 1;
+          queue.push([x, y]);
+        }
+      }
+    }
+
+    let head = 0;
+    while (head < queue.length) {
+      const [x, y] = queue[head++];
+      const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]];
+      for (const [dx, dy] of dirs) {
+        const nx = x + dx, ny = y + dy;
+        if (nx >= 0 && nx < W && ny >= 0 && ny < H) {
+          const npos = ny * W + nx;
+          if (!isChar[npos]) {
+            const idx = ((y0 + ny) * srcPng.width + (x0 + nx)) * 4;
+            const r = srcPng.data[idx], g = srcPng.data[idx + 1], b = srcPng.data[idx + 2];
+            const maxC = Math.max(r, g, b);
+            const minC = Math.min(r, g, b);
+            const isChecker = (maxC - minC <= 14) && minC >= 65;
+            if (!isChecker) {
+              isChar[npos] = 1;
+              queue.push([nx, ny]);
+            }
+          }
+        }
+      }
+    }
+
+    let sumX = 0, count = 0;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        if (isChar[y * W + x]) {
+          sumX += x;
+          count++;
+        }
+      }
+    }
+    const avgX = count > 0 ? (sumX / count) : (W / 2);
+
+    const cellStartX = f * CW;
+    const offsetX = Math.round(cellStartX + targetCenterX - avgX);
+    const offsetY = targetGroundY - groundY;
+
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        if (isChar[y * W + x]) {
+          const destX = offsetX + x;
+          const destY = offsetY + y;
+          if (destX >= cellStartX && destX < cellStartX + CW && destY >= 0 && destY < CH) {
+            const srcIdx = ((y0 + y) * srcPng.width + (x0 + x)) * 4;
+            const destIdx = (destY * outPng.width + destX) * 4;
+            outPng.data[destIdx] = srcPng.data[srcIdx];
+            outPng.data[destIdx + 1] = srcPng.data[srcIdx + 1];
+            outPng.data[destIdx + 2] = srcPng.data[srcIdx + 2];
+            outPng.data[destIdx + 3] = 255;
+          }
+        }
+      }
+    }
+  });
+
+  const outBuf = PNG.sync.write(outPng);
+  const targets = [
+    'public/assets/sprites/player/gymrat_roll.png',
+    'assets/sprites/player/gymrat_roll.png',
+    'public/assets/characters/gymrat/roll.png',
+  ];
+
+  for (const t of targets) {
+    const dir = path.dirname(t);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(t, outBuf);
+  }
+  console.log(`[Roll] Generado: ${CW * 6}x${CH} (6 frames: voltereta completa con bolita recortada)`);
+}
+
+sliceGymratWalk();
+sliceGymratRun();
+sliceGymratJump();
+sliceGymratRoll();
+
+export { sliceGymratWalk, sliceGymratRun, sliceGymratJump, sliceGymratRoll };
+

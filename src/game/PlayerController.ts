@@ -175,15 +175,24 @@ export class PlayerController {
     const downKey = isAnyPressed(keys, bindings.down);
     const downJustPressed = isAnyPressed(keysJustPressed, bindings.down);
     const runHeld = isAnyPressed(keys, bindings.run);
+    const runJustPressed = isAnyPressed(keysJustPressed, bindings.run);
+    const leftJustPressed = isAnyPressed(keysJustPressed, bindings.left);
+    const rightJustPressed = isAnyPressed(keysJustPressed, bindings.right);
+    const dirJustPressed = (leftJustPressed && !rightKey) || (rightJustPressed && !leftKey);
 
     let moveDir: -1 | 0 | 1 = 0;
     if (leftKey && !rightKey) moveDir = -1;
     else if (rightKey && !leftKey) moveDir = 1;
 
-    // Validación estricta del Roll (Abajo + Movimiento):
-    // Solo rueda si el jugador tiene intención de dirección (moveDir !== 0)
-    // y acaba de presionar hacia abajo en sus teclas asignadas (downJustPressed).
-    const roll = moveDir !== 0 && downJustPressed;
+    // Validación estricta del Roll (Abajo + Movimiento / Abajo + Rodar):
+    // Se activa al presionar Abajo mientras se mueve,
+    // o al presionar dirección mientras se mantiene Abajo,
+    // o al presionar Rodar (Run) mientras se presiona o mantiene Abajo.
+    const roll =
+      (moveDir !== 0 && downJustPressed) ||
+      (downKey && dirJustPressed && moveDir !== 0) ||
+      (downKey && runJustPressed) ||
+      (downJustPressed && runHeld);
     const dropThrough = downKey && upJustPressed;
 
     return {

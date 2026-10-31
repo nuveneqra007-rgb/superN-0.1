@@ -1168,6 +1168,8 @@ export const RIFLE_WEAPONS: ReadonlySet<string> = new Set([
   WeaponType.Lazer,
   WeaponType.Flamethrower,
   WeaponType.Bow,
+  WeaponType.Bazooka,
+  WeaponType.GLauncher,
 ]);
 
 export function isRifleWeapon(type: string | WeaponType): boolean {

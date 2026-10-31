@@ -345,7 +345,7 @@ export const CHARACTER_SPRITESHEETS: Record<string, SpritesheetDef> = {
     twoHandAttackSheetUrl: '/assets/sprites/player/gymrat_two_hand_attack.png',
     pistolShootSheetUrl: '/assets/sprites/player/gymrat_pistol_shoot.png',
     rifleShootSheetUrl: '/assets/sprites/player/gymrat_rifle_shoot.png',
-    throwUpSheetUrl: '/assets/sprites/player/throw_up.png',
+    throwUpSheetUrl: '/assets/sprites/player/gymrat_throw_up.png',
     cols: 6,
     rows: 1,
     totalFrames: 6,
@@ -1441,8 +1441,11 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     (worldCfg: WorldConfig, currentScoreMap?: Map<number, number>): BotInstance[] => {
       if (gameMode === 'local1v1') {
         const spawnBot = worldCfg.spawns[1] || { x: 760, y: 460 };
-        const arch = getBotArchetype(BotFaction.Ninja);
-        const state = createPlayerState(2, 'NINJA (J2)', false, spawnBot.x, spawnBot.y);
+        const effectiveP2Faction = botFaction || BotFaction.Ninja;
+        const arch = getBotArchetype(effectiveP2Faction);
+        const p2Name = `${arch.name.toUpperCase()} (J2)`;
+        const state = createPlayerState(2, p2Name, false, spawnBot.x, spawnBot.y, effectiveP2Faction);
+        state.faction = effectiveP2Faction;
         state.maxHealth = arch.maxHealth;
         state.health = arch.maxHealth;
         state.speedModifier = arch.speedModifier;
@@ -1464,12 +1467,13 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
         const p2Ctrl = new PlayerController(spawnBot.x, spawnBot.y, false, 2);
         p2Ctrl.facingRight = false;
+        p2Ctrl.setPlayerId(2);
 
         return [
           {
             id: 2,
             slot: 0,
-            faction: BotFaction.Ninja,
+            faction: effectiveP2Faction,
             state,
             ai: createBotFSMData(BotAIType.Hard),
             grenades: createGrenadeInventory(
@@ -1566,7 +1570,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
   useEffect(() => {
     const worldCfg = getWorldConfig(worldId);
     const effectiveP1Faction = playerFaction || BotFaction.Ninja;
-    const effectiveP2Faction = gameMode === 'local1v1' ? (playerFaction === BotFaction.Ninja ? BotFaction.Gymrat : BotFaction.Ninja) : botFaction;
+    const effectiveP2Faction = botFaction || BotFaction.Ninja;
 
     const arch = getBotArchetype(effectiveP2Faction);
     const pArch = getBotArchetype(effectiveP1Faction);
@@ -1629,12 +1633,10 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       idleUrl: pArch.spriteUrl || '/assets/sprites/player/ninja.png',
       hasWalkSheet: false,
     };
-    const botCfg = (gameMode === 'local1v1' || effectiveP2Faction === BotFaction.Ninja)
-      ? (CHARACTER_SPRITESHEETS[BotFaction.Ninja] || p1Cfg)
-      : (CHARACTER_SPRITESHEETS[effectiveP2Faction] || {
-          idleUrl: arch.spriteUrl || '/assets/sprites/bot/thug.png',
-          hasWalkSheet: false,
-        });
+    const botCfg = CHARACTER_SPRITESHEETS[effectiveP2Faction] || {
+      idleUrl: arch.spriteUrl || '/assets/sprites/bot/thug.png',
+      hasWalkSheet: false,
+    };
 
     let p1WalkSheet: HTMLImageElement | null = null;
     if (p1Cfg.hasWalkSheet && p1Cfg.walkSheetUrl) {
@@ -1742,29 +1744,61 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     }
 
     let botMeleeSheet: HTMLImageElement | null = null;
-    let botOneHandSheet: HTMLImageElement | null = null;
-    let botTwoHandSheet: HTMLImageElement | null = null;
-    let botPistolSheet: HTMLImageElement | null = null;
-    let botRifleSheet: HTMLImageElement | null = null;
-    let botThrowUpSheet: HTMLImageElement | null = null;
+    if (botCfg.hasMeleeSheet && botCfg.meleeSheetUrl) {
+      botMeleeSheet = new Image();
+      botMeleeSheet.src = botCfg.meleeSheetUrl;
+    } else if (effectiveP2Faction === BotFaction.Ninja) {
+      botMeleeSheet = new Image();
+      botMeleeSheet.src = '/assets/sprites/player/ninja_melee.png';
+    }
 
-    if (gameMode === 'local1v1' || effectiveP2Faction === BotFaction.Ninja) {
-      botWalkSheet = p1WalkSheet;
-      botRunSheet = p1RunSheet;
-      botRollSheet = p1RollSheet;
-      botJumpSheet = p1JumpSheet;
-      botMeleeSheet = p1MeleeSheet;
-      botOneHandSheet = p1OneHandSheet;
-      botTwoHandSheet = p1TwoHandSheet;
-      botPistolSheet = p1PistolSheet;
-      botRifleSheet = p1RifleSheet;
-      botThrowUpSheet = p1ThrowUpSheet;
+    let botOneHandSheet: HTMLImageElement | null = null;
+    if (botCfg.hasOneHandAttackSheet && botCfg.oneHandAttackSheetUrl) {
+      botOneHandSheet = new Image();
+      botOneHandSheet.src = botCfg.oneHandAttackSheetUrl;
+    } else if (effectiveP2Faction === BotFaction.Ninja) {
+      botOneHandSheet = new Image();
+      botOneHandSheet.src = '/assets/sprites/player/one_hand_attack.png';
+    }
+
+    let botTwoHandSheet: HTMLImageElement | null = null;
+    if (botCfg.hasTwoHandAttackSheet && botCfg.twoHandAttackSheetUrl) {
+      botTwoHandSheet = new Image();
+      botTwoHandSheet.src = botCfg.twoHandAttackSheetUrl;
+    } else if (effectiveP2Faction === BotFaction.Ninja) {
+      botTwoHandSheet = new Image();
+      botTwoHandSheet.src = '/assets/sprites/player/two_hand_attack.png';
+    }
+
+    let botPistolSheet: HTMLImageElement | null = null;
+    if (botCfg.hasPistolShootSheet && botCfg.pistolShootSheetUrl) {
+      botPistolSheet = new Image();
+      botPistolSheet.src = botCfg.pistolShootSheetUrl;
+    } else if (effectiveP2Faction === BotFaction.Ninja) {
+      botPistolSheet = new Image();
+      botPistolSheet.src = '/assets/sprites/player/pistol_shoot.png';
+    }
+
+    let botRifleSheet: HTMLImageElement | null = null;
+    if (botCfg.hasRifleShootSheet && botCfg.rifleShootSheetUrl) {
+      botRifleSheet = new Image();
+      botRifleSheet.src = botCfg.rifleShootSheetUrl;
+    } else if (effectiveP2Faction === BotFaction.Ninja) {
+      botRifleSheet = new Image();
+      botRifleSheet.src = '/assets/sprites/player/rifle_shoot.png';
+    }
+
+    let botThrowUpSheet: HTMLImageElement | null = null;
+    if (botCfg.hasThrowUpSheet && botCfg.throwUpSheetUrl) {
+      botThrowUpSheet = new Image();
+      botThrowUpSheet.src = botCfg.throwUpSheetUrl;
+    } else if (effectiveP2Faction === BotFaction.Ninja) {
+      botThrowUpSheet = new Image();
+      botThrowUpSheet.src = '/assets/sprites/player/throw_up.png';
     }
 
     const botIdleSprite = new Image();
-    botIdleSprite.src = (gameMode === 'local1v1' || effectiveP2Faction === BotFaction.Ninja)
-      ? (p1Cfg.idleUrl || '/assets/sprites/player/ninja.png')
-      : (botCfg.idleUrl || arch.spriteUrl || '/assets/sprites/bot/agent.png');
+    botIdleSprite.src = botCfg.idleUrl || arch.spriteUrl || '/assets/sprites/bot/agent.png';
 
     // Preload weapon sprites
     const weaponImages: Record<string, HTMLImageElement> = {};
@@ -1933,7 +1967,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     const s = stateRef.current;
     const worldCfg = s.worldConfig;
     const effectiveP1Faction = playerFaction || BotFaction.Ninja;
-    const effectiveP2Faction = gameMode === 'local1v1' ? (playerFaction === BotFaction.Ninja ? BotFaction.Gymrat : BotFaction.Ninja) : botFaction;
+    const effectiveP2Faction = botFaction || BotFaction.Ninja;
     const arch = getBotArchetype(effectiveP2Faction);
     const pArch = getBotArchetype(effectiveP1Faction);
 
@@ -1962,7 +1996,8 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     const p1Label = gameMode === 'local1v1' ? `${pArch.name.toUpperCase()} (J1)` : pArch.name.toUpperCase();
     const p2Label = gameMode === 'local1v1' ? `${arch.name.toUpperCase()} (J2)` : arch.name.toUpperCase();
 
-    s.p1 = createPlayerState(1, p1Label, false, spawnP1.x, spawnP1.y);
+    s.p1 = createPlayerState(1, p1Label, false, spawnP1.x, spawnP1.y, effectiveP1Faction);
+    s.p1.faction = effectiveP1Faction;
     s.p1.maxHealth = pArch.maxHealth;
     s.p1.health = pArch.maxHealth;
     s.p1.speedModifier = pArch.speedModifier;
@@ -2661,8 +2696,12 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         const p1Controls = is1v1 ? CONTROLS.LOCAL_1V1_P1 : CONTROLS.SOLO;
         const crouchHeld = isAnyPressed(keys, p1Controls.down);
 
-        const isNinjaComboLocked = !!p1.isSwordAttacking || !!p1.isMeleeComboAttacking || !!p1.isOneHandAttacking || !!p1.isTwoHandAttacking;
+        const isNinjaComboLocked = !!p1.isSwordAttacking || !!p1.isMeleeComboAttacking || !!p1.isOneHandAttacking || !!p1.isTwoHandAttacking || !!p1.isThrowing;
         const isShootingPistol = !!p1.isPistolShooting;
+
+        if (s.p1Controller) {
+          s.p1Controller.hasHeavyRifleEquipped = isRifleWeapon(p1.equippedWeapon);
+        }
 
         const p1Input: PlayerInput = {
           moveDir: isNinjaComboLocked ? 0 : moveDir,
@@ -2755,7 +2794,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
           s.p1Controller.update(1 / 60, p1Input, s.platforms);
 
-          if (p1.isMeleeComboAttacking || p1.isOneHandAttacking) {
+          if (p1.isMeleeComboAttacking || p1.isOneHandAttacking || p1.isTwoHandAttacking || p1.isSwordAttacking || p1.isThrowing) {
             s.p1Controller.vx = 0;
             p1.velocityX = 0;
             s.p1Controller.state = ControllerState.Idle;
@@ -2764,12 +2803,12 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
           p1.x = s.p1Controller.x;
           p1.y = s.p1Controller.y;
-          p1.velocityX = (p1.isMeleeComboAttacking || p1.isOneHandAttacking) ? 0 : s.p1Controller.vx;
+          p1.velocityX = (p1.isMeleeComboAttacking || p1.isOneHandAttacking || p1.isTwoHandAttacking || p1.isSwordAttacking || p1.isThrowing) ? 0 : s.p1Controller.vx;
           p1.velocityY = s.p1Controller.vy;
           p1.facingRight = s.p1Controller.facingRight;
           p1.onGround = s.p1Controller.isOnFloor;
 
-          const isGymratP1 = (playerFaction || BotFaction.Ninja) === BotFaction.Gymrat;
+          const isGymratP1 = p1.faction === BotFaction.Gymrat || (playerFaction || BotFaction.Ninja) === BotFaction.Gymrat || p1.name.toUpperCase().includes('GYMRAT');
           if (isGymratP1) {
             if (!p1.gymratPrevOnGround && p1.onGround) {
               p1.gymratLandingTicks = 6;
@@ -4029,7 +4068,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
               }
             }
 
-            if (p1.rifleAnimFrame >= 4) {
+            if ((p1.rifleAnimFrame ?? 0) >= 4) {
               // Ciclo continuo si mantiene disparo o golpe con arma automática (M60, Assault, TommyGun, SMG, Carbine, MP50)
               const isAuto =
                 p1.equippedWeapon === WeaponType.M60 ||
@@ -4768,16 +4807,16 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           const dropThrough = !!p2RawInput.dropThrough;
           const crouchHeld = isAnyPressed(keys, CONTROLS.LOCAL_1V1_P2.down);
 
-          const isNinjaComboLocked = !!bot.isSwordAttacking || !!bot.isMeleeComboAttacking || !!bot.isOneHandAttacking || !!bot.isTwoHandAttacking;
+          const isP2ComboLocked = !!bot.isSwordAttacking || !!bot.isMeleeComboAttacking || !!bot.isOneHandAttacking || !!bot.isTwoHandAttacking || !!bot.isThrowing;
           const isShootingPistol = !!bot.isPistolShooting;
 
           const p2Input: PlayerInput = {
-            moveDir: isNinjaComboLocked ? 0 : moveDir,
-            run: (isNinjaComboLocked || isShootingPistol) ? false : runHeld,
-            jump: isNinjaComboLocked ? false : jumpJustPressed,
-            jumpHeld: isNinjaComboLocked ? false : jumpHeld,
-            roll: isNinjaComboLocked ? false : rollPressed,
-            dropThrough: isNinjaComboLocked ? false : dropThrough,
+            moveDir: isP2ComboLocked ? 0 : moveDir,
+            run: (isP2ComboLocked || isShootingPistol) ? false : runHeld,
+            jump: isP2ComboLocked ? false : jumpJustPressed,
+            jumpHeld: isP2ComboLocked ? false : jumpHeld,
+            roll: isP2ComboLocked ? false : rollPressed,
+            dropThrough: isP2ComboLocked ? false : dropThrough,
           };
 
           // Recuperación activa de derribo para P2 (1v1) mediante teclas de movimiento (Flechas, salto, rodada, combate)
@@ -4859,14 +4898,22 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
             s.p2Controller.update(1 / 60, p2Input, s.platforms);
 
+            if (bot.isMeleeComboAttacking || bot.isOneHandAttacking || bot.isTwoHandAttacking || bot.isSwordAttacking || bot.isThrowing) {
+              s.p2Controller.vx = 0;
+              bot.velocityX = 0;
+              s.p2Controller.state = ControllerState.Idle;
+              bot.fsm = PlayerFSMState.MeleeAttack;
+            }
+
             bot.x = s.p2Controller.x;
             bot.y = s.p2Controller.y;
-            bot.velocityX = s.p2Controller.vx;
+            bot.velocityX = (bot.isMeleeComboAttacking || bot.isOneHandAttacking || bot.isTwoHandAttacking || bot.isSwordAttacking || bot.isThrowing) ? 0 : s.p2Controller.vx;
             bot.velocityY = s.p2Controller.vy;
             bot.facingRight = s.p2Controller.facingRight;
             bot.onGround = s.p2Controller.isOnFloor;
 
-            if (bot.name.toUpperCase().includes('GYMRAT')) {
+            const isGymratP2 = bot.faction === BotFaction.Gymrat || (botFaction || BotFaction.Ninja) === BotFaction.Gymrat || bot.name.toUpperCase().includes('GYMRAT');
+            if (isGymratP2) {
               if (!bot.gymratPrevOnGround && bot.onGround) {
                 bot.gymratLandingTicks = 6;
               }
@@ -5979,7 +6026,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                 }
               }
 
-              if (bot.rifleAnimFrame >= 4) {
+              if ((bot.rifleAnimFrame ?? 0) >= 4) {
                 const isAuto =
                   bot.equippedWeapon === WeaponType.M60 ||
                   bot.equippedWeapon === WeaponType.Assault ||
@@ -9127,18 +9174,31 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
           const currentF = p.throwAnimFrame || 0;
 
+          const isGymratThrow = (isP1 ? s.p1Faction : s.botFaction) === BotFaction.Gymrat || p.faction === BotFaction.Gymrat;
           if (currentF < 2 && !p.throwHasReleased) {
             const wImg = s.weaponImages[p.equippedWeapon] || s.weaponImages[WeaponType.Grenade];
             if (wImg && wImg.complete && wImg.naturalWidth > 0) {
               ctx.save();
-              if (currentF === 0) {
-                // Frame 0: mano recogida hacia atrás
-                ctx.translate(-14, -14);
-                ctx.rotate(-0.35);
-              } else if (currentF === 1) {
-                // Frame 1: mano levantada hacia arriba
-                ctx.translate(-6, -26);
-                ctx.rotate(-0.75);
+              if (isGymratThrow) {
+                if (currentF === 0) {
+                  // Frame 0: manos al pecho en guardia
+                  ctx.translate(12, -4);
+                  ctx.rotate(-0.1);
+                } else if (currentF === 1) {
+                  // Frame 1: mano levantada y cargada hacia atrás (windup)
+                  ctx.translate(-16, -26);
+                  ctx.rotate(-0.55);
+                }
+              } else {
+                if (currentF === 0) {
+                  // Frame 0: mano recogida hacia atrás
+                  ctx.translate(-14, -14);
+                  ctx.rotate(-0.35);
+                } else if (currentF === 1) {
+                  // Frame 1: mano levantada hacia arriba
+                  ctx.translate(-6, -26);
+                  ctx.rotate(-0.75);
+                }
               }
               ctx.drawImage(wImg, -8, -8, 16, 16);
               ctx.restore();

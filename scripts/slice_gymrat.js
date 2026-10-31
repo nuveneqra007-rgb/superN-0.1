@@ -1143,6 +1143,128 @@ function sliceGymratRifle() {
   console.log(`[RifleShoot] Generado: ${CW * 4}x${CH} (4 frames: apunte, disparo con fogonazo, retroceso, recuperación)`);
 }
 
+function sliceGymratThrowUp() {
+  const inputPath = path.resolve('public/assets/aistudio/image_b8733588.png');
+  if (!fs.existsSync(inputPath)) {
+    console.error('No se encontró el archivo de origen para throw up:', inputPath);
+    return;
+  }
+
+  const srcBuf = fs.readFileSync(inputPath);
+  const srcPng = PNG.sync.read(srcBuf);
+  const W = srcPng.width;
+  const H = srcPng.height;
+
+  const frames = [
+    { f: 0, inRegion: (x, y) => x <= 223 },
+    { f: 1, inRegion: (x, y) => x > 223 && x <= 418 },
+    { f: 2, inRegion: (x, y) => x > 418 && (y < 230 ? x <= 618 : x <= 586) },
+    { f: 3, inRegion: (x, y) => (y < 175 ? (x > 618 && x <= 860) : (y < 230 ? (x > 618 && x < 830) : (x > 586 && x < 830))) },
+    { f: 4, inRegion: (x, y) => (y < 175 ? x >= 865 : x >= 830) },
+  ];
+
+  const CW = 360;
+  const CH = 400;
+  const targetGroundY = CH - 15; // 385
+  const targetTorsoX = 160;
+  const groundY = 434;
+
+  const outPng = new PNG({ width: CW * 5, height: CH });
+  outPng.data.fill(0);
+
+  frames.forEach((frame) => {
+    const isChar = new Uint8Array(W * H);
+    const queue = [];
+
+    for (let y = 100; y <= 450; y++) {
+      for (let x = 0; x < W; x++) {
+        if (frame.inRegion(x, y)) {
+          const idx = (y * W + x) * 4;
+          const r = srcPng.data[idx], g = srcPng.data[idx + 1], b = srcPng.data[idx + 2];
+          if (r > 150 && g > 80 && (r - b) > 40) {
+            isChar[y * W + x] = 1;
+            queue.push([x, y]);
+          }
+        }
+      }
+    }
+
+    let head = 0;
+    while (head < queue.length) {
+      const [x, y] = queue[head++];
+      const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]];
+      for (const [dx, dy] of dirs) {
+        const nx = x + dx, ny = y + dy;
+        if (nx >= 0 && nx < W && ny >= 100 && ny <= 450 && frame.inRegion(nx, ny)) {
+          const npos = ny * W + nx;
+          if (!isChar[npos]) {
+            const idx = (ny * W + nx) * 4;
+            const r = srcPng.data[idx], g = srcPng.data[idx + 1], b = srcPng.data[idx + 2];
+            const maxC = Math.max(r, g, b);
+            const minC = Math.min(r, g, b);
+            const isChecker = (maxC - minC <= 14) && minC >= 65;
+            if (!isChecker) {
+              isChar[npos] = 1;
+              queue.push([nx, ny]);
+            }
+          }
+        }
+      }
+    }
+
+    let sumTorsoX = 0, torsoCount = 0;
+    for (let y = 140; y <= 300; y++) {
+      for (let x = 0; x < W; x++) {
+        if (isChar[y * W + x]) {
+          const idx = (y * W + x) * 4;
+          const r = srcPng.data[idx], g = srcPng.data[idx + 1], b = srcPng.data[idx + 2];
+          if (r > 180 && g > 100 && g < 160 && b < 100) {
+            sumTorsoX += x;
+            torsoCount++;
+          }
+        }
+      }
+    }
+    const torsoX = torsoCount > 0 ? (sumTorsoX / torsoCount) : 0;
+    const cellStartX = frame.f * CW;
+    const offsetX = Math.round(cellStartX + targetTorsoX - torsoX);
+    const offsetY = targetGroundY - groundY;
+
+    for (let y = 100; y <= 450; y++) {
+      for (let x = 0; x < W; x++) {
+        if (isChar[y * W + x]) {
+          const destX = offsetX + x;
+          const destY = offsetY + y;
+          if (destX >= cellStartX && destX < cellStartX + CW && destY >= 0 && destY < CH) {
+            const srcIdx = (y * W + x) * 4;
+            const destIdx = (destY * outPng.width + destX) * 4;
+            outPng.data[destIdx] = srcPng.data[srcIdx];
+            outPng.data[destIdx + 1] = srcPng.data[srcIdx + 1];
+            outPng.data[destIdx + 2] = srcPng.data[srcIdx + 2];
+            outPng.data[destIdx + 3] = 255;
+          }
+        }
+      }
+    }
+  });
+
+  const outBuf = PNG.sync.write(outPng);
+  const targets = [
+    'public/assets/sprites/player/gymrat_throw_up.png',
+    'assets/sprites/player/gymrat_throw_up.png',
+    'public/assets/characters/gymrat/throw_up.png',
+    'dist/assets/sprites/player/gymrat_throw_up.png',
+    'dist/assets/characters/gymrat/throw_up.png',
+  ];
+
+  for (const t of targets) {
+    const dir = path.dirname(t);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(t, outBuf);
+  }
+  console.log(`[ThrowUp] Generado: ${CW * 5}x${CH} (5 frames: guardia, windup, release, follow-through, recuperación)`);
+}
+
 sliceGymratWalk();
 sliceGymratRun();
 sliceGymratJump();
@@ -1152,8 +1274,9 @@ sliceGymratOneHand();
 sliceGymratPistol();
 sliceGymratTwoHand();
 sliceGymratRifle();
+sliceGymratThrowUp();
 
-export { sliceGymratWalk, sliceGymratRun, sliceGymratJump, sliceGymratRoll, sliceGymratMelee, sliceGymratOneHand, sliceGymratPistol, sliceGymratTwoHand, sliceGymratRifle };
+export { sliceGymratWalk, sliceGymratRun, sliceGymratJump, sliceGymratRoll, sliceGymratMelee, sliceGymratOneHand, sliceGymratPistol, sliceGymratTwoHand, sliceGymratRifle, sliceGymratThrowUp };
 
 
 

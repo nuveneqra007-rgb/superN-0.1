@@ -75,9 +75,9 @@ const PROTAGONISTS: ProtagonistVisual[] = [
   {
     id: 'santaclo',
     name: 'SANTA CLAUS',
-    tag: 'JUGABLE',
+    tag: 'PRÓXIMAMENTE',
     spriteUrl: '/assets/sprites/player/santaclo.png',
-    isPlayable: true,
+    isPlayable: false,
   },
 ];
 
@@ -102,6 +102,10 @@ export const MainMenu: React.FC<MainMenuProps> = ({
   // Protagonista visual seleccionado para P1 (Ninja, Gymrat, Santa Claus)
   const [protagonistIdx, setProtagonistIdx] = useState<number>(0);
   const currentProtagonist = PROTAGONISTS[protagonistIdx];
+
+  // Protagonista visual seleccionado para P2 en Duelo 1 vs 1 (Ninja, Gymrat, Santa Claus)
+  const [p2ProtagonistIdx, setP2ProtagonistIdx] = useState<number>(0);
+  const currentP2Protagonist = PROTAGONISTS[p2ProtagonistIdx];
 
   // Número de bots seleccionados (1–5)
   const [numBots, setNumBots] = useState<number>(1);
@@ -132,6 +136,11 @@ export const MainMenu: React.FC<MainMenuProps> = ({
   const cyclePlayerProtagonist = useCallback((delta: -1 | 1) => {
     sounds.playPickup();
     setProtagonistIdx((prev) => (prev + delta + PROTAGONISTS.length) % PROTAGONISTS.length);
+  }, []);
+
+  const cycleP2Protagonist = useCallback((delta: -1 | 1) => {
+    sounds.playPickup();
+    setP2ProtagonistIdx((prev) => (prev + delta + PROTAGONISTS.length) % PROTAGONISTS.length);
   }, []);
 
   // Navegar facción de un slot de bot
@@ -204,7 +213,6 @@ export const MainMenu: React.FC<MainMenuProps> = ({
     });
 
     const firstBotFaction = (resolvedSlots[0].faction as BotFaction) || selectedBotFaction;
-    onSelectBotFaction(firstBotFaction);
 
     const selectedP1Faction =
       currentProtagonist.id === 'gymrat'
@@ -213,10 +221,18 @@ export const MainMenu: React.FC<MainMenuProps> = ({
         ? BotFaction.Santa
         : BotFaction.Ninja;
 
+    const selectedP2Faction =
+      currentP2Protagonist.id === 'gymrat'
+        ? BotFaction.Gymrat
+        : currentP2Protagonist.id === 'santaclo'
+        ? BotFaction.Santa
+        : BotFaction.Ninja;
+
     onSelectPlayerFaction(selectedP1Faction);
 
     const effectiveP1 = selectedP1Faction;
-    const effectiveP2 = isLocal1v1 ? BotFaction.Ninja : firstBotFaction;
+    const effectiveP2 = isLocal1v1 ? selectedP2Faction : firstBotFaction;
+    onSelectBotFaction(effectiveP2);
 
     if (onStartFightWithConfig) {
       onStartFightWithConfig(effectiveP1, effectiveP2, chosenWorldId, finalRounds, resolvedSlots);
@@ -224,13 +240,31 @@ export const MainMenu: React.FC<MainMenuProps> = ({
       onSelectRounds(finalRounds);
       onGoToWorldSelect(effectiveP1, effectiveP2, finalRounds);
     }
-  }, [botSlots, numBots, selectedBotFaction, onSelectBotFaction, onSelectPlayerFaction, currentProtagonist, isLocal1v1, onStartFightWithConfig, onSelectRounds, onGoToWorldSelect]);
+  }, [
+    botSlots,
+    numBots,
+    selectedBotFaction,
+    onSelectBotFaction,
+    onSelectPlayerFaction,
+    currentProtagonist,
+    currentP2Protagonist,
+    isLocal1v1,
+    onStartFightWithConfig,
+    onSelectRounds,
+    onGoToWorldSelect,
+  ]);
 
-  // Confirmar y abrir pop-up de configuración de partida
+  const canStartMatch = currentProtagonist.isPlayable && (!isLocal1v1 || currentP2Protagonist.isPlayable);
+
+  // Confirmar y abrir pop-up de configuración de partida si ambos personajes son válidos
   const handleConfirm = useCallback(() => {
+    if (!currentProtagonist.isPlayable || (isLocal1v1 && !currentP2Protagonist.isPlayable)) {
+      sounds.playDryfire();
+      return;
+    }
     sounds.playPickup();
     setShowMatchSetup(true);
-  }, []);
+  }, [currentProtagonist.isPlayable, isLocal1v1, currentP2Protagonist.isPlayable]);
 
   // Control total por teclado estilo Arcade / Superfighters
   useEffect(() => {
@@ -259,25 +293,33 @@ export const MainMenu: React.FC<MainMenuProps> = ({
         if (focusedPanel === 'p1') {
           cyclePlayerProtagonist(-1);
         } else if (focusedPanel === 'com') {
-          cycleSlotFaction(focusedSlotIdx, -1);
+          if (isLocal1v1) {
+            cycleP2Protagonist(-1);
+          } else {
+            cycleSlotFaction(focusedSlotIdx, -1);
+          }
         } else if (focusedPanel === 'bots') {
           cycleNumBots(-1);
         } else if (focusedPanel === 'accept') {
-          setFocusedPanel('bots');
+          setFocusedPanel(isLocal1v1 ? 'com' : 'bots');
         }
       } else if (key === 'ArrowRight') {
         e.preventDefault();
         if (focusedPanel === 'p1') {
           cyclePlayerProtagonist(1);
         } else if (focusedPanel === 'com') {
-          cycleSlotFaction(focusedSlotIdx, 1);
+          if (isLocal1v1) {
+            cycleP2Protagonist(1);
+          } else {
+            cycleSlotFaction(focusedSlotIdx, 1);
+          }
         } else if (focusedPanel === 'bots') {
           cycleNumBots(1);
         }
       } else if (key === 'ArrowUp') {
         e.preventDefault();
         if (focusedPanel === 'accept') {
-          setFocusedPanel('bots');
+          setFocusedPanel(isLocal1v1 ? 'com' : 'bots');
         } else if (focusedPanel === 'bots') {
           setFocusedPanel('com');
         } else if (focusedPanel === 'com') {
@@ -288,7 +330,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
         if (focusedPanel === 'p1') {
           setFocusedPanel('com');
         } else if (focusedPanel === 'com') {
-          setFocusedPanel('bots');
+          setFocusedPanel(isLocal1v1 ? 'accept' : 'bots');
         } else if (focusedPanel === 'bots') {
           setFocusedPanel('accept');
         }
@@ -297,7 +339,18 @@ export const MainMenu: React.FC<MainMenuProps> = ({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [focusedPanel, focusedSlotIdx, cycleSlotFaction, cycleNumBots, cyclePlayerProtagonist, handleConfirm, onBackToLanding, showMatchSetup]);
+  }, [
+    focusedPanel,
+    focusedSlotIdx,
+    cycleSlotFaction,
+    cycleNumBots,
+    cyclePlayerProtagonist,
+    cycleP2Protagonist,
+    handleConfirm,
+    onBackToLanding,
+    showMatchSetup,
+    isLocal1v1,
+  ]);
 
   return (
     <div className="relative w-full h-full max-h-screen flex flex-col justify-between items-center bg-black text-white font-pixel overflow-hidden p-2 sm:p-3 select-none">
@@ -438,9 +491,20 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                     img.src = currentProtagonist.fallbackUrl;
                   }
                 }}
-                className="relative z-10 max-h-full max-w-full object-contain filter drop-shadow-[0_0_8px_rgba(239,68,68,0.7)] [image-rendering:pixelated] hover:scale-110 transition-transform"
+                className={`relative z-10 max-h-full max-w-full object-contain filter drop-shadow-[0_0_8px_rgba(239,68,68,0.7)] [image-rendering:pixelated] transition-transform ${
+                  currentProtagonist.isPlayable ? 'hover:scale-110' : 'grayscale opacity-60'
+                }`}
               />
-              <div className="absolute bottom-0 w-12 h-[2px] bg-red-500 shadow-[0_0_6px_#ef4444]" />
+              <div className={`absolute bottom-0 w-12 h-[2px] ${
+                currentProtagonist.isPlayable ? 'bg-red-500 shadow-[0_0_6px_#ef4444]' : 'bg-neutral-600'
+              }`} />
+              {!currentProtagonist.isPlayable && (
+                <div className="absolute inset-0 bg-black/60 backdrop-blur-[1px] flex flex-col items-center justify-center z-20">
+                  <span className="text-[8px] font-black tracking-widest text-red-400 bg-red-950/90 px-1 py-0.5 border border-red-500/80 uppercase">
+                    BLOQUEADO
+                  </span>
+                </div>
+              )}
             </div>
 
             <div className="flex items-center justify-between w-full px-1">
@@ -448,6 +512,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
+                  setFocusedPanel('p1');
                   cyclePlayerProtagonist(-1);
                 }}
                 className="text-xs text-neutral-400 hover:text-white px-1 font-bold cursor-pointer transition select-none active:scale-125"
@@ -455,13 +520,16 @@ export const MainMenu: React.FC<MainMenuProps> = ({
               >
                 ◀
               </button>
-              <div className="text-xs font-black tracking-wider text-yellow-300 uppercase truncate">
+              <div className={`text-xs font-black tracking-wider uppercase truncate ${
+                currentProtagonist.isPlayable ? 'text-yellow-300' : 'text-neutral-400'
+              }`}>
                 {currentProtagonist.name}
               </div>
               <button
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
+                  setFocusedPanel('p1');
                   cyclePlayerProtagonist(1);
                 }}
                 className="text-xs text-neutral-400 hover:text-white px-1 font-bold cursor-pointer transition select-none active:scale-125"
@@ -472,7 +540,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
             </div>
 
             <div className={`text-[9px] tracking-wider uppercase font-bold mt-0.5 ${
-              currentProtagonist.isPlayable ? 'text-emerald-400' : 'text-amber-400/90'
+              currentProtagonist.isPlayable ? 'text-emerald-400' : 'text-red-400'
             }`}>
               {currentProtagonist.tag}
             </div>
@@ -490,21 +558,80 @@ export const MainMenu: React.FC<MainMenuProps> = ({
                 <span className="text-[9px] text-yellow-300 font-bold">[ P2 ]</span>
               </div>
 
-              <div className="relative w-24 h-24 my-1.5 rounded border border-white/80 bg-black/80 flex items-center justify-center p-1.5 shadow-inner">
-                <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(56,189,248,0.3)_0%,transparent_75%)]" />
+              <div className="relative w-24 h-24 my-1.5 rounded border border-white/80 bg-black/80 flex items-center justify-center p-1.5 shadow-inner overflow-hidden">
+                <div className={`absolute inset-0 ${
+                  currentP2Protagonist.isPlayable
+                    ? 'bg-[radial-gradient(circle_at_center,rgba(56,189,248,0.35)_0%,transparent_75%)]'
+                    : 'bg-[radial-gradient(circle_at_center,rgba(239,68,68,0.35)_0%,transparent_75%)]'
+                }`} />
                 <img
-                  src="/assets/sprites/player/ninja.png"
-                  alt="Ninja J2"
-                  className="relative z-10 max-h-full max-w-full object-contain filter drop-shadow-[0_0_8px_rgba(56,189,248,0.7)] [image-rendering:pixelated]"
+                  src={currentP2Protagonist.spriteUrl}
+                  alt={currentP2Protagonist.name}
+                  onError={(e) => {
+                    const img = e.currentTarget;
+                    if (!img.dataset.failedOnce) {
+                      img.dataset.failedOnce = '1';
+                      if (currentP2Protagonist.id === 'gymrat') {
+                        img.src = '/assets/sprites/player/Gymrat.png';
+                        return;
+                      }
+                    }
+                    if (currentP2Protagonist.fallbackUrl && img.src !== currentP2Protagonist.fallbackUrl) {
+                      img.src = currentP2Protagonist.fallbackUrl;
+                    }
+                  }}
+                  className={`relative z-10 max-h-full max-w-full object-contain filter drop-shadow-[0_0_8px_rgba(56,189,248,0.7)] [image-rendering:pixelated] transition-transform ${
+                    currentP2Protagonist.isPlayable ? 'hover:scale-110' : 'grayscale opacity-60'
+                  }`}
                 />
-                <div className="absolute bottom-0 w-12 h-[2px] bg-cyan-400 shadow-[0_0_6px_#38bdf8]" />
+                <div className={`absolute bottom-0 w-12 h-[2px] ${
+                  currentP2Protagonist.isPlayable ? 'bg-cyan-400 shadow-[0_0_6px_#38bdf8]' : 'bg-neutral-600'
+                }`} />
+                {!currentP2Protagonist.isPlayable && (
+                  <div className="absolute inset-0 bg-black/60 backdrop-blur-[1px] flex flex-col items-center justify-center z-20">
+                    <span className="text-[8px] font-black tracking-widest text-red-400 bg-red-950/90 px-1 py-0.5 border border-red-500/80 uppercase">
+                      BLOQUEADO
+                    </span>
+                  </div>
+                )}
               </div>
 
-              <div className="text-xs font-black tracking-wider text-yellow-300 uppercase">
-                NINJA (P2)
+              <div className="flex items-center justify-between w-full px-1">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setFocusedPanel('com');
+                    cycleP2Protagonist(-1);
+                  }}
+                  className="text-xs text-neutral-400 hover:text-white px-1 font-bold cursor-pointer transition select-none active:scale-125"
+                  title="Personaje anterior J2"
+                >
+                  ◀
+                </button>
+                <div className={`text-xs font-black tracking-wider uppercase truncate ${
+                  currentP2Protagonist.isPlayable ? 'text-yellow-300' : 'text-neutral-400'
+                }`}>
+                  {currentP2Protagonist.name}
+                </div>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setFocusedPanel('com');
+                    cycleP2Protagonist(1);
+                  }}
+                  className="text-xs text-neutral-400 hover:text-white px-1 font-bold cursor-pointer transition select-none active:scale-125"
+                  title="Siguiente personaje J2"
+                >
+                  ▶
+                </button>
               </div>
-              <div className="text-[9px] text-neutral-400 tracking-wider uppercase font-bold mt-0.5">
-                DUELO LOCAL
+
+              <div className={`text-[9px] tracking-wider uppercase font-bold mt-0.5 ${
+                currentP2Protagonist.isPlayable ? 'text-emerald-400' : 'text-red-400'
+              }`}>
+                {currentP2Protagonist.tag}
               </div>
             </div>
           )}
@@ -687,13 +814,20 @@ export const MainMenu: React.FC<MainMenuProps> = ({
         <button
           onClick={handleConfirm}
           onMouseEnter={() => setFocusedPanel('accept')}
-          className={`px-6 py-2 bg-black/80 backdrop-blur-sm border-2 text-xs sm:text-sm font-black tracking-[0.2em] transition uppercase cursor-pointer shadow-lg active:scale-95 ${
-            focusedPanel === 'accept'
-              ? 'border-yellow-400 text-yellow-300 bg-neutral-900/90 shadow-[0_0_16px_rgba(250,204,21,0.5)] scale-105'
-              : 'border-white text-white hover:border-yellow-400 hover:text-yellow-300'
+          disabled={!canStartMatch}
+          className={`px-6 py-2 bg-black/80 backdrop-blur-sm border-2 text-xs sm:text-sm font-black tracking-[0.2em] transition uppercase shadow-lg ${
+            !canStartMatch
+              ? 'border-neutral-700 text-neutral-500 bg-neutral-900/40 cursor-not-allowed opacity-60'
+              : focusedPanel === 'accept'
+              ? 'border-yellow-400 text-yellow-300 bg-neutral-900/90 shadow-[0_0_16px_rgba(250,204,21,0.5)] scale-105 cursor-pointer active:scale-95'
+              : 'border-white text-white hover:border-yellow-400 hover:text-yellow-300 cursor-pointer active:scale-95'
           }`}
         >
-          <span>[ SPACE ] ACCEPT : SELECT STAGE ➔</span>
+          <span>
+            {!canStartMatch
+              ? '[ BLOQUEADO ] SELECCIONA UN PERSONAJE JUGABLE'
+              : '[ SPACE ] ACCEPT : SELECT STAGE ➔'}
+          </span>
         </button>
       </main>
 

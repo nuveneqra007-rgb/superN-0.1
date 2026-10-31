@@ -375,6 +375,10 @@ class SoundEngine {
     osc.stop(t + 0.06);
   }
 
+  public playDryfire() {
+    this.playDryFire();
+  }
+
   public playExplosion() {
     if (this.isMuted) return;
     this.initContext();

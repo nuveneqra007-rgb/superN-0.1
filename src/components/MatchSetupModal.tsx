@@ -31,8 +31,6 @@ const MAP_OPTIONS: MapOption[] = [
   { id: 'toxico', name: 'LAB TOXICO', previewUrl: '/assets/aistudio/image_6f961c12.png' },
   { id: 'foso', name: 'FOSO БОЙ', previewUrl: '/assets/aistudio/image_3d8d2fc4.png' },
   { id: 'azotea', name: 'AZOTEA HOTEL', previewUrl: '/assets/aistudio/image_e12875f3.png' },
-  { id: 'desert', name: 'DESIERTO', previewUrl: '/assets/aistudio/image_5f144f67.png' },
-  { id: 'industrial', name: 'ZONA INDUSTRIAL', previewUrl: '/assets/aistudio/image_1d4241a8.png' },
 ];
 
 const GAME_MODE_OPTIONS: GameModeOption[] = [

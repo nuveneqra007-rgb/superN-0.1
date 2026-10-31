@@ -19,7 +19,7 @@ interface WorldSelectScreenProps {
 }
 
 interface WorldThumbnailProps {
-  worldId: string;
+  worldId?: string;
   previewUrl: string;
   alt: string;
   isSelected: boolean;
@@ -27,87 +27,20 @@ interface WorldThumbnailProps {
 }
 
 const WorldThumbnail: React.FC<WorldThumbnailProps> = ({
-  worldId,
   previewUrl,
   alt,
   isSelected,
   subtitle,
 }) => {
-  const [croppedUrl, setCroppedUrl] = React.useState<string | null>(null);
-
-  React.useEffect(() => {
-    // Si no requiere recorte (Arena Clásica o las 6 nuevas arenas de combate), usamos la imagen directa
-    if (worldId !== 'desert' && worldId !== 'industrial') {
-      setCroppedUrl(previewUrl);
-      return;
-    }
-
-    // Desierto: recortar 33% superior para eliminar "FREE DESERT PLATFORMER TILESET"
-    // Zona Industrial: recortar 31% superior para eliminar "INDUSTRIAL ZONE"
-    const cropTopPercent = worldId === 'desert' ? 0.33 : 0.31;
-
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.src = previewUrl;
-    img.onload = () => {
-      try {
-        const canvas = document.createElement('canvas');
-        const targetWidth = 640;
-        const targetHeight = 360; // Proporción exacta 16:9
-        canvas.width = targetWidth;
-        canvas.height = targetHeight;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          setCroppedUrl(previewUrl);
-          return;
-        }
-
-        const sy = img.naturalHeight * cropTopPercent;
-        const sh = img.naturalHeight * (1 - cropTopPercent);
-        const sw = img.naturalWidth;
-        const sx = 0;
-
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(img, sx, sy, sw, sh, 0, 0, targetWidth, targetHeight);
-        setCroppedUrl(canvas.toDataURL('image/png'));
-      } catch {
-        setCroppedUrl(previewUrl);
-      }
-    };
-    img.onerror = () => {
-      setCroppedUrl(previewUrl);
-    };
-  }, [worldId, previewUrl]);
-
   return (
     <div className="relative w-full aspect-video rounded-xl overflow-hidden border border-neutral-800 bg-black mb-3.5 shadow-inner">
-      {croppedUrl ? (
-        <img
-          src={croppedUrl}
-          alt={alt}
-          className={`w-full h-full object-cover transition-transform duration-500 ${
-            isSelected ? 'scale-105' : 'group-hover:scale-102 opacity-85 group-hover:opacity-100'
-          }`}
-        />
-      ) : (
-        <div className="w-full h-full overflow-hidden bg-neutral-900 flex items-end">
-          <img
-            src={previewUrl}
-            alt={alt}
-            style={
-              worldId === 'desert'
-                ? { transform: 'scale(1.5) translateY(18%)', transformOrigin: 'center bottom' }
-                : worldId === 'industrial'
-                ? { transform: 'scale(1.45) translateY(16%)', transformOrigin: 'center bottom' }
-                : undefined
-            }
-            className={`w-full h-full object-cover object-bottom transition-transform duration-500 ${
-              isSelected ? 'scale-105' : 'group-hover:scale-102 opacity-85 group-hover:opacity-100'
-            }`}
-          />
-        </div>
-      )}
+      <img
+        src={previewUrl}
+        alt={alt}
+        className={`w-full h-full object-cover transition-transform duration-500 ${
+          isSelected ? 'scale-105' : 'group-hover:scale-102 opacity-85 group-hover:opacity-100'
+        }`}
+      />
       <div className="absolute inset-0 bg-gradient-to-t from-neutral-950/80 via-transparent to-transparent pointer-events-none" />
       <span className="absolute bottom-2 left-2 text-[10px] font-mono-code font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-neutral-950/90 border border-neutral-700/80 text-cyan-300 pointer-events-none">
         {subtitle}
@@ -140,10 +73,16 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
 
   const getWorldIcon = (id: string) => {
     switch (id) {
-      case 'desert':
-        return <Box className="w-4 h-4 text-amber-400 shrink-0" />;
-      case 'industrial':
+      case 'fundicion':
         return <Flame className="w-4 h-4 text-orange-400 shrink-0" />;
+      case 'toxico':
+        return <ShieldAlert className="w-4 h-4 text-emerald-400 shrink-0" />;
+      case 'puerto':
+      case 'foso':
+        return <Box className="w-4 h-4 text-amber-400 shrink-0" />;
+      case 'cyberpunk':
+      case 'azotea':
+        return <Cog className="w-4 h-4 text-cyan-400 shrink-0" />;
       default:
         return <Sparkles className="w-4 h-4 text-cyan-400 shrink-0" />;
     }
@@ -263,7 +202,7 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
         <span className="text-[11px] font-mono-code text-neutral-500 mt-2">
           {selectedWorldId
             ? `Listo para combatir en: ${selectedWorld?.name}`
-            : 'Selecciona uno de los 3 mundos arriba para continuar'}
+            : 'Selecciona un escenario arriba para continuar'}
         </span>
       </div>
     </div>

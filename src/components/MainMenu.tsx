@@ -259,7 +259,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
   // Confirmar y abrir pop-up de configuración de partida si ambos personajes son válidos
   const handleConfirm = useCallback(() => {
     if (!currentProtagonist.isPlayable || (isLocal1v1 && !currentP2Protagonist.isPlayable)) {
-      sounds.playDryfire();
+      sounds.playDryFire();
       return;
     }
     sounds.playPickup();

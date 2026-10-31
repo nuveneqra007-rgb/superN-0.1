@@ -67,17 +67,17 @@ const PROTAGONISTS: ProtagonistVisual[] = [
   {
     id: 'gymrat',
     name: 'GYMRAT',
-    tag: 'PRÓXIMAMENTE',
+    tag: 'JUGABLE',
     spriteUrl: '/assets/sprites/player/gymrat.png',
     fallbackUrl: GYMRAT_SPRITE_BASE64,
-    isPlayable: false,
+    isPlayable: true,
   },
   {
     id: 'santaclo',
     name: 'SANTA CLAUS',
-    tag: 'PRÓXIMAMENTE',
+    tag: 'JUGABLE',
     spriteUrl: '/assets/sprites/player/santaclo.png',
-    isPlayable: false,
+    isPlayable: true,
   },
 ];
 
@@ -206,7 +206,16 @@ export const MainMenu: React.FC<MainMenuProps> = ({
     const firstBotFaction = (resolvedSlots[0].faction as BotFaction) || selectedBotFaction;
     onSelectBotFaction(firstBotFaction);
 
-    const effectiveP1 = BotFaction.Ninja;
+    const selectedP1Faction =
+      currentProtagonist.id === 'gymrat'
+        ? BotFaction.Gymrat
+        : currentProtagonist.id === 'santaclo'
+        ? BotFaction.Santa
+        : BotFaction.Ninja;
+
+    onSelectPlayerFaction(selectedP1Faction);
+
+    const effectiveP1 = selectedP1Faction;
     const effectiveP2 = isLocal1v1 ? BotFaction.Ninja : firstBotFaction;
 
     if (onStartFightWithConfig) {
@@ -215,7 +224,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
       onSelectRounds(finalRounds);
       onGoToWorldSelect(effectiveP1, effectiveP2, finalRounds);
     }
-  }, [botSlots, numBots, selectedBotFaction, onSelectBotFaction, isLocal1v1, onStartFightWithConfig, onSelectRounds, onGoToWorldSelect]);
+  }, [botSlots, numBots, selectedBotFaction, onSelectBotFaction, onSelectPlayerFaction, currentProtagonist, isLocal1v1, onStartFightWithConfig, onSelectRounds, onGoToWorldSelect]);
 
   // Confirmar y abrir pop-up de configuración de partida
   const handleConfirm = useCallback(() => {

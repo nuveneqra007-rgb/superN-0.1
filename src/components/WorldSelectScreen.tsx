@@ -36,8 +36,8 @@ const WorldThumbnail: React.FC<WorldThumbnailProps> = ({
   const [croppedUrl, setCroppedUrl] = React.useState<string | null>(null);
 
   React.useEffect(() => {
-    // Si no requiere recorte (Arena Clásica), usamos la imagen directa
-    if (worldId === 'classic') {
+    // Si no requiere recorte (Arena Clásica o las 6 nuevas arenas de combate), usamos la imagen directa
+    if (worldId !== 'desert' && worldId !== 'industrial') {
       setCroppedUrl(previewUrl);
       return;
     }

@@ -175,14 +175,19 @@
 
 ### LOTE 6: Assets y Recursos
 
-* **Sprites:**
-  - Ninja: spritesheets individuales en `/public/assets/sprites/player/` (`ninja_walk.png`, `ninja_run.png`, `ninja_jump.png`, `ninja_roll.png`, `one_hand_attack.png`, `two_hand_attack.png`, `throw_up.png`).
-  - Bots: spritesheets individuales en `/public/assets/sprites/bot/` (`agent.png`, `assassin.png`, `berserker.png`, `biker.png`, `tank.png`, `thug.png`, etc.).
+* **Sprites de Personajes Jugables (NUEVO - Catálogo Completo):**
+  - **Ninja:** Spritesheets individuales en `/public/assets/sprites/player/` (`ninja_walk.png`, `ninja_run.png`, `ninja_jump.png`, `ninja_roll.png`, `one_hand_attack.png`, `two_hand_attack.png`, `throw_up.png`).
+  - **Gymrat (9 hojas de animación suministradas):** Walk (`image_effc215b.png`), Run (`image_d9b6c0f7.png`), Jump/Fall (`image_eaab78e9.png`), Roll/Dodge (`image_e759561c.png`), Melee Combo (`image_2e9f4148.png`), Punch directo (`image_2a1be181.png`), Uppercut (`image_b8733588.png`), Smash a dos manos (`image_83b492a7.png`), Disparo pistola/rifle (`image_398d54e5.png` / `image_bd904280.png`).
+  - **Santa Claus (11 hojas de animación suministradas):** Walk (`image_5715b30b.png`), Run (`image_a14e1ec4.png`), Jump/Fall (`image_d0f432a9.png`), Roll/Dodge (`image_f93f6e95.png`), Melee Punch+Kick (`image_9dd6ac40.png`), Hook Gancho (`image_586ddefc.png`), Smash con saco (`image_3dfbebce.png`), Disparo pistola (`image_c5cac62a.png`), Disparo escopeta/rifle (`image_1a71215a.png`), Lanzamiento granada (`image_2089daed.png`).
+* **Arenas y Escenarios Auténticos (6 mapas suministrados):**
+  - M1: Puerto Maldito (`image_26e47cf6.png` - 720×360)
+  - M2: Fundición Siderúrgica (`image_57664f22.png` - 1359×700)
+  - M3: Metro Neón / Cyberpunk (`image_43c2b272.png` - 1365×707)
+  - M4: Laboratorio Tóxico (`image_6f961c12.png` - 1364×702)
+  - M5: Foso Clandestino "БОЙ!" (`image_3d8d2fc4.png` - 1365×706)
+  - M6: Azotea Hotel Noir (`image_e12875f3.png` - 1359×699)
+* **Bots:** Spritesheets individuales en `/public/assets/sprites/bot/` (`agent.png`, `assassin.png`, `berserker.png`, `biker.png`, `tank.png`, `thug.png`, etc.).
 * **Armas:** 35+ iconos de armas en formato PNG en `/public/assets/weapons/`.
-* **Archivos residuales temporales en `/public/assets/aistudio/`:**
-  - Existen capturas y adjuntos subidos en turnos previos (`Captura_desde_...png`, `image_...png`, `Gemini_Generated_Image_...jpeg`).
-* **Archivos duplicados en raíz de `/public/`:**
-  - `public/Agent_2.png` y `public/Assassin_2.png` son copias redundantes de los archivos que ya existen en `/public/assets/sprites/bot/`.
 
 ---
 

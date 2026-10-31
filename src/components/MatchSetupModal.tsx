@@ -25,6 +25,12 @@ export interface MapOption {
 const MAP_OPTIONS: MapOption[] = [
   { id: 'RANDOM', name: 'RANDOM' },
   { id: 'classic', name: 'ARENA CLASICA', previewUrl: '/assets/backgrounds/warehouse.jpg' },
+  { id: 'puerto', name: 'PUERTO MALDITO', previewUrl: '/assets/aistudio/image_26e47cf6.png' },
+  { id: 'fundicion', name: 'FUNDICION ROJA', previewUrl: '/assets/aistudio/image_57664f22.png' },
+  { id: 'cyberpunk', name: 'METRO NEON', previewUrl: '/assets/aistudio/image_43c2b272.png' },
+  { id: 'toxico', name: 'LAB TOXICO', previewUrl: '/assets/aistudio/image_6f961c12.png' },
+  { id: 'foso', name: 'FOSO БОЙ', previewUrl: '/assets/aistudio/image_3d8d2fc4.png' },
+  { id: 'azotea', name: 'AZOTEA HOTEL', previewUrl: '/assets/aistudio/image_e12875f3.png' },
   { id: 'desert', name: 'DESIERTO', previewUrl: '/assets/aistudio/image_5f144f67.png' },
   { id: 'industrial', name: 'ZONA INDUSTRIAL', previewUrl: '/assets/aistudio/image_1d4241a8.png' },
 ];

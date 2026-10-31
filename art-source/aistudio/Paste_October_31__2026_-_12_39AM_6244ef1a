@@ -1,0 +1,499 @@
+# superN — Plan: 2 protagonistas nuevos, mapas nuevos, fondo y detalles de UI
+
+**Fecha:** 2026-10-30 · Basado en el código del zip más reciente y en las capturas que enviaste.
+Marcas: ✅ verificado en el código · 🔶 propuesta mía (decides tú) · ❓ hay que probarlo jugando.
+
+---
+
+## 0. Estado actual del código (zip del 30-oct)
+
+**Resumen:** desde el plan anterior solo cambió la **capa de pantallas** (portada, selección de modo y de protagonista, `index.css`) y entraron los idles de GymRat y Santa Clo. **El motor no cambió:** `ArenaCanvas.tsx` sigue en 9,463 líneas y GymRat y Santa Clo **no existen en él** (cero referencias en `ArenaCanvas.tsx` ni en `game/*.ts`). Compila sin errores (`tsc` y build; bundle de 561 KB, antes 536 KB por las escenas SVG).
+
+| Área | Estado | Detalle |
+|---|---|---|
+| Portada (`LandingScreen.tsx`) | ✅ hecho | Fondo "Urban Noir": degradado radial, ciudad en 3 capas con parallax (SVG), líneas de escaneo, viñeta, niebla, logo de neón con parpadeo y vitrina con Ninja, GymRat y Santa Clo |
+| Selección de modo (`ModeSelectScreen.tsx`) | ✅ hecho | Columna de opciones con submenús, escena de puerto dibujada en SVG, modales de tutorial y configuración que leen `CONTROLS_TEXT` (fuente única de controles ✅) |
+| Selector de protagonista (`MainMenu.tsx`) | ⚠️ solo visual | La tarjeta P1 cambia entre Ninja, GymRat y Santa con ◄ ►, pero **el elegido no llega al motor**: `const effectiveP1 = BotFaction.Ninja` (`MainMenu.tsx:209`) y otra vez en `ArenaCanvas.tsx:1457`. GymRat y Santa llevan la etiqueta "PRÓXIMAMENTE" (`isPlayable: false`) pero **no se impide confirmar**: eliges GymRat, empiezas y juegas con el Ninja sin aviso |
+| Opciones del menú sin función | ⚠️ | "MODO PRÁCTICA" ejecuta lo mismo que "DUELO VS BOT" (`startSolo`) y "COOPERATIVO" lo mismo que "1 VS 1 LOCAL" (`startVersus`): prometen algo que el motor no tiene |
+| Datos duplicados | ⚠️ | La lista de protagonistas está escrita **dos veces** (`LandingScreen.tsx`, `MainMenu.tsx`) y el fondo de ciudad en SVG también (en las tres pantallas) |
+| Idles de GymRat y Santa | ✅ | 69×75, RGBA con transparencia real |
+| Archivos de GymRat | ⚠️ | Tres variantes de mayúsculas en `sprites/player/` (`GymRat.png`, `Gymrat.png`, `gymrat.png`) y dos en `sprites/bot/` (`Gymrat.png`, `gymrat.png`); el código usa dos de ellas (`gymrat.png` y `Gymrat.png`, `LandingScreen.tsx:621`) y hay una copia en base64 (~1.3 KB) en dos archivos "como respaldo". En Windows y macOS esas variantes chocan; en Vercel (Linux) son archivos distintos y lo que carga depende de las mayúsculas de cada referencia |
+| Archivos crudos | ⚠️ | `public/assets/aistudio/` suma `image_2d0f1445.png` e `image_63b972b9.png` (los idles originales), que se publican |
+| Nombres de hojas del Ninja | ⚠️ | En `sprites/player/` casi todo lleva prefijo (`ninja_walk.png`, `ninja_run.png`…), pero `idle.png`, `one_hand_attack.png`, `two_hand_attack.png`, `pistol_shoot.png`, `rifle_shoot.png` y `throw_up.png` **no**: si GymRat y Santa guardan hojas con esos nombres en la misma carpeta, **chocan con las del Ninja** |
+| Fase 0 anterior | sin cambios | Lote 10 por probar, hueco del `pendingTimer`, textos pequeños, `.gitignore` de Godot |
+
+**Qué cambia en el plan:**
+1. Aparece una **fase 0b de limpieza de lo nuevo** (sección 3.0).
+2. El selector de protagonista (3.2) pasa de "crearlo" a "**conectarlo al motor y bloquear lo no jugable**".
+3. El fondo (sección 7) pasa de "crearlo" a "**compartirlo**": ya existe, pero duplicado en tres pantallas.
+4. Las carpetas de personajes deben ser **una por personaje**, para no chocar con los nombres del Ninja.
+5. Las secciones 5B y 5C (integración de GymRat y Santa Clo) **siguen vigentes sin cambios**, porque el motor es el mismo.
+
+---
+
+## 1. Veredicto
+
+**El orden que propones es correcto:** primero cerrar bugs y UX, después preparar la base, y solo entonces meter contenido. Meter personajes y mapas ahora sobre un motor con bugs te obligaría a corregir cada bug 3 veces (una por personaje) o 7 veces (una por mapa).
+
+**Lo bueno:** tu código ya está más cerca de lo que crees.
+- `CHARACTER_SPRITESHEETS` (`ArenaCanvas.tsx:270`) ya define las animaciones de cada personaje por datos (columnas, filas y fotogramas por hoja).
+- `WorldConfig` (`game/WorldData.ts`) ya define cada mapa por datos: plataformas, spawns, armas, peligros y capas de fondo.
+
+**Lo que bloquea hoy:**
+1. **El protagonista está fijo en el Ninja.** `const effectiveP1Faction = BotFaction.Ninja` en `:1457` y `:1819`, en `MainMenu.tsx:209-210` (y J2 en 1v1 también), más cinco `else if (effectiveP1Faction === BotFaction.Ninja)` que solo cargan las hojas completas para el Ninja (`:1554-1599`). La pantalla para elegir protagonista existe, pero es solo visual (sección 0).
+2. **Los mapas tienen cosas "a mano" para 3 mundos:** el fondo se carga solo si `worldCfg.id === 'classic'` (`:1511`), los tipos de capa y los props (cactus, chimeneas…) están escritos para los 3 mundos actuales, y cada mapa define solo 2 puntos de aparición (jugador y un bot), aunque ahora hay hasta 6 luchadores.
+3. **Cada personaje necesita muchas hojas de animación** (ver sección 4): ~67 fotogramas más el idle. Es mucho trabajo de pixel art, así que conviene que el motor permita integrar **de forma incremental** (primero el idle, luego caminar, etc.).
+
+**Un aviso importante sobre los mapas (originalidad):** por el HUD (círculos numerados 1–5, barra de vida roja y de energía blanca), el contador de fps y el nombre del jugador sobre el personaje, las capturas 3 a 8 parecen de **Superfighters Deluxe** o de mapas de su comunidad. Usarlas como fondos o recrear su arte tal cual sería copiar material de otros (y las capturas traen el HUD y personajes dentro). Como **referencia** de ambiente, composición y distribución de plataformas son perfectas; el arte, los tiles y los fondos tienen que ser tuyos. Lo mismo vale para los sprites de GymRat y Santa Clo: dices que los vas a crear tú, y eso es lo correcto. En la sección 6 propongo una reinterpretación original de cada mapa.
+
+**Los dos mapas que quieres eliminar (Desierto y Zona Industrial):** tiene sentido, no encajan con el aire de Superfighters. Una advertencia práctica: **no borres el código de los peligros** (cajas destructibles, barriles explosivos, cinta, prensa hidráulica): son mecánicas muy propias del género y pueden usarse en los mapas nuevos. Se elimina solo la configuración de esos dos mundos, y **después** de que existan los nuevos.
+
+---
+
+## 2. Orden de trabajo
+
+| Fase | Qué | Quién |
+|---|---|---|
+| **0** | Cerrar bugs y UX pendientes, y limpiar lo nuevo (3.0) | tú + IA |
+| **1** | Preparar la base: personajes por datos, selector de protagonista, mundos por datos, herramientas de depuración | IA |
+| **2** | Crear los sprites de GymRat y Santa Clo | **tú** |
+| **3** | Integrar personajes (uno por vez, animación por animación) | IA |
+| **4** | Fondo y detalles de UI (portada, modo y protagonista ya hechos; falta compartirlo y cubrir mundo y arena) | IA |
+| **5** | Mapas nuevos, uno por vez; al final, quitar Desierto y Zona Industrial | tú (arte) + IA |
+
+Las fases 1 y 4 pueden ir en paralelo con la 2 (mientras haces arte, la IA prepara la base).
+
+### Fase 0 — Qué falta cerrar antes de empezar
+- Probar el lote 10 jugando (cadáveres, bots pelean desde el inicio, orientación, nametags).
+- Hueco del `pendingTimer` en `BotFSM.ts`.
+- Textos pequeños (28 usos de `text-[8px]` y `text-[9px]`) e idioma único; acentos.
+- Higiene del repo: `.gitignore` de Godot, `dist/` y `node_modules/` dentro del zip, duplicados en la raíz.
+- Medir rendimiento con 5 bots a 60 y 144 Hz.
+- **Limpieza de lo nuevo (3.0):** archivos de GymRat duplicados, base64 y crudos, bloqueo del protagonista no jugable, opciones del menú sin función, listas duplicadas.
+
+---
+
+## 3. Fase 1 — Preparar la base (para integrar "sin errores")
+
+Cada paso mantiene el juego **idéntico** con el Ninja. La prueba de éxito es que nadie note nada.
+
+### 3.0 Fase 0b — Limpieza de lo nuevo (antes de integrar nada)
+
+Son cambios pequeños y sin riesgo para el motor. Evitan que la base nueva herede los mismos problemas que arreglamos con los bots ("la UI promete algo que el juego no hace").
+
+| # | Qué | Por qué |
+|---|---|---|
+| L-1 | **Bloquear la confirmación si el protagonista elegido no es jugable** (sonido de error, sacudida de la tarjeta y mensaje "PRÓXIMAMENTE"), o que ◄ ► se salte a los no jugables mientras no existan | Hoy eliges GymRat y juegas con el Ninja sin aviso |
+| L-2 | **Opciones sin función:** "MODO PRÁCTICA" y "COOPERATIVO" aparecen atenuadas con "PRÓXIMAMENTE" (o se quitan) hasta que existan. Práctica ya existe como "bot quieto" en el menú de pausa: se puede enlazar | Prometen lo que el motor no tiene |
+| L-3 | **Una sola lista de personajes** (`game/CharacterData.ts`, con `id`, nombre, etiqueta, color y retrato) que usan la portada, el selector y el motor; borrar las dos copias locales | Hoy está escrita dos veces y se desincronizará |
+| L-4 | **Un solo archivo por sprite y en minúsculas:** conservar `characters/gymrat/idle.png` y `characters/santaclo/idle.png`; borrar `GymRat.png`, `Gymrat.png` y las copias de `sprites/bot/`; actualizar las referencias (`LandingScreen.tsx:621` y el resto) | Las tres mayúsculas chocan en Windows y macOS, y en Vercel dependen de cada referencia |
+| L-5 | **Quitar el respaldo en base64** de `LandingScreen.tsx` y `MainMenu.tsx` | Con una ruta correcta no hace falta y duplica datos |
+| L-6 | **Sacar de `public/`** los crudos de `public/assets/aistudio/` (se publican en Vercel) | No son parte del juego |
+| L-7 | **Carpeta propia por personaje** (`public/assets/characters/<id>/`) para las hojas nuevas; no guardar hojas de GymRat o Santa en `sprites/player/` | Los nombres sin prefijo del Ninja (`one_hand_attack.png`, `two_hand_attack.png`, `pistol_shoot.png`, `rifle_shoot.png`, `throw_up.png`, `idle.png`) chocarían |
+
+**Prompt P-L1:**
+> 1) Crea `game/CharacterData.ts` con una lista `CHARACTERS` (`id`, `name`, `tag`, `accentColor`, `idleUrl`, `playable`) para ninja, gymrat y santaclo, e importa esa lista en `LandingScreen.tsx` y `MainMenu.tsx` en lugar de sus arreglos locales (`protagonists` y `PROTAGONISTS`). 2) En `MainMenu.tsx`, si el protagonista elegido tiene `playable: false`, al pulsar confirmar reproduce `sounds.playError()` (o el sonido de error existente), sacude la tarjeta y muestra "PRÓXIMAMENTE" sin iniciar la partida. 3) En `ModeSelectScreen.tsx`, las opciones "MODO PRÁCTICA" y "COOPERATIVO" deben mostrarse atenuadas con la etiqueta "PRÓXIMAMENTE" y no ejecutar nada. 4) Mueve `public/assets/sprites/player/gymrat.png` a `public/assets/characters/gymrat/idle.png` y `santaclo.png` a `public/assets/characters/santaclo/idle.png`; borra `GymRat.png`, `Gymrat.png` y los dos de `sprites/bot/`; actualiza todas las referencias. 5) Elimina `GYMRAT_SPRITE_BASE64` y su lógica de respaldo en los dos archivos. 6) Mueve `public/assets/aistudio/` fuera de `public/` (a `art-source/`). Ejecuta lint y build y muéstrame el diff.
+
+### 3.1 Personajes por datos
+- Nueva estructura `CharacterDef` en `game/CharacterData.ts`: `id`, `name`, `portraitUrl`, `idleUrl`, `sheets` (usa los campos de `SpritesheetDef` existentes), `stats` (vida, velocidad, multiplicador de daño melee), `startWeapon` (puños).
+- Sustituir `effectiveP1Faction = BotFaction.Ninja` por el personaje elegido y quitar las ramas `else if (... === BotFaction.Ninja)` que cargan hojas: que se carguen **para cualquier personaje** que declare esa hoja.
+- **Fallback por hoja:** si un personaje no tiene, por ejemplo, la hoja de rodar, se usa la hoja de caminar, o el idle con un pequeño movimiento (como hacen hoy los bots). Así puedes meter a GymRat con solo el idle y ver que funciona, y añadir las demás hojas después.
+- Carpeta por personaje: `public/assets/characters/<id>/` con nombres fijos (sección 4). Los archivos del Ninja pueden quedarse donde están: su `CharacterDef` los declara por URL.
+- **`CharacterId` (texto) es un tipo distinto de `BotFaction`:** hoy el protagonista se guarda como `BotFaction` (`App.tsx` conserva `playerFaction`, `ArenaCanvas.tsx:1457` la ignora y fija el Ninja). GymRat y Santa **no** deben añadirse a `BotFaction` salvo que también vayan a ser bots (decisión 1 de la sección 8).
+
+### 3.2 Selector de protagonista (ya existe visualmente: falta conectarlo)
+- La tarjeta PLAYER 1 de `MainMenu.tsx` ya cambia entre Ninja, GymRat y Santa con ◄ ► (`protagonistIdx`, `cyclePlayerProtagonist`), pero **el id elegido no sale de ese componente**: se envía `effectiveP1 = BotFaction.Ninja` (`:209`).
+- Conectarlo: `MainMenu` → `onStartFightWithConfig(characterId, …)` → `App.tsx` (estado `playerCharacter`) → `ArenaCanvas` (prop `playerCharacter`, que sustituye a `effectiveP1Faction = BotFaction.Ninja` de `:1457`).
+- Mientras GymRat y Santa no estén integrados, la confirmación debe estar **bloqueada** (L-1); cuando lo estén, se les pone `playable: true` y funcionan sin tocar la pantalla.
+- Mostrar en la tarjeta las estadísticas del personaje (HP, velocidad) como la tarjeta del Ninja.
+- En 1v1 local, J2 también elige (hoy usa siempre el Ninja: `MainMenu.tsx:210` y `ArenaCanvas.tsx:1458`).
+
+### 3.3 Mundos por datos
+- Quitar el `if (worldCfg.id === 'classic')` (`:1511`): cargar `imageUrl` de la capa de fondo de **cualquier** mundo.
+- `spawns`: de 2 a una lista de puntos (mínimo 6); si hay menos de los necesarios, `computeFighterSpawns` reparte por el suelo.
+- `LayerCfg.type`, `PropType`, `PlatformRect.theme` y `ambientSound` dejan de ser listas cerradas para los 3 mundos actuales: pasan a `string` con valores por defecto.
+- `preview` por mapa en la pantalla de selección de mundo.
+- Añadir `music` o `ambientSound` por mapa y un campo opcional `mechanicLabel` ya existente para describir la mecánica.
+
+### 3.4 Herramientas de depuración (te ahorran horas)
+- **Visor de sprites** (`?sprites=1`): carga cualquier hoja y le dibuja la cuadrícula de filas y columnas, reproduce la animación y muestra la línea del suelo. Sirve para comprobar tus sprites **antes** de integrarlos.
+- **Overlay de colisiones** (`?debug=1`): dibuja encima del fondo los rectángulos de las plataformas, los puntos de aparición y los de armas. Es la forma de alinear el arte de un mapa con su colisión.
+- **Teclas de calibración** (solo con `?debug=1`): mover el fondo 1 px y mostrar la posición del ratón en coordenadas de arena, para copiar medidas al `WorldConfig`.
+
+### 3.5 Prompts de la fase 1
+
+**P-P1, personajes por datos (el motor no ha cambiado, el prompt sigue vigente)**
+> Amplía `game/CharacterData.ts` (creado en P-L1) con `sheets: SpritesheetDef`, `stats: { hp, speedMult, meleeDamageMult }` y `startWeapon`, y registra al Ninja con los valores actuales de `CHARACTER_SPRITESHEETS[BotFaction.Ninja]` (`ArenaCanvas.tsx:283`). Usa un tipo `CharacterId` (texto) separado de `BotFaction`. En `ArenaCanvas.tsx` sustituye `const effectiveP1Faction = BotFaction.Ninja` (`:1457`) y la línea `:1458` del jugador 2 en 1v1 por el personaje elegido (prop `playerCharacter` y `player2Character`), y reemplaza los `else if (effectiveP1Faction === BotFaction.Ninja)` de carga de hojas (`:1554-1599`) por carga genérica: si el personaje declara la hoja, se carga. Añade un fallback: si falta una hoja (rodar, saltar, melee, tiro, lanzamiento), usa la de caminar o el idle con un movimiento sutil, sin errores en consola. Con el Ninja el comportamiento debe ser idéntico. Muéstrame el diff.
+
+**P-P2, conectar el selector de protagonista**
+> En `MainMenu.tsx` cambia `onStartFightWithConfig` y `onGoToWorldSelect` para que envíen también el `CharacterId` elegido (`currentProtagonist.id`) en lugar de `const effectiveP1 = BotFaction.Ninja` (`:209`); en `App.tsx` guarda ese valor en un estado `playerCharacter` y pásalo a `ArenaCanvas`. En 1v1 local, añade el mismo selector para J2 con `player2Character`. No permitas confirmar un personaje con `playable: false` (L-1). Con el Ninja todo debe comportarse igual. Muéstrame el diff.
+
+**P-P3, mundos por datos**
+> En `ArenaCanvas.tsx` (`:1511`) elimina el `if (worldCfg.id === 'classic')` y carga la imagen de la capa `image` de cualquier mundo. En `game/WorldData.ts` cambia `spawns` a una lista de al menos 6 puntos (y valida que `computeFighterSpawns` los use), y convierte `LayerCfg.type`, `PropType`, `PlatformRect.theme` y `ambientSound` en `string` con tipos conocidos por defecto, de modo que añadir un mapa no obligue a tocar el motor. Los tres mundos actuales deben verse y jugarse igual. Muéstrame el diff.
+
+**P-P4, herramientas de depuración**
+> Añade una página `?sprites=1` que cargue una hoja desde un campo de texto, pida columnas y filas, dibuje la cuadrícula, reproduzca la animación a velocidad ajustable y marque la línea del suelo. Añade un overlay (solo con `?debug=1`) que dibuje los rectángulos de las plataformas, los puntos de aparición y los de armas encima del fondo del mundo actual, y muestre las coordenadas del ratón en el espacio de la arena. Sin esos parámetros no debe cambiar nada.
+
+---
+
+## 4. Fase 2 — Especificación de sprites (lo que tienes que crear)
+
+Los dos sprites que enviaste miden **69×75 px**, el mismo tamaño que `ninja.png`: sirven como **idle**. Las animaciones usan hojas con **fotogramas del mismo tamaño en una cuadrícula**; el motor calcula el recorte dividiendo el ancho y el alto de la imagen entre las columnas y filas declaradas, así que **cualquier resolución funciona** siempre que se respete la cuadrícula.
+
+### 4.1 Reglas generales para todas las hojas
+1. PNG con transparencia (RGBA), sin fondo.
+2. Personaje **mirando a la derecha**; el motor lo voltea.
+3. **Todos los fotogramas de una hoja del mismo tamaño**, sin márgenes ni separación entre ellos.
+4. **Pies siempre en la misma línea** (la base del fotograma) y cuerpo centrado horizontalmente; si no, el personaje "salta" al cambiar de animación.
+5. Mismo estilo de borde y paleta en todas las hojas; sin suavizado (pixel art puro).
+6. Recomendación: usa **un solo tamaño de fotograma para todas las hojas** (por ejemplo 220×290, como el combate del Ninja). Hoy el Ninja mezcla anchos distintos (170, 200, 220 y 256) y eso obliga al motor a estirar cada animación de forma distinta. 🔶
+7. El motor dibuja al personaje en un recuadro de unos **52×74** px de arena (más grande para los jefes); el tamaño final se afina en la integración con el visor de sprites.
+
+### 4.2 Hojas necesarias (iguales a las del Ninja)
+
+| Archivo | Disposición | Fotogramas | Qué muestra |
+|---|---|---|---|
+| `idle.png` | 1 imagen (69×75 o el tamaño base) | 1 | Quieto (**ya lo tienes**) |
+| `walk.png` | 6 columnas × 1 fila | 6 | Caminar |
+| `run.png` | 6 × 1 | 6 | Correr |
+| `roll.png` | 7 × 1 | 7 | Rodar (sin repetición) |
+| `jump.png` | 3 columnas × 2 filas | 6 | Salto: subida, apogeo, caída |
+| `melee.png` | 6 columnas × 3 filas | 18 | Fila 1: puñetazo · Fila 2: patada · Fila 3: uppercut |
+| `one_hand_attack.png` | 5 × 1 | 5 | Golpe con arma de una mano (cuchillo, katana…) |
+| `two_hand_attack.png` | 6 × 1 | 6 | Golpe pesado con arma de dos manos |
+| `pistol_shoot.png` | 4 × 1 | 4 | Disparo con arma de mano |
+| `rifle_shoot.png` | 4 × 1 | 4 | Disparo con rifle o escopeta |
+| `throw_up.png` | 5 × 1 | 5 | Lanzar granada |
+
+**Total:** 67 fotogramas más el idle.
+
+### 4.3 Orden de producción sugerido (para jugar cuanto antes)
+1. **Idle** (hecho) → ya aparece en el menú y en la arena.
+2. **Walk y run** → se mueve.
+3. **Melee** (al menos la fila del puñetazo) → pelea con los puños, que es con lo que empiezas cada ronda.
+4. **Jump y roll** → movimiento completo.
+5. **Pistol y rifle** → armas de fuego.
+6. **One hand y two hand** → armas cuerpo a cuerpo.
+7. **Throw** → granadas.
+
+Con el fallback de la fase 1, el personaje es jugable desde el paso 2, y cada hoja nueva se integra con un prompt corto.
+
+### 4.4 Convención de archivos
+Una carpeta **por personaje**, con nombres fijos (así no chocan con los del Ninja, que están sin prefijo en `sprites/player/`):
+```
+public/assets/characters/gymrat/{idle,walk,run,roll,jump,melee,one_hand_attack,two_hand_attack,pistol_shoot,rifle_shoot,throw_up}.png
+public/assets/characters/santaclo/{...igual...}
+public/assets/characters/<id>/portrait.png   (cara o busto, ~64×64, para menú y HUD)
+```
+Los `idle.png` de GymRat y Santa ya existen (69×75, RGBA) y se mueven a esa estructura en la limpieza L-4. Todo en **minúsculas**.
+
+### 4.5 Ideas de estadísticas (🔶 solo propuestas, decide tú)
+| Personaje | Idea | Estadísticas |
+|---|---|---|
+| Ninja (ya existe) | Rápido y frágil | HP 100 · velocidad ×1.15 |
+| GymRat | Tanque de puños | HP 125 · velocidad ×0.90 · daño melee ×1.25 |
+| Santa Clo | Equilibrado con granadas | HP 110 · velocidad ×1.0 · empieza con 1 lanzable (opcional) |
+
+---
+
+## 5. Fase 3 — Integración de personajes (después de crear los sprites)
+
+Por cada personaje, un prompt corto y una prueba:
+1. Registrar el `CharacterDef` con las hojas que existan y sus cuadrículas.
+2. Probar con el visor `?sprites=1` cada hoja (cuadrícula, pies alineados, velocidad).
+3. Jugar: moverse, saltar, rodar, pelear con puños, recoger un arma de cada tipo y lanzar una granada.
+4. Ajustar `charW`/`charH` y la línea del suelo si hace falta.
+
+**Prompt P-C (plantilla para cada personaje)**
+> Añade el personaje `<id>` a `CHARACTERS` con estas hojas y cuadrículas: `<lista de archivos con columnas × filas × fotogramas>`. Las hojas que no estén indicadas deben usar el fallback. Estadísticas: `<HP, velocidad, daño melee>`. Retrato: `<ruta>`. No modifiques al Ninja. Después ejecuta lint y build y dime qué hojas se cargan y cuáles usan fallback.
+
+**Pruebas por personaje:** aparece en el selector con retrato y estadísticas · camina, corre, rueda y salta sin saltos de posición al cambiar de animación · puños con las tres filas de melee · cada arma muestra su animación · recibe daño y cae sin errores · en 1v1 local funciona como J1 y como J2 · 5 bots a su alrededor sin bajar de 60 Hz.
+
+---
+
+## 5B. GymRat — fotogramas recibidos e instrucciones de integración
+
+**Estado en el código:** los idles de GymRat ya están en los menús; las hojas de animación **todavía no están integradas** y el motor no cambió, así que todo lo de esta sección sigue vigente. Guárdalas en `public/assets/characters/gymrat/` (sección 4.4).
+
+**Estado:** recibí 10 imágenes de GymRat. Las dos primeras (el idle de 69×75) ya estaban; ahora llegan las animaciones. Todo lo de esta sección sale de **medir tus imágenes** y de **leer el código**. Las marcas ❓ son mi lectura de qué es cada imagen: confírmala.
+
+### A. Inventario de lo recibido
+
+| # | Contenido (mi lectura) | Fotogramas | Disposición vista | Lo que pide el motor | Estado |
+|---|---|---|---|---|---|
+| 1 | `walk` | 6 | 3 columnas × 2 filas | admite cualquier cuadrícula (`cols`, `rows`, `totalFrames`) | ✅ declarar 3×2, o reexportar como 6×1 |
+| 2 | `run` | 6 | 3 × 2 | `runCols`, `runRows`, `runTotalFrames` | ✅ declarar 3×2 |
+| 3 | `jump` | 6 | 3 × 2 | el Ninja usa 3 columnas × 2 filas | ✅ igual que el Ninja |
+| 4 | `roll` | **6** (el Ninja tiene 7) | 3 × 2 | `rollCols`, `rollRows`, `rollTotalFrames` | ✅ declarar 3×2 y 6 fotogramas; ❓ probar la duración |
+| 5 | `melee`: fila 1 puñetazo, fila 2 patada | 3 + 3 | 3 × 2 | 6 columnas × 3 filas (puñetazo, patada, **uppercut**) | ⚠️ faltan 3 fotogramas por fila y la fila del uppercut |
+| 6 | `one_hand_attack` | 5 | tira de 5 | 5 | ✅ cuenta correcta |
+| 7 | `two_hand_attack` | 6 | tira de 6 | 6 | ✅ |
+| 8 | `pistol_shoot` ❓ | 4 | tira de 4 | 4 | ✅ cuenta correcta |
+| 9 | `rifle_shoot` ❓ | 4 | tira de 4 | 4 | ✅ cuenta correcta |
+| 10 | `throw_up` | 5 | tira de 5 | 5 (el proyectil sale en el fotograma 3) | ✅ |
+
+❓ Las imágenes 8 y 9 son casi iguales: asumo que 8 (un brazo extendido) es pistola y 9 (dos brazos) es rifle. Si es al revés, se intercambian.
+
+### B. Problemas que encontré midiendo las imágenes (corregir antes de integrar)
+
+1. **Las imágenes que me enviaste son RGB sin canal alfa:** el "fondo transparente" es un **tablero de ajedrez pintado en los píxeles** (grises de 147 a 201). Si tus archivos reales son así, el juego mostrará cuadros grises. Los archivos finales deben ser **PNG RGBA con fondo realmente transparente**.
+2. **Las hojas 1 a 5 tienen una banda vacía de ~220 px entre la fila 1 y la fila 2.** El motor divide la altura entre las filas, así que la fila 2 se corta mal: sus pies quedan al ~100% de la celda y los de la fila 1 al ~76%. **El personaje "saltaría" casi un cuarto de su altura entre el fotograma 3 y el 4.** Las filas deben ser celdas idénticas, pegadas, sin bandas.
+3. **En las tiras 6 a 10 el personaje ocupa solo ~52–54% del alto de la celda**, con ~24% de espacio vacío bajo los pies, mientras que en caminar y correr ocupa ~88%. Como el motor dibuja cada celda en el mismo recuadro (unos 52×74 px), GymRat se vería **un 40% más pequeño y flotando** al atacar, disparar y lanzar. Hay que recortar cada tira para que el personaje llene la celda igual que en `walk` y los pies queden en el borde inferior.
+4. **Falta de coherencia visual entre hojas:** el tono de piel va de naranja claro (caminar, correr, saltar) a naranja oscuro (melee y ataques); unas hojas llevan pelo negro o banda oscura en la frente y otras no. Elige una sola paleta y un solo peinado para todas.
+5. **Manchas blancas semitransparentes** junto a los pies y líneas horizontales tenues (hojas 1–3 en el borde, tiras 6–10 en el suelo). Hay que limpiarlas hasta que el fondo sea alfa 0.
+6. **Fogonazo dibujado en el sprite** (hojas 8 y 9): el motor ya dibuja su propio fogonazo en el fotograma 0 (`ArenaCanvas.tsx:~8540`). Con el tuyo dibujado en el fotograma 2 saldría doble. Quita el fogonazo de las hojas, o dímelo y adapto el motor.
+
+### C. Estándar recomendado para las celdas
+- **Un solo tamaño de celda para todas las hojas** con proporción ancho/alto ≈ **0.70**, que es la del recuadro del juego (52×74). Por ejemplo **224×320** px.
+- **Pies en el borde inferior** de la celda y personaje centrado en horizontal. La altura del personaje debe ser **el mismo porcentaje de la celda en todas las hojas** (entre ~70% y ~90%): las poses anchas (patada, puñetazo) obligan a una celda más ancha y, con proporción 0.70, el personaje queda algo más bajo. La diferencia de tamaño con el Ninja se compensa con un `drawScale` por personaje (ver sección E), no encogiendo el dibujo.
+- Todas las hojas del motor se dibujan **estirando cada celda a un mismo recuadro** (`drawImage(..., charW, charH)`, comprobado en `ArenaCanvas.tsx:8415-8697`), por eso la proporción de la celda es lo que decide si el personaje sale deformado.
+- Sin bandas, márgenes ni separación entre celdas; cuadrícula exacta (ancho total = columnas × ancho de celda).
+- Mirando a la derecha, manos **vacías** (el arma se dibuja encima).
+
+**Validador:** dejé el script `check_sheet.py` junto a este documento. Se ejecuta así: `python check_sheet.py walk.png 6 1` (archivo, columnas, filas). Comprueba el canal alfa, las celdas iguales, la altura del personaje y la línea de los pies fotograma por fotograma, y dice si el archivo está OK o qué corregir. Con una hoja del Ninja devuelve OK; con tu hoja de caminar, tal como me llegó, avisa de que no tiene alfa.
+
+### D. Qué animación usa cada arma (verificado contra `game/WeaponData.ts`)
+
+Tus listas coinciden **exactamente** con las del código. Las hojas se comparten por grupo: una sola hoja sirve para todas las armas del grupo.
+
+| Hoja | Fotogramas | Armas que la usan |
+|---|---|---|
+| `one_hand_attack` | 5 | Katana, Machete, Knife, Baton, ShockBaton, Whip, CueStick |
+| `two_hand_attack` | 6 | Axe, Bat, LeadPipe, Hammer, Chair, Pipe, Bottle, Teapot, Pillow |
+| `pistol_shoot` | 4 | Pistol, Pistol45, Revolver, Magnum, SilencedPistol, MachinePistol, Uzi, SilencedUzi, FlareGun |
+| `rifle_shoot` | 4 | Assault, Carbine, M60, Sniper, Shotgun, SawedOff, DarkShotgun, SMG, MP50, TommyGun, Lazer, Flamethrower, Bow (y `Rifle`, que está en el código y no en tu lista) |
+| `throw_up` | 5 | Grenade, Molotov, C4, Baseball, Mine |
+| `melee` (puños) | 3 + 3 (+ uppercut) | Fists |
+
+**Armas sin animación propia hoy:** Sword, Chainsaw, Chain, Flagpole, Bazooka y GLauncher no están en ningún grupo y caen al estado desarmado (animan como si pegaras con los puños). 🔶 Propongo: Sword y Chain → una mano; Chainsaw y Flagpole → dos manos; Bazooka y GLauncher → rifle. Es un cambio de motor, independiente del personaje.
+
+### E. Cambios de motor que GymRat necesita (una sola vez; sirven también para Santa Clo)
+
+1. **Hoja de melee con fotogramas distintos por fila.** Hoy el dibujo limita el fotograma a 0–5 (`ArenaCanvas.tsx:8692`, `Math.min(5, p.meleeAnimFrame)`) y la configuración tiene un solo `meleeTotalFramesPerRow: 6`. Con filas de 3 fotogramas, la segunda mitad del golpe caería en celdas vacías y GymRat **desaparecería**. Solución: `meleeFramesPerRow: number[]` (GymRat: `[3, 3, 0]`) y repartir el progreso del ataque entre los fotogramas de cada fila; si falta una fila (uppercut), usar la del puñetazo.
+2. **Puntos de agarre del arma por personaje.** El arma se dibuja encima del personaje con posiciones y rotaciones fijas por fotograma pensadas para el Ninja (por ejemplo, a una mano: `translate(12,-2)`, `(18,-14)`, `(26,-2)`…, en `:8661-8680`; pistola: `(22,-3)`, `(20,-18)`… en `:8519-8540`). Las manos de GymRat están en otro sitio. Hay que mover esas posiciones a los datos del personaje (`weaponAnchors` por hoja y fotograma: x, y, rotación), con los valores actuales como predeterminados, y calibrar los de GymRat con el overlay de depuración.
+3. **Fogonazo propio:** ver el problema 6 de la sección B.
+4. **Tamaño de dibujo por personaje:** hay `isBigFighter` (60×82 en vez de 52×74) para jefes. GymRat es más corpulento; 🔶 darle un `drawScale` en sus datos (por ejemplo 1.08) sin tocar su hitbox.
+5. **Armas sin animación** (sección D).
+6. **Fotogramas clave fijos en el código.** El número de fotogramas y el momento del golpe, el disparo y el lanzamiento están escritos como números en la lógica, no en los datos del personaje:
+
+| Animación | Fotogramas en el código | Momento clave en el código |
+|---|---|---|
+| Melee | 6 por ataque (`meleeAnimFrame >= 6`, `ArenaCanvas.tsx:4020`) | golpe efectivo en los fotogramas 2 y 3 (`:4052`); el siguiente golpe se encadena desde el 4 (`:4011`) |
+| Una mano | 5 (`:3443`) | el golpe cuenta desde el fotograma 2 (`:3454`) |
+| Dos manos | 6 (`:3217`) | impacto en el fotograma 3 (`:3228`) |
+| Pistola y rifle | 4 (`:3575`, `:3669`) | fogonazo del motor en el fotograma 0 |
+| Lanzar | 5 (`:3958`) | el proyectil sale en el fotograma 2 (`:3770`) |
+
+   Si una hoja trae otro número de fotogramas, o el momento clave cae en otro, el personaje se ve bien pero el golpe, el disparo o el lanzamiento salen **en el momento equivocado**. Hay que mover esos números a los datos del personaje.
+
+**Prompt P-ENG (cambio de motor compartido por GymRat y Santa Clo)**
+> En `SpritesheetDef` añade, por animación, `frames` (número de fotogramas) y el fotograma clave (`hitFrame` para melee, una mano y dos manos; `releaseFrame` para lanzar), con los valores actuales como predeterminados (melee 6 con golpe en 2–3, una mano 5 con golpe desde 2, dos manos 6 con impacto en 3, pistola y rifle 4, lanzar 5 con salida en 2). Sustituye los números escritos a mano (`ArenaCanvas.tsx:4020, 4052, 4011, 3443, 3454, 3217, 3228, 3575, 3669, 3958, 3770`) por esos campos. Añade `meleeFramesPerRow?: number[]` y reparte el progreso del ataque entre los fotogramas de la fila (la ventana de golpe y el encadenado se calculan sobre el progreso, no sobre el índice). Añade `drawScale?: number` (por defecto 1) al dibujar al personaje. El Ninja debe comportarse exactamente igual. Muéstrame el diff.
+
+### F. Orden de integración de GymRat
+
+| Paso | Qué | Prueba |
+|---|---|---|
+| 1 | Corregir los archivos (sección B y C) y pasar el validador | Todas las hojas dicen OK |
+| 2 | Registrar a GymRat con idle y `walk`, `run`, `jump`, `roll` (cuadrículas declaradas) | Se mueve sin saltos de posición al cambiar de animación |
+| 3 | Cambio de motor 1 + hoja `melee` | Puños: el puñetazo y la patada se ven completos |
+| 4 | Cambio de motor 2 + hojas de armas (`one_hand`, `two_hand`, `pistol`, `rifle`, `throw`) | Cada arma se ve en la mano en cada fotograma |
+| 5 | Estadísticas, retrato y `drawScale` | Se ve del mismo tamaño que el Ninja en todas las animaciones |
+
+**Prompt P-GYM1 (paso 2):**
+> Añade el personaje `gymrat` al registro de personajes. Idle: `/assets/characters/gymrat/idle.png`. Hojas: walk 3 columnas × 2 filas × 6 fotogramas, run 3×2×6, jump 3×2×6, roll 3×2×6 (`rollTotalFrames: 6`). Las demás hojas deben usar el fallback del Ninja o del idle, sin errores. Estadísticas: `<HP, velocidad, daño melee>`. No modifiques al Ninja. Ejecuta lint y build y dime qué hojas cargan y cuáles usan fallback.
+
+**Prompt P-GYM2 (paso 3):**
+> En `SpritesheetDef` añade `meleeFramesPerRow?: number[]`. En el dibujo de la hoja melee (`ArenaCanvas.tsx:~8692`) sustituye `Math.min(5, p.meleeAnimFrame)` por un fotograma calculado según el progreso del ataque y el número de fotogramas de la fila actual (por defecto 6, como hoy). Si la fila pedida no existe o tiene 0 fotogramas, usa la fila 0. Configura GymRat con `meleeCols: 3`, `meleeRows: 2`, `meleeFramesPerRow: [3, 3]`. El Ninja no debe cambiar.
+
+**Prompt P-GYM3 (paso 4):**
+> Mueve las posiciones y rotaciones del arma dibujada sobre el personaje (una mano, dos manos, pistola, rifle y lanzamiento: `ArenaCanvas.tsx:~8420-8680`) a una estructura `weaponAnchors` en los datos del personaje, por hoja y por fotograma `{x, y, rot}`. Los valores del Ninja pasan a ser los predeterminados y deben dar exactamente el mismo resultado visual. Para GymRat crea una primera versión de `weaponAnchors` que coloque el arma en la mano delantera de cada fotograma, y deja que se pueda ajustar con las teclas del overlay de depuración (`?debug=1`).
+
+---
+
+## 5C. Santa Clo — fotogramas recibidos e instrucciones de integración
+
+**Estado en el código:** el idle de Santa ya está en los menús; las hojas de animación **todavía no están integradas** y el motor no cambió, así que todo lo de esta sección sigue vigente. Guárdalas en `public/assets/characters/santaclo/` (sección 4.4).
+
+**Estado:** recibí 10 imágenes de Santa Clo, con el mismo reparto que GymRat. Medí cada una. Santa está **mejor resuelto que GymRat en coherencia**: la misma paleta, el saco a la espalda, la barba blanca y el cinturón amarillo se mantienen en todas las hojas, y el tamaño absoluto del personaje es el mismo (~200 px de alto) en todas. Lo que hay que corregir es el **formato de las hojas**.
+
+### A. Inventario de lo recibido
+
+| # | Contenido (mi lectura) | Fotogramas | Disposición vista | Lo que pide el motor | Qué hacer |
+|---|---|---|---|---|---|
+| 1 | `walk` | 6 | tira de 6 | 6 | ✅ cuenta correcta; reempaquetar |
+| 2 | `run` | 6 | tira de 6 | 6 | ✅ reempaquetar |
+| 3 | `jump` | 6 | tira de 6, **dibujados siguiendo un arco** | 6 | ⚠️ quitar el arco (ver B.4) |
+| 4 | `roll` | 6 (el Ninja tiene 7) | tira de 6 | `rollTotalFrames` configurable | ✅ declarar 6 |
+| 5 | `melee`: guardia, **puñetazo**, guardia, **patada**, guardia | 5 | una sola tira | 3 filas × 6 (puñetazo, patada, uppercut) | ⚠️ separar en dos filas; falta el uppercut |
+| 6 | `one_hand_attack` | 5 | tira de 5 | 5 | ✅ cuenta correcta |
+| 7 | `two_hand_attack` (golpe de arriba hacia abajo) | **5** | tira de 5 | 6 | ⚠️ falta 1 fotograma |
+| 8 | `pistol` y `rifle` ❓ | 4 + 4 | **2 filas de 4** | una hoja de 4 fotogramas por arma | ⚠️ separar en dos hojas |
+| 9 | Copia de la 8 con brillo y un arma dibujada en las manos ❓ | 4 + 4 | 2 filas de 4 | — | no usar si basta con la 8 |
+| 10 | `throw_up` (fila 1) y 2 fotogramas sobrantes (fila 2) | 5 + 2 | 5 + 2 | 5 | ✅ la fila 1 sirve; la fila 2 sobra |
+
+❓ Las imágenes 8 y 9 son dos versiones de la misma hoja. Mi lectura: en cada una, la **fila superior** es de dos manos con fogonazo grande (rifle) y la **fila inferior** de un brazo extendido con fogonazo pequeño (pistola). Confírmame si es así y cuál de las dos versiones quieres usar (recomiendo la 8, que es la limpia).
+
+### B. Problemas que encontré midiendo las imágenes
+
+1. **Las 10 imágenes son RGB sin canal alfa:** el fondo es un tablero de ajedrez pintado, con manchas pálidas y nubes semitransparentes. Los archivos finales deben ser PNG RGBA con fondo realmente transparente.
+2. **El fondo blanco del tablero es del mismo color que la barba de Santa (blanco puro 255,255,255).** Quitar el fondo "automáticamente" se come partes de la barba y del chaleco (lo probé: en 3 de 6 fotogramas de caminar la barba queda con huecos). **Quítalo a mano, o genera los sprites sobre un fondo liso y distinto (por ejemplo magenta `255,0,255`)** y se elimina sin errores con `repack_sheet.py --key 255,0,255`.
+3. **Las celdas no tienen la proporción del juego.** Las tiras miden 170–256 px de ancho por 286–572 de alto (proporción 0.30 a 0.89), con el personaje ocupando solo ~34–36% de la altura y un tercio vacío bajo los pies. Como el motor estira cada celda al mismo recuadro (~52×74, proporción 0.70), Santa saldría **aplastado y ensanchado**.
+4. **El salto lleva el arco dibujado** (los pies van de 52% a 64% de la altura de la imagen según el fotograma). El motor ya mueve al personaje por física: si el sprite además sube y baja, el salto se vería exagerado o tembloroso. Coloca cada pose con el cinturón amarillo a la misma altura de la celda (±6 px) y deja que las piernas se recojan según la pose.
+5. **Efectos dibujados en el sprite** que el motor ya dibuja por su cuenta: el **arco blanco del golpe** (hoja 6, fotograma 3), el **polvo y los arcos** del golpe de dos manos (hoja 7, fotogramas 3 y 4) y los **fogonazos** de disparo (hojas 8 y 9). Hay que quitarlos de las hojas, o decírmelo para adaptar el motor.
+6. **Dos manos con 5 fotogramas:** el motor espera 6 (`ArenaCanvas.tsx:3217`) y hace el impacto en el fotograma 3 (el cuarto). En tu hoja el golpe contra el suelo es justo el cuarto fotograma, así que solo hay que **añadir un fotograma de recuperación** al final (por ejemplo, una copia ligeramente distinta del último).
+7. **Lanzar:** el motor suelta el proyectil en el fotograma 2 (el tercero), pero en tu fila el brazo extendido es el cuarto. Dos soluciones: reordenar a `[guardia, brazo arriba, brazo extendido, seguimiento, recuperación]` (quitando el fotograma agachado), o dejar que el prompt P-ENG configure `releaseFrame: 3`. Recomiendo lo segundo.
+8. **Melee con puñetazo y patada en una sola tira:** hay que repartirla en la forma `3 columnas × 2 filas`: fila 1 = puñetazo (`f1, f2, f3`), fila 2 = patada (`f3, f4, f5`).
+
+### C. Estándar de celda para Santa
+- **Celda de 208×296 px** (proporción 0.70) a **escala 1:1**, sin remuestrear: Santa mide ~200 px, ocupa ~66–68% de la altura y la patada (~192 px de ancho) cabe.
+- **Pies en el borde inferior**, centrado en horizontal.
+- Como Santa ocupa menos de la celda que el Ninja (~91%), el motor lo dibuja más pequeño: `drawScale ≈ 0.91 / 0.67 ≈ 1.35` para que se vea del mismo tamaño que el Ninja. Se afina con el visor de sprites.
+
+### D. Cómo preparar cada hoja
+
+Con `repack_sheet.py` (junto a este documento) sale cada hoja en celdas uniformes de 208×296 y fondo transparente. Ejemplos:
+
+| Hoja de salida | Comando (dentro de la carpeta de los PNG) | Resultado |
+|---|---|---|
+| `walk.png` | `python repack_sheet.py walk_src.png --src 6x1 --cell 208x296 --out walk.png --key 255,0,255` | 6 celdas en una fila (1248×296) |
+| `run.png` | igual, con `run_src.png` | 6 |
+| `roll.png` | igual, con `roll_src.png` | 6 |
+| `jump.png` | igual, con `jump_src.png`, **tras alinear las poses por el cinturón** | 6 |
+| `one_hand_attack.png` | `--src 5x1`, sin el arco blanco | 5 |
+| `pistol_shoot.png` | `--src 4x2 --rows 2 --cell 208x296` | 4 (fila inferior de la hoja 8) |
+| `rifle_shoot.png` | `--src 4x2 --rows 1 --cell 208x296` | 4 (fila superior de la hoja 8) |
+| `throw_up.png` | `--src 5x2 --rows 1` | 5 (fila 1 de la hoja 10) |
+| `two_hand_attack.png` | `--src 5x1` y añadir 1 fotograma de recuperación | 6 |
+| `melee.png` | tomar `f1,f2,f3` y `f3,f4,f5` de la hoja 5 y usar `--layout 3x2` | 3×2 (624×592) |
+
+Después de cada una: `python check_sheet.py <hoja>.png <columnas> <filas>` debe decir **OK**.
+
+### E. Qué armas usan cada hoja (idéntico a GymRat, verificado contra el código)
+Los grupos de armas de la sección 5B-D son los mismos para Santa: una mano, dos manos, pistolas, rifles y lanzables.
+
+### F. Cambios de motor
+Santa necesita **los mismos cambios de motor que GymRat** (5B-E: melee con fotogramas por fila, puntos de agarre del arma, `drawScale`, fotogramas clave por datos), así que se hacen una sola vez con los prompts P-GYM2, P-GYM3 y P-ENG. Particularidades de Santa:
+- **Melee:** `meleeCols: 3`, `meleeRows: 2`, `meleeFramesPerRow: [3, 3]`.
+- **Lanzar:** `releaseFrame: 3` (a menos que reordenes las poses).
+- **Puntos de agarre del arma:** Santa lleva guantes negros y la mano delantera cambia de lado según la pose; hay que calibrarlos con el overlay de depuración.
+
+### G. Orden de integración de Santa
+
+| Paso | Qué | Prueba |
+|---|---|---|
+| 1 | Preparar las hojas (B, C y D) y pasar el validador | Todas dicen OK |
+| 2 | Registrar a Santa con idle, `walk`, `run`, `jump`, `roll` | Se mueve sin saltos de posición ni deformación |
+| 3 | Melee (puñetazo y patada) con P-ENG | Puñetazo y patada completos; el golpe llega en el fotograma correcto |
+| 4 | Hojas de armas y puntos de agarre | Cada arma se ve en la mano en cada fotograma |
+| 5 | Estadísticas, retrato y `drawScale` | Mismo tamaño aparente que el Ninja en todas las animaciones |
+
+**Prompt P-SANTA1 (paso 2):**
+> Añade el personaje `santaclo` al registro de personajes. Idle: `/assets/characters/santaclo/idle.png`. Hojas (celdas de 208×296): walk 6 columnas × 1 fila × 6 fotogramas, run 6×1×6, jump 6×1×6, roll 6×1×6 (`rollTotalFrames: 6`). `drawScale: 1.35`. Las demás hojas deben usar el fallback, sin errores. Estadísticas: `<HP, velocidad, daño melee>`. No modifiques al Ninja ni a GymRat. Ejecuta lint y build y dime qué hojas cargan y cuáles usan fallback.
+
+---
+
+## 6. Fase 5 — Mapas nuevos
+
+### 6.1 Reinterpretaciones originales (a partir de tus referencias)
+Propongo nombre y concepto propios para cada una, **dibujados por ti** y distribuidos con tu propio diseño de plataformas:
+
+| # | Referencia (captura) | Concepto propio 🔶 | Mecánica opcional |
+|---|---|---|---|
+| 1 | Puerto nocturno con barco y grúa (3) | **Puerto Nocturno** | Cajas que cuelgan de la grúa y caen como botín |
+| 2 | Nave roja con cinta transportadora (4) | **Fábrica Roja** | Cinta transportadora (ya existe en el motor) |
+| 3 | Estructura cian oscura "NEON" (5) | **Neón** | Plataformas finas, escaleras y cadenas |
+| 4 | Verde con bloques y pinchos (6) | **Laboratorio Verde** | Pinchos que dañan al tocarlos |
+| 5 | Blanco y negro minimalista con pinchos (7) | **Vacío** | Pinchos en el suelo, caja de armas central |
+| 6 | Hotel y azotea con paracaídas (8) | **Azotea Hotel** | Paracaídas con armas que caen del cielo |
+
+⚠️ La captura 6 recuerda mucho a un juego de plataformas de Nintendo (bloques "?"): evita copiar esos elementos; haz tus propias cajas de armas.
+
+Los pinchos y los paracaídas son **mecánicas nuevas** que el motor no tiene (hoy hay cajas destructibles, barriles, cinta y prensa). Se añaden como peligros opcionales **después** de tener los mapas básicos jugables.
+
+### 6.2 Plantilla de mapa (rellénala por cada mapa)
+
+```
+ID (sin espacios):                 ej. puerto
+Nombre / subtítulo:                Puerto Nocturno · Muelle de carga
+Descripción corta:
+Fondo:                             PNG de 960×540, tuyo (no una captura)
+Capas de parallax (opcional):      lista de PNG + velocidad
+Plataformas:                       x, y, w, h, ¿atravesable desde abajo? (una por línea)
+  Suelo y paredes:                 x=-10,y=501,w=980,h=40 / muros de 20 px a los lados
+Puntos de aparición (6):           (x,y) ×6, repartidos y sin solaparse
+Puntos de armas (4–8):             (x,y)
+Peligros:                          tipo, posición, parámetros
+Música / ambiente:
+Vista previa para el menú:         PNG 320×180
+```
+
+Referencia con el tamaño actual de la arena (960×540):
+```ts
+platforms: [
+  { x: -10, y: 501, w: 980, h: 40, isOneWay: false },   // suelo
+  { x: 0, y: 0, w: 20, h: 540, isOneWay: false },       // muro izquierdo
+  { x: 940, y: 0, w: 20, h: 540, isOneWay: false },     // muro derecho
+  { x: 380, y: 370, w: 200, h: 14, isOneWay: true },    // plataforma atravesable
+],
+```
+
+### 6.3 Flujo para cada mapa (uno por vez)
+1. Tú: dibujas el fondo (960×540) y marcas plataformas, spawns y armas.
+2. IA: crea el `WorldConfig` con esos datos.
+3. Prueba con el overlay `?debug=1`: las colisiones deben coincidir con el arte, ningún spawn dentro de una plataforma, todas las plataformas alcanzables con el salto.
+4. Partida con 1, 3 y 5 bots: los bots deben llegar a las armas y no atascarse.
+5. Se registra en la lista de mundos y en la pantalla de selección.
+
+**Prompt P-M (plantilla para cada mapa)**
+> Añade el mundo `<id>` a `WorldData.ts` usando el fondo `<ruta>`, las plataformas `<lista>`, 6 puntos de aparición `<lista>`, puntos de armas `<lista>` y peligros `<lista>`. Regístralo en la selección de mundo con la vista previa `<ruta>`. No cambies los demás mundos ni el motor. Ejecuta lint y build y dime cualquier spawn que caiga dentro de una plataforma.
+
+### 6.4 Quitar Desierto y Zona Industrial
+Solo cuando los mapas nuevos estén integrados: borrar sus `WorldConfig` (`desert`, `industrial`), las capas de parallax y los props exclusivos (cactus, calavera, chimeneas…) que ningún mapa use, y su entrada en el menú. **Conservar** las mecánicas (cajas, barriles, cinta, prensa). Mapas finales: Arena Clásica + los 6 nuevos.
+
+---
+
+## 7. Fase 4 — Fondo (la pantalla negra) y detalles de UI
+
+### 7.1 Fondo
+Hoy, fuera del recuadro de la arena y en los menús, el fondo es negro plano. Propuesta 🔶:
+- Un componente `GameBackdrop` que se usa en todo el juego (menús, selección y alrededor de la arena): degradado oscuro con **tuberías y vigas en pixel art** (SVG o canvas propio), parallax lento, viñeta y líneas de escaneo suaves.
+- En la arena, el fondo se **tiñe con los colores del mapa activo** (`sky` del `WorldConfig`), de modo que cada mapa se sienta distinto también fuera de su recuadro.
+- Todo dibujado por ti o procedural: nada copiado de otros juegos.
+- Debe respetar `prefers-reduced-motion` y no bajar el rendimiento (máximo ~1 ms por frame).
+
+### 7.2 Detalles de UI
+- Estados claros en botones y selectores (hover, activo, deshabilitado) con un pequeño sonido.
+- Textos mínimos de 12 px, un solo idioma y acentos correctos (pendiente de la fase 0).
+- Transiciones suaves entre pantallas.
+- Marco de pixel art consistente en tarjetas, menús y modales.
+- Pantalla de selección de protagonista (fase 1) con el mismo estilo.
+
+**Prompt P-F1, fondo**
+> Crea `components/GameBackdrop.tsx` con un fondo animado propio (degradado oscuro, tuberías y vigas en pixel art dibujadas por código o SVG, parallax lento, viñeta y líneas de escaneo suaves) y úsalo detrás de todas las pantallas (landing, selección de modo, selección de personaje y mundo, y alrededor de la arena). Dentro de la arena, tiñe el fondo con los colores `sky` del mundo activo. Respeta `prefers-reduced-motion` y mide que no cueste más de 1 ms por frame. Muéstrame el diff.
+
+---
+
+## 8. Decisiones abiertas
+
+1. **¿GymRat y Santa Clo solo jugables, o también como bots?** Si también son bots, hay que añadirlos al registro de facciones y al sorteo RANDOM.
+2. **¿Estadísticas propias o iguales a las del Ninja?** (la sección 4.5 es solo una propuesta).
+3. **¿Un tamaño de fotograma único para todas las hojas?** Lo recomiendo (4.1, regla 6), pero implica que las hojas del Ninja también se podrían rehacer con el tiempo.
+4. **¿Pinchos y paracaídas en los mapas?** Son mecánicas nuevas que hay que programar; propongo hacerlas después de que los mapas sean jugables.
+5. **Cantidad final de mapas:** Arena Clásica + 6 nuevos = 7. ¿Te parece bien, o quieres añadir más después?
+
+---
+
+## 9. Lista resumida
+
+| # | Tarea | Fase | Quién |
+|---|---|---|---|
+| 1 | Cerrar bugs/UX pendientes (lote 10, textos, `.gitignore`, rendimiento) | 0 | tú + IA |
+| 2 | P-P1, personajes por datos | 1 | IA |
+| 3 | P-P2, selector de protagonista | 1 | IA |
+| 4 | P-P3, mundos por datos | 1 | IA |
+| 5 | P-P4, visor de sprites y overlay de colisiones | 1 | IA |
+| 6 | Sprites de GymRat (5B) y de Santa Clo (5C): ya recibidos, corregir el formato | 2 | tú |
+| 7 | Integrar GymRat (sección 5B) y Santa Clo (sección 5C); primero el prompt P-ENG | 3 | IA |
+| 8 | Fondo `GameBackdrop` y detalles de UI | 4 | IA |
+| 9 | Mapas nuevos, uno por uno | 5 | tú + IA |
+| 10 | Quitar Desierto y Zona Industrial | 5 | IA |

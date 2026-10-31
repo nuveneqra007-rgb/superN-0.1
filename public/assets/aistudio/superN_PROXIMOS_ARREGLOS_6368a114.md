@@ -276,6 +276,79 @@ Con `?debug=1`, mostrar sobre cada bot en texto pequeño: estado de IA actual y 
 
 ---
 
+## LOTE 11 — Integración de Nuevos Mapas Auténticos y Personajes Jugables (Gymrat y Santa Claus) 🆕
+
+**Contexto:** Se han suministrado los 26 assets originales (6 mapas oficiales y 20 hojas de sprites de animación) que completan la visión de Superfighters / superN, permitiendo pasar de 1 único personaje con animaciones completas (Ninja) a **3 personajes totalmente jugables con animación frame a frame**, e incorporar **6 arenas de combate** con sus mecánicas, fondos y colisiones.
+
+### 11.1 Catálogo de los 6 Mapas / Escenarios Nuevos
+
+| # | Archivo | Dimensiones | Nombre del Escenario | Atmósfera y Elementos Visuales | Mecánica / Colisiones de Plataformas |
+|---|---|---|---|---|---|
+| **M1** | `image_26e47cf6.png` | 720×360 | **Puerto Maldito** | Barco pirata amarrado en muelle nocturno, grúa de carga, cajas, luna menguante y caja de suministros en paracaídas. | Cubierta del barco (2 niveles), camarote interior accesible, muelle de madera, grúa elevada y plataformas con pasarelas. |
+| **M2** | `image_57664f22.png` | 1359×700 | **Fundición Siderúrgica** | Calentadores industriales rojos incandescentes, conductos de ventilación, franjas de advertencia y rodillos. | Suelo con cinta transportadora activa, plataformas de rejas metálicas superiores (Nivel 2) y barriles inflamables. |
+| **M3** | `image_43c2b272.png` | 1365×707 | **Metro Neón / Cyberpunk** | Cuadrícula cian fluorescente, cadenas metálicas suspendidas, plataformas flotantes y escaleras de mano. | Plataforma central elevada, cadenas con cajas de balanceo, escaleras transitables y vacío inferior con caídas letales. |
+| **M4** | `image_6f961c12.png` | 1364×702 | **Laboratorio Tóxico** | Pantallas de fósforo verde radiactivo, bloques misterio `?`, torres de rejilla y foso de pinchos. | Foso inferior con pinchos (daño por caída), bloques `?` con armas aleatorias, y plataformas flotantes simétricas. |
+| **M5** | `image_3d8d2fc4.png` | 1365×706 | **Foso Clandestino "БОЙ!"** | Arena clandestina de supervivencia con grafiti cirílico "БОЙ!" en amarillo, torres de rejilla y cajas. | Plataforma central de combate, pilares de salto para combate vertical, y lecho de pinchos en los laterales. |
+| **M6** | `image_e12875f3.png` | 1359×699 | **Azotea Hotel Noir** | Letrero gigante de neón "HOTEL", luna llena dorada, skyline con ventanas encendidas y caja aérea. | Pasarela sobre el letrero de neón, plataformas de andamio colgantes en los extremos y caída libre hacia la ciudad. |
+
+### 11.2 Catálogo de Spritesheets de Animación para GYMRAT (9 Hojas)
+
+| Acción | Archivo | Dimensiones | Frames | Descripción y Animación |
+|---|---|---|---|---|
+| **Caminar (Walk)** | `image_effc215b.png` | 942×1024 | 6 frames (3x2) | Ciclo de paso firme con zancada pesada de culturista. |
+| **Correr (Run)** | `image_d9b6c0f7.png` | 942×1024 | 6 frames (3x2) | Esprint con brazos en guardia y torso inclinado hacia adelante. |
+| **Salto y Caída (Jump / Fall)** | `image_eaab78e9.png` | 942×1024 | 6 frames (3x2) | Agache de impulso, despegue vertical, ápice de salto, caída con brazos abiertos y aterrizaje. |
+| **Rodar / Esquivar (Roll / Dodge)** | `image_e759561c.png` | 942×1024 | 6 frames (3x2) | Agache rápido, bola compacta de rodamiento en el suelo, giro completo y recuperación en guardia. |
+| **Combo Melee Completo** | `image_2e9f4148.png` | 942×1024 | 6 frames (3x2) | Jab frontal izquierdo, gancho derecho directo, patada alta frontal y rodillazo contundente. |
+| **Puñetazo Directo (One-Hand)** | `image_2a1be181.png` | 1024×572 | 5 frames horiz. | Preparación de guardia, estirada de puño directo, impacto y retorno rápido a guardia. |
+| **Uppercut Ascendente** | `image_b8733588.png` | 1024×572 | 5 frames horiz. | Agache con puño bajo, elevación explosiva de puñetazo al mentón y reajuste. |
+| **Smash a Dos Manos (Overhead)** | `image_83b492a7.png` | 1024×572 | 6 frames horiz. | Elevación de ambos puños cerrados sobre la cabeza, salto y martillazo hacia el suelo con impacto sísmico. |
+| **Disparo de Armas (Fire)** | `image_398d54e5.png` / `image_bd904280.png` | 1024×572 | 4 frames horiz. | Secuencia con retroceso de disparo para pistolas de una mano y rifles/escopetas a dos manos con destello de boca (muzzle flash). |
+
+### 11.3 Catálogo de Spritesheets de Animación para SANTA CLAUS (11 Hojas)
+
+| Acción | Archivo | Dimensiones | Frames | Descripción y Animación |
+|---|---|---|---|---|
+| **Caminar (Walk)** | `image_5715b30b.png` | 1024×572 | 6 frames horiz. | Marcha pesada con saco a la espalda, abrigo rojo ondeando y barba al viento. |
+| **Correr (Run)** | `image_a14e1ec4.png` | 1024×506 | 6 frames horiz. | Carrera acelerada con paso largo y saco sujeto firmemente. |
+| **Salto y Caída (Jump / Fall)** | `image_d0f432a9.png` | 942×1024 | 6 frames arco | Salto con impulso de piernas, vuelo con saco flotando y caída firme con botas de nieve. |
+| **Rodar / Esquivar (Roll / Dodge)** | `image_f93f6e95.png` | 1024×572 | 6 frames horiz. | Voltereta esférica rodando sobre el saco de regalos y levantamiento en guardia. |
+| **Combo Melee Puño + Patada** | `image_9dd6ac40.png` | 1024×572 | 5 frames horiz. | Puñetazo con guantelete negro seguido de patada de talón demoledora. |
+| **Gancho Contundente (Hook)** | `image_586ddefc.png` | 1024×572 | 5 frames horiz. | Golpe curvo amplio con estela blanca de impacto y giro de hombro. |
+| **Smash con Saco a Dos Manos** | `image_3dfbebce.png` | 1024×572 | 5 frames horiz. | Carga del saco de regalos a dos manos en alto y golpeo demoledor contra el suelo (generando nube de polvo). |
+| **Disparo Pistola (1 Mano)** | `image_c5cac62a.png` | 1024×572 | 8 frames (4x2) | Apuntado con revólver/pistola, fogonazo naranja brillante, retroceso y rearme. |
+| **Disparo Escopeta/Rifle (2 Manos)** | `image_1a71215a.png` | 1024×572 | 8 frames (4x2) | Sujeción de arma larga a dos manos, llamarada expansiva y retroceso con empuje de hombro. |
+| **Lanzamiento / Granada (Throw)** | `image_2089daed.png` | 1024×572 | 7 frames horiz. | Preparación de lanzamiento hacia atrás, impulso de brazo y suelta parabólica de granada o regalo explosivo. |
+
+---
+
+### 11.4 Pasos de Implementación Técnica
+
+1. **Sub-Lote 11.A — Mundos y Selector de Escenarios (`WorldData.ts` y `MatchSetupModal.tsx`)**:
+   - Integrar los 6 mundos en `WORLDS` de `WorldData.ts` con sus geometrías de plataformas, temas visuales y fondos oficiales (`image_26e47cf6.png`, `image_57664f22.png`, `image_43c2b272.png`, `image_6f961c12.png`, `image_3d8d2fc4.png`, `image_e12875f3.png`).
+   - Añadir los mapas a `MAP_OPTIONS` en `MatchSetupModal.tsx` con sus nombres oficiales (`PUERTO MALDITO`, `FUNDICIÓN ROJA`, `METRO NEÓN`, `ZONA TÓXICA`, `FOSO "БОЙ!"`, `AZOTEA HOTEL`) y soporte en la previsualización.
+   - En `ArenaCanvas.tsx`: Pintar el fondo oficial centrado y ajustado al canvas (960×540) según el mundo seleccionado.
+
+2. **Sub-Lote 11.B — Activación de Personajes (`MainMenu.tsx` y `LandingScreen.tsx`)**:
+   - Cambiar `isPlayable: true` y tag `JUGABLE` para GYMRAT y SANTA CLAUS en `PROTAGONISTS` de `MainMenu.tsx` y `LandingScreen.tsx`.
+   - Permitir elegir a Gymrat o Santa Claus como P1 o P2 en modo 1 Jugador y 2 Jugadores sin restricciones.
+
+3. **Sub-Lote 11.C — Motor de Animación para Múltiples Personajes (`ArenaCanvas.tsx`)**:
+   - Crear el mapa de hojas de sprites por facción (`CHARACTER_SPRITE_SHEETS[faction]`):
+     * Cargar las hojas de `idle`, `walk`, `run`, `jump`, `roll`, `melee`, `smash`, `shoot_1h`, `shoot_2h` y `throw` para Ninja, Gymrat y Santa Claus.
+   - Implementar el cortador de frames (frame slicing):
+     * Para hojas de 6 frames en 3×2 (`942×1024`): ancho frame = 314 px, alto frame = 512 px.
+     * Para tiras horizontales (`1024×572`): ancho frame = `1024 / numFrames`, alto frame = 572 px.
+     * Para tiras dobles 4×2 (`1024×572`): ancho frame = 256 px, alto frame = 286 px.
+   - Conectar el estado del FSM (`currentState`: idle, walk, run, jump, fall, roll, melee, shoot, throw) al spritesheet correspondiente del personaje seleccionado.
+
+4. **Sub-Lote 11.D — Verificación y Playtest**:
+   - Compilación limpia con `npm run lint` y `npm run build`.
+   - Comprobar que caminar, correr, saltar, rodar y golpear con Gymrat y Santa Claus se visualizan con sus animaciones exclusivas y fluidas a 60 fps.
+   - Comprobar que los 6 escenarios cargan sus fondos, colisiones y plataformas correctamente.
+
+---
+
 ## 5. Pruebas obligatorias por lote
 
 | Prueba | Cómo | Aprueba si |
@@ -288,6 +361,9 @@ Con `?debug=1`, mostrar sobre cada bot en texto pequeño: estado de IA actual y 
 | Hit-stop / stun | Golpear al bot y al jugador | Pausa visible; stun distinto por golpe |
 | Transición de físicas | Golpear en el aire, derribar, levantarse | Sin saltos de posición ni de velocidad |
 | Marcador | 1, 3, 5, 7 rondas e infinito | Casillas = victorias necesarias; infinito muestra número |
+| Selección de Personajes | Elegir Ninja, Gymrat o Santa Claus | Los 3 son seleccionables e inician el combate con sus sprites |
+| Animación de Combate | Probar caminar, correr, saltar, rodar y golpear con cada personaje | Muestra sus spritesheets dedicados sin deformación |
+| 6 Escenarios | Seleccionar cada mapa en el modal de configuración | Carga el fondo oficial, plataformas y colisiones correctas |
 | Móvil | Abrir en teléfono | Arena legible, sin teclas pegadas |
 | Build | `npm run lint && npm run build` | Sin errores nuevos |
 
@@ -298,7 +374,7 @@ Con `?debug=1`, mostrar sobre cada bot en texto pequeño: estado de IA actual y 
 ```markdown
 ## [ID] Nombre del módulo
 - **Fecha:** AAAA-MM-DD
-- **Lote / Prioridad:** (0-6) / (Alta | Media | Baja)
+- **Lote / Prioridad:** (0-11) / (Alta | Media | Baja)
 - **Estado:** ☐ Pendiente  ☐ En curso  ☐ Probado  ☐ Cerrado
 
 ### Problema
@@ -314,6 +390,6 @@ Con `?debug=1`, mostrar sobre cada bot en texto pequeño: estado de IA actual y 
 
 ## 7. Orden sugerido para empezar
 
-1. ✅ Lotes 0, 1 y 1.5 → 2. Lote 2 (B-02, B-08, B-09) → 3. **7.1 UI de bots** (se puede hacer en paralelo, no toca el motor) → 4. Lote 3 (UI) → 5. 7.3 y 7.4 (multi-bot) → 6. Lote 8 (IA) → 7. Lotes 4–6.
+1. ✅ Lotes 0, 1 y 1.5 → 2. **Lote 11 (Nuevos Mapas y Activación de Gymrat y Santa Claus)** → 3. Lote 2 (B-02, B-08, B-09) → 4. **7.1 UI de bots** → 5. Lote 3 (UI) → 6. 7.3 y 7.4 (multi-bot) → 7. Lote 8 (IA) → 8. Lotes 4–6.
 
 Cada paso es un commit pequeño; si algo se rompe, se vuelve atrás solo ese paso.

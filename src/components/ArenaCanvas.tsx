@@ -333,6 +333,114 @@ export const CHARACTER_SPRITESHEETS: Record<string, SpritesheetDef> = {
     throwUpRows: 1,
     throwUpTotalFrames: 5,
   },
+  // ── GYMRAT (PROTAGONISTA BRAWLER) ──
+  [BotFaction.Gymrat]: {
+    idleUrl: '/assets/sprites/player/gymrat.png',
+    walkSheetUrl: '/assets/aistudio/image_effc215b.png',
+    runSheetUrl: '/assets/aistudio/image_d9b6c0f7.png',
+    rollSheetUrl: '/assets/aistudio/image_e759561c.png',
+    jumpSheetUrl: '/assets/aistudio/image_eaab78e9.png',
+    meleeSheetUrl: '/assets/aistudio/image_2e9f4148.png',
+    oneHandAttackSheetUrl: '/assets/aistudio/image_2a1be181.png',
+    twoHandAttackSheetUrl: '/assets/aistudio/image_83b492a7.png',
+    pistolShootSheetUrl: '/assets/aistudio/image_398d54e5.png',
+    rifleShootSheetUrl: '/assets/aistudio/image_bd904280.png',
+    throwUpSheetUrl: '/assets/sprites/player/throw_up.png',
+    cols: 6,
+    rows: 1,
+    totalFrames: 6,
+    hasWalkSheet: true,
+    hasRunSheet: true,
+    hasRollSheet: true,
+    hasJumpSheet: true,
+    hasMeleeSheet: true,
+    hasOneHandAttackSheet: true,
+    hasTwoHandAttackSheet: true,
+    hasPistolShootSheet: true,
+    hasRifleShootSheet: true,
+    hasThrowUpSheet: true,
+    runCols: 6,
+    runRows: 1,
+    runTotalFrames: 6,
+    rollCols: 7,
+    rollRows: 1,
+    rollTotalFrames: 7,
+    jumpCols: 3,
+    jumpRows: 2,
+    jumpTotalFrames: 6,
+    meleeCols: 3,
+    meleeRows: 2,
+    meleeTotalFramesPerRow: 3,
+    oneHandCols: 5,
+    oneHandRows: 1,
+    oneHandTotalFrames: 5,
+    twoHandCols: 6,
+    twoHandRows: 1,
+    twoHandTotalFrames: 6,
+    pistolCols: 4,
+    pistolRows: 1,
+    pistolTotalFrames: 4,
+    rifleCols: 4,
+    rifleRows: 1,
+    rifleTotalFrames: 4,
+    throwUpCols: 5,
+    throwUpRows: 1,
+    throwUpTotalFrames: 5,
+  },
+  // ── SANTA CLAUS (PROTAGONISTA SUPERVIVIENTE) ──
+  [BotFaction.Santa]: {
+    idleUrl: '/assets/sprites/player/santaclo.png',
+    walkSheetUrl: '/assets/aistudio/image_5715b30b.png',
+    runSheetUrl: '/assets/aistudio/image_a14e1ec4.png',
+    rollSheetUrl: '/assets/aistudio/image_f93f6e95.png',
+    jumpSheetUrl: '/assets/aistudio/image_d0f432a9.png',
+    meleeSheetUrl: '/assets/aistudio/image_9dd6ac40.png',
+    oneHandAttackSheetUrl: '/assets/aistudio/image_586ddefc.png',
+    twoHandAttackSheetUrl: '/assets/aistudio/image_3dfbebce.png',
+    pistolShootSheetUrl: '/assets/aistudio/image_c5cac62a.png',
+    rifleShootSheetUrl: '/assets/aistudio/image_1a71215a.png',
+    throwUpSheetUrl: '/assets/aistudio/image_2089daed.png',
+    cols: 6,
+    rows: 1,
+    totalFrames: 6,
+    hasWalkSheet: true,
+    hasRunSheet: true,
+    hasRollSheet: true,
+    hasJumpSheet: true,
+    hasMeleeSheet: true,
+    hasOneHandAttackSheet: true,
+    hasTwoHandAttackSheet: true,
+    hasPistolShootSheet: true,
+    hasRifleShootSheet: true,
+    hasThrowUpSheet: true,
+    runCols: 6,
+    runRows: 1,
+    runTotalFrames: 6,
+    rollCols: 7,
+    rollRows: 1,
+    rollTotalFrames: 7,
+    jumpCols: 3,
+    jumpRows: 2,
+    jumpTotalFrames: 6,
+    meleeCols: 3,
+    meleeRows: 2,
+    meleeTotalFramesPerRow: 3,
+    oneHandCols: 5,
+    oneHandRows: 1,
+    oneHandTotalFrames: 5,
+    twoHandCols: 6,
+    twoHandRows: 1,
+    twoHandTotalFrames: 6,
+    pistolCols: 4,
+    pistolRows: 1,
+    pistolTotalFrames: 4,
+    rifleCols: 4,
+    rifleRows: 1,
+    rifleTotalFrames: 4,
+    throwUpCols: 5,
+    throwUpRows: 1,
+    throwUpTotalFrames: 5,
+  },
   // ── 1. ASESINO (ASSASSIN) ──
   // Utiliza la imagen oficial prevista (/assets/sprites/player/Assassin_2.png)
   // para idle y caminata con ciclo biomecánico fluido, sin cambiar a formas no previstas ni perder la imagen.
@@ -1454,8 +1562,8 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
   // Inicializar estado del juego
   useEffect(() => {
     const worldCfg = getWorldConfig(worldId);
-    const effectiveP1Faction = BotFaction.Ninja;
-    const effectiveP2Faction = gameMode === 'local1v1' ? BotFaction.Ninja : botFaction;
+    const effectiveP1Faction = playerFaction || BotFaction.Ninja;
+    const effectiveP2Faction = gameMode === 'local1v1' ? (playerFaction === BotFaction.Ninja ? BotFaction.Gymrat : BotFaction.Ninja) : botFaction;
 
     const arch = getBotArchetype(effectiveP2Faction);
     const pArch = getBotArchetype(effectiveP1Faction);
@@ -1466,7 +1574,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     const activeBotCount = gameMode === 'local1v1' ? 1 : Math.min(configuredSlots.length, ENGINE_MAX_BOTS);
     const allSpawns = computeFighterSpawns(worldCfg, 1 + activeBotCount);
     const spawnP1 = allSpawns[0] || { x: 200, y: 460 };
-    const p1Label = gameMode === 'local1v1' ? 'NINJA (J1)' : 'NINJA';
+    const p1Label = gameMode === 'local1v1' ? `${pArch.name.toUpperCase()} (J1)` : pArch.name.toUpperCase();
 
     const p1 = createPlayerState(1, p1Label, false, spawnP1.x, spawnP1.y);
     p1.maxHealth = pArch.maxHealth;
@@ -1504,11 +1612,12 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
     const initialBots = createBotInstances(worldCfg);
 
-    // Cargar imagen de fondo si es el mundo clásico
+    // Cargar imagen de fondo del escenario si existe
     let bgImg: HTMLImageElement | null = null;
-    if (worldCfg.id === 'classic') {
+    const bgUrl = worldCfg.parallaxLayers.find((l) => l.imageUrl)?.imageUrl || (worldCfg.id !== 'desert' && worldCfg.id !== 'industrial' ? worldCfg.preview : undefined);
+    if (bgUrl) {
       bgImg = new Image();
-      bgImg.src = '/assets/backgrounds/warehouse.jpg';
+      bgImg.src = bgUrl;
     }
 
     // Carga de Spritesheet y texturas para P1 y Bot según su facción seleccionada
@@ -1816,8 +1925,8 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     if (!stateRef.current) return;
     const s = stateRef.current;
     const worldCfg = s.worldConfig;
-    const effectiveP1Faction = BotFaction.Ninja;
-    const effectiveP2Faction = gameMode === 'local1v1' ? BotFaction.Ninja : botFaction;
+    const effectiveP1Faction = playerFaction || BotFaction.Ninja;
+    const effectiveP2Faction = gameMode === 'local1v1' ? (playerFaction === BotFaction.Ninja ? BotFaction.Gymrat : BotFaction.Ninja) : botFaction;
     const arch = getBotArchetype(effectiveP2Faction);
     const pArch = getBotArchetype(effectiveP1Faction);
 
@@ -1843,8 +1952,8 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       }));
     }
 
-    const p1Label = gameMode === 'local1v1' ? 'NINJA (J1)' : 'NINJA';
-    const p2Label = gameMode === 'local1v1' ? 'NINJA (J2)' : arch.name.toUpperCase();
+    const p1Label = gameMode === 'local1v1' ? `${pArch.name.toUpperCase()} (J1)` : pArch.name.toUpperCase();
+    const p2Label = gameMode === 'local1v1' ? `${arch.name.toUpperCase()} (J2)` : arch.name.toUpperCase();
 
     s.p1 = createPlayerState(1, p1Label, false, spawnP1.x, spawnP1.y);
     s.p1.maxHealth = pArch.maxHealth;
@@ -7691,6 +7800,9 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           ctx.lineTo(x, 200);
           ctx.stroke();
         }
+      } else if (s.bgImage && s.bgImage.complete && s.bgImage.naturalWidth > 0) {
+        // Fondo oficial del escenario en alta fidelidad pixel art (Puerto Maldito, Fundición, Metro Neón, Lab Tóxico, Foso БОЙ, Azotea Hotel)
+        ctx.drawImage(s.bgImage, 0, 0, ARENA_WIDTH, ARENA_HEIGHT);
       } else {
         // Warehouse: Almacén industrial oscuro con figuras geométricas y sistema de tuberías estilo Superfighters
         const bgGrad = ctx.createLinearGradient(0, 0, 0, ARENA_HEIGHT);

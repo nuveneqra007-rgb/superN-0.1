@@ -5,6 +5,7 @@
 
 import { GameConstants } from './GameConstants';
 import { WeaponType } from './WeaponData';
+import { BotFaction } from './BotData';
 
 export enum PlayerFSMState {
   Idle = 'Idle',                 // 0 - En pie, quieto
@@ -44,6 +45,7 @@ export interface PlayerState {
   id: number;
   name: string;
   isBot: boolean;
+  faction?: BotFaction;
 
   // Inventario por ranuras (J1 y J2 humano en local1v1)
   inventory?: PlayerInventory;
@@ -162,6 +164,7 @@ export interface PlayerState {
   rifleAnimFrame?: number;
   rifleAnimTimer?: number;
   rifleHasFired?: boolean;
+  rifleHasRecoilApplied?: boolean;
 
   // Set de animación de Lanzamiento (throw_up - 5 frames One Shot, suelta en frame 3)
   isThrowing?: boolean;
@@ -180,12 +183,14 @@ export function createPlayerState(
   name: string,
   isBot: boolean,
   x: number,
-  y: number
+  y: number,
+  faction?: BotFaction
 ): PlayerState {
   return {
     id,
     name,
     isBot,
+    faction,
     fsm: PlayerFSMState.Idle,
     stateTicks: 0,
     x,

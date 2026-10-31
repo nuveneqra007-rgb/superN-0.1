@@ -923,6 +923,226 @@ function sliceGymratPistol() {
   console.log(`[PistolShoot] Generado: ${CW * 4}x${CH} (4 frames: apunte, disparo con fogonazo, retroceso, recuperación)`);
 }
 
+function sliceGymratTwoHand() {
+  const inputPath = path.resolve('public/assets/aistudio/image_83b492a7.png');
+  if (!fs.existsSync(inputPath)) {
+    console.error('No se encontró el archivo de origen para two hand attack:', inputPath);
+    return;
+  }
+
+  const srcBuf = fs.readFileSync(inputPath);
+  const srcPng = PNG.sync.read(srcBuf);
+  const W = srcPng.width;
+  const H = srcPng.height;
+
+  const isChar = new Uint8Array(W * H);
+  const queue = [];
+
+  for (let y = 50; y < 500; y++) {
+    for (let x = 0; x < W; x++) {
+      const idx = (y * W + x) * 4;
+      const r = srcPng.data[idx], g = srcPng.data[idx + 1], b = srcPng.data[idx + 2];
+      if (r > 150 && g > 80 && (r - b) > 40) {
+        isChar[y * W + x] = 1;
+        queue.push([x, y]);
+      }
+    }
+  }
+
+  let head = 0;
+  while (head < queue.length) {
+    const [x, y] = queue[head++];
+    const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]];
+    for (const [dx, dy] of dirs) {
+      const nx = x + dx, ny = y + dy;
+      if (nx >= 0 && nx < W && ny >= 50 && ny < 500) {
+        const npos = ny * W + nx;
+        if (!isChar[npos]) {
+          const idx = (ny * W + nx) * 4;
+          const r = srcPng.data[idx], g = srcPng.data[idx + 1], b = srcPng.data[idx + 2];
+          const maxC = Math.max(r, g, b);
+          const minC = Math.min(r, g, b);
+          const isChecker = (maxC - minC <= 14) && minC >= 65;
+          if (!isChecker) {
+            isChar[npos] = 1;
+            queue.push([nx, ny]);
+          }
+        }
+      }
+    }
+  }
+
+  const cuts = [
+    { f: 0, x0: 0, x1: 170, groundY: 434 },
+    { f: 1, x0: 171, x1: 340, groundY: 434 },
+    { f: 2, x0: 341, x1: 515, groundY: 434 },
+    { f: 3, x0: 516, x1: 685, groundY: 432 },
+    { f: 4, x0: 686, x1: 855, groundY: 432 },
+    { f: 5, x0: 856, x1: 1023, groundY: 432 },
+  ];
+
+  const CW = 300;
+  const CH = 400;
+  const targetGroundY = CH - 15;
+  const targetCenterX = 150;
+
+  const outPng = new PNG({ width: CW * 6, height: CH });
+  outPng.data.fill(0);
+
+  cuts.forEach(({ f, x0, x1, groundY }) => {
+    let sumX = 0, count = 0;
+    for (let y = 0; y < H; y++) {
+      for (let x = x0; x <= x1; x++) {
+        if (isChar[y * W + x]) {
+          sumX += x;
+          count++;
+        }
+      }
+    }
+    const avgX = count > 0 ? (sumX / count) : ((x0 + x1) / 2);
+
+    const cellStartX = f * CW;
+    const offsetX = Math.round(cellStartX + targetCenterX - avgX);
+    const offsetY = targetGroundY - groundY;
+
+    for (let y = 0; y < H; y++) {
+      for (let x = x0; x <= x1; x++) {
+        if (isChar[y * W + x]) {
+          const destX = offsetX + x;
+          const destY = offsetY + y;
+          if (destX >= cellStartX && destX < cellStartX + CW && destY >= 0 && destY < CH) {
+            const srcIdx = (y * W + x) * 4;
+            const destIdx = (destY * outPng.width + destX) * 4;
+            outPng.data[destIdx] = srcPng.data[srcIdx];
+            outPng.data[destIdx + 1] = srcPng.data[srcIdx + 1];
+            outPng.data[destIdx + 2] = srcPng.data[srcIdx + 2];
+            outPng.data[destIdx + 3] = 255;
+          }
+        }
+      }
+    }
+  });
+
+  const outBuf = PNG.sync.write(outPng);
+  const targets = [
+    'public/assets/sprites/player/gymrat_two_hand_attack.png',
+    'assets/sprites/player/gymrat_two_hand_attack.png',
+    'public/assets/characters/gymrat/two_hand_attack.png',
+  ];
+
+  for (const t of targets) {
+    const dir = path.dirname(t);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(t, outBuf);
+  }
+  console.log(`[TwoHand] Generado: ${CW * 6}x${CH} (6 frames: guardia, elevación, cénit, azote, impacto en suelo, recuperación)`);
+}
+
+function sliceGymratRifle() {
+  const inputPath = path.resolve('public/assets/aistudio/image_bd904280.png');
+  if (!fs.existsSync(inputPath)) {
+    console.error('No se encontró el archivo de origen para rifle shoot:', inputPath);
+    return;
+  }
+
+  const srcBuf = fs.readFileSync(inputPath);
+  const srcPng = PNG.sync.read(srcBuf);
+  const W = srcPng.width;
+  const H = srcPng.height;
+
+  const isChar = new Uint8Array(W * H);
+  const queue = [];
+
+  for (let y = 50; y < 500; y++) {
+    for (let x = 0; x < W; x++) {
+      const idx = (y * W + x) * 4;
+      const r = srcPng.data[idx], g = srcPng.data[idx + 1], b = srcPng.data[idx + 2];
+      const isSkin = (r > 150 && g > 80 && (r - b) > 40);
+      const isFlash = (r > 200 && g > 180 && b < 100);
+      if (isSkin || isFlash) {
+        isChar[y * W + x] = 1;
+        queue.push([x, y]);
+      }
+    }
+  }
+
+  let head = 0;
+  while (head < queue.length) {
+    const [x, y] = queue[head++];
+    const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]];
+    for (const [dx, dy] of dirs) {
+      const nx = x + dx, ny = y + dy;
+      if (nx >= 0 && nx < W && ny >= 50 && ny < 500) {
+        const npos = ny * W + nx;
+        if (!isChar[npos]) {
+          const idx = (ny * W + nx) * 4;
+          const r = srcPng.data[idx], g = srcPng.data[idx + 1], b = srcPng.data[idx + 2];
+          const maxC = Math.max(r, g, b);
+          const minC = Math.min(r, g, b);
+          const isChecker = (maxC - minC <= 14) && minC >= 65;
+          if (!isChecker) {
+            isChar[npos] = 1;
+            queue.push([nx, ny]);
+          }
+        }
+      }
+    }
+  }
+
+  const cuts = [
+    { f: 0, x0: 0, x1: 247, footCenter: 111 },
+    { f: 1, x0: 248, x1: 538, footCenter: 356 },
+    { f: 2, x0: 539, x1: 772, footCenter: 650 },
+    { f: 3, x0: 773, x1: 1023, footCenter: 879 },
+  ];
+
+  const CW = 360;
+  const CH = 400;
+  const targetGroundY = CH - 15; // 385 (alineado idéntico a todos los spritesheets de Gymrat)
+  const targetCenterX = 160;
+  const groundY = 434;
+
+  const outPng = new PNG({ width: CW * 4, height: CH });
+  outPng.data.fill(0);
+
+  cuts.forEach(({ f, x0, x1, footCenter }) => {
+    const cellStartX = f * CW;
+    const offsetX = Math.round(cellStartX + targetCenterX - footCenter);
+    const offsetY = targetGroundY - groundY;
+
+    for (let y = 0; y < H; y++) {
+      for (let x = x0; x <= x1; x++) {
+        if (isChar[y * W + x]) {
+          const destX = offsetX + x;
+          const destY = offsetY + y;
+          if (destX >= cellStartX && destX < cellStartX + CW && destY >= 0 && destY < CH) {
+            const srcIdx = (y * W + x) * 4;
+            const destIdx = (destY * outPng.width + destX) * 4;
+            outPng.data[destIdx] = srcPng.data[srcIdx];
+            outPng.data[destIdx + 1] = srcPng.data[srcIdx + 1];
+            outPng.data[destIdx + 2] = srcPng.data[srcIdx + 2];
+            outPng.data[destIdx + 3] = 255;
+          }
+        }
+      }
+    }
+  });
+
+  const outBuf = PNG.sync.write(outPng);
+  const targets = [
+    'public/assets/sprites/player/gymrat_rifle_shoot.png',
+    'assets/sprites/player/gymrat_rifle_shoot.png',
+    'public/assets/characters/gymrat/rifle_shoot.png',
+  ];
+
+  for (const t of targets) {
+    const dir = path.dirname(t);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(t, outBuf);
+  }
+  console.log(`[RifleShoot] Generado: ${CW * 4}x${CH} (4 frames: apunte, disparo con fogonazo, retroceso, recuperación)`);
+}
+
 sliceGymratWalk();
 sliceGymratRun();
 sliceGymratJump();
@@ -930,7 +1150,10 @@ sliceGymratRoll();
 sliceGymratMelee();
 sliceGymratOneHand();
 sliceGymratPistol();
+sliceGymratTwoHand();
+sliceGymratRifle();
 
-export { sliceGymratWalk, sliceGymratRun, sliceGymratJump, sliceGymratRoll, sliceGymratMelee, sliceGymratOneHand, sliceGymratPistol };
+export { sliceGymratWalk, sliceGymratRun, sliceGymratJump, sliceGymratRoll, sliceGymratMelee, sliceGymratOneHand, sliceGymratPistol, sliceGymratTwoHand, sliceGymratRifle };
+
 
 

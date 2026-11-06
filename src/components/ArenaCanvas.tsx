@@ -1,0 +1,11593 @@
+// =============================================================
+// ArenaCanvas.tsx — Motor de renderizado y loop de juego 60Hz
+// Soporte multiescenario con 3 mundos y mecánicas interactivas
+// =============================================================
+
+import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { BotFaction, getBotArchetype, BotSlotConfig, CANONICAL_BOT_FACTIONS, BotAIType, MAX_BOTS } from '../game/BotData';
+import { BotAI, BotAIState, createBotFSMData, BotFSMData } from '../game/BotFSM';
+import { BotInstance } from '../game/BotInstance';
+import { CombatSystem, HitResult } from '../game/CombatSystem';
+import { GameConstants } from '../game/GameConstants';
+import { PhysicsRect, PhysicsStep } from '../game/PhysicsStep';
+import { PlayerFSM } from '../game/PlayerFSM';
+import { createPlayerState, PlayerFSMState, PlayerState, WeaponSlotType, PlayerInventory } from '../game/PlayerState';
+import { getWeapon, isBladeWeapon, isOneHandWeapon, isOneHandBladeWeapon, isOneHandBluntWeapon, isPistolWeapon, isRifleWeapon, isSwordWeapon, isThrowableWeapon, isTwoHandWeapon, SpawnableWeaponsList, WeaponCategory, WeaponDatabase, WeaponType, getWeaponStunData, slotForWeapon, WeaponSlot, getWeaponGrip, getWeaponHitFrame } from '../game/WeaponData';
+import { PlayerController, PlayerInput, PlayerState as ControllerState, PLAYER_CONFIG } from '../game/PlayerController';
+import { sounds } from '../game/SoundEffects';
+import { getWorldConfig, WorldConfig, HazardCfg, PlatformRect } from '../game/WorldData';
+import { GameMode } from './ModeSelectScreen';
+import { FighterBar, FighterBarData, FighterSlotInfo, SHOW_ENERGY_BAR } from './FighterBar';
+import { getFighterSheetConfig, FighterSheetConfig, getCharacterDefByFaction, getUniformScaleConfig, UniformScaleAnchor, frameMetaData } from '../game/CharacterData';
+import {
+  GrenadeType,
+  GrenadeConfig,
+  GRENADE_DATABASE,
+  GRENADE_MAX_CAPACITY,
+  GRENADE_INITIAL_COUNT,
+  ALL_GRENADE_TYPES,
+  GrenadeInventory,
+  createGrenadeInventory,
+  getTotalGrenades,
+  canAddGrenade,
+  addGrenades,
+  cycleGrenadeType,
+  consumeGrenade,
+  GrenadePickupEntity,
+} from '../game/GrenadeSystem';
+import { CONTROLS, isAnyPressed, CONTROLS_TEXT } from '../game/Controls';
+import { ArsenalView } from './ArsenalView';
+
+export interface TutorialStepInfo {
+  title: string;
+  description: string;
+  goalText: string;
+}
+
+export const PRACTICE_TUTORIAL_STEPS: TutorialStepInfo[] = [
+  {
+    title: 'WARM-UP',
+    description: 'Use the left and right direction keys to move (A and D or Arrow Keys).',
+    goalText: 'Muévete a la izquierda y derecha para continuar.',
+  },
+  {
+    title: 'JUMPING & PLATFORMS',
+    description: 'Press the jump key (W or Up Arrow) to leap onto platforms.',
+    goalText: 'Salta para alcanzar la plataforma elevada.',
+  },
+  {
+    title: 'EVASIVE ROLL',
+    description: 'Press Down + Direction (S + A/D) to roll and dodge attacks with invulnerability.',
+    goalText: 'Ejecuta una rodada evasiva (S + A/D).',
+  },
+  {
+    title: 'UNARMED COMBAT',
+    description: 'To swing your fists, press the melee key (N by default). You can perform a combo by attacking several times quickly.',
+    goalText: 'Golpea al Dummy de entrenamiento para continuar.',
+  },
+  {
+    title: 'WEAPON RACK',
+    description: 'Move close to the weapon locker on the left and press [E] to choose any weapon with infinite ammunition.',
+    goalText: 'Acércate al estante de armas y presiona [E].',
+  },
+  {
+    title: 'AIMING AND SHOOTING',
+    description: 'Press the fire key (M) to shoot your weapon at the training dummy.',
+    goalText: 'Dispara al dummy con tu arma equipada.',
+  },
+  {
+    title: 'TACTICAL EXPLOSIVES',
+    description: 'Press [B] to throw grenades or Molotov cocktails. Hold directional keys to alter trajectory.',
+    goalText: 'Lanza una granada o cóctel con [B].',
+  },
+  {
+    title: 'FREE TRAINING & SANDBOX',
+    description: 'Training complete! Press [ESC] at any time to switch Bot behavior (Quiet, Adaptive, Aggressive) or toggle Hitboxes.',
+    goalText: '¡Entrenamiento libre disponible!',
+  },
+];
+
+export const ENGINE_MAX_BOTS = MAX_BOTS;
+export const START_WITH_GRENADES = false;
+
+export const getPlayerFactionPortrait = (faction: BotFaction | string): string => {
+  const charDef = getCharacterDefByFaction(faction);
+  if (charDef?.portraitUrl) return charDef.portraitUrl;
+  const arch = getBotArchetype(faction as BotFaction);
+  return arch?.spriteUrl || '/assets/sprites/player/ninja.png';
+};
+
+export const getPlayerFactionColor = (faction: BotFaction | string): string => {
+  const charDef = getCharacterDefByFaction(faction);
+  if (charDef?.accentColor) return charDef.accentColor;
+  return '#38bdf8';
+};
+
+export const getGrenadeIconUrl = (gType: GrenadeType): string => {
+  return GRENADE_DATABASE[gType]?.iconUrl || '/assets/weapons/Grenade.png';
+};
+
+export const getWeaponIconUrl = (wType: WeaponType): string => {
+  if (wType === WeaponType.Fists) return '/assets/weapons/Fist.png';
+  const w = getWeapon(wType);
+  return w?.iconUrl || '/assets/weapons/Fist.png';
+};
+
+/**
+ * Calcula los puntos de spawn para todos los luchadores (J1 + N bots).
+ * Si el mundo tiene suficientes puntos, los usa directamente.
+ * Si hay más luchadores que puntos de spawn, los reparte equiespaciadamente sobre el suelo,
+ * garantizando una distancia mínima de al menos 80px entre cada dos luchadores.
+ */
+export const computeFighterSpawns = (
+  worldCfg: WorldConfig,
+  totalFighters: number
+): Array<{ x: number; y: number }> => {
+  if (worldCfg.spawns.length >= totalFighters) {
+    return worldCfg.spawns.slice(0, totalFighters);
+  }
+
+  const groundY = worldCfg.spawns[0]?.y ?? 460;
+  const leftMargin = 120;
+  const rightMargin = 840;
+  const availableWidth = rightMargin - leftMargin;
+  const step = availableWidth / Math.max(1, totalFighters - 1);
+
+  const spawns: Array<{ x: number; y: number }> = [];
+  for (let i = 0; i < totalFighters; i++) {
+    spawns.push({
+      x: Math.round(leftMargin + i * step),
+      y: groundY,
+    });
+  }
+  return spawns;
+};
+
+export const buildFighterBarData = (
+  fighter: PlayerState,
+  color: string,
+  portrait: string | undefined,
+  score: number,
+  grenades: GrenadeInventory
+): FighterBarData => {
+  const inv = fighter.inventory;
+  const isAlive = fighter.isAlive;
+  const activeSlot = inv
+    ? inv.activeSlot
+    : (() => {
+        const wSlot = slotForWeapon(fighter.equippedWeapon);
+        if (wSlot === 'handgun') return 'handgun' as const;
+        if (wSlot === 'primary') return 'primary' as const;
+        if (wSlot === 'throwable') return 'throwable' as const;
+        return 'melee' as const;
+      })();
+
+  let meleeSlot: FighterSlotInfo;
+  let handgunSlot: FighterSlotInfo;
+  let primarySlot: FighterSlotInfo;
+
+  if (inv) {
+    meleeSlot = {
+      weaponType: inv.melee,
+      iconUrl: getWeaponIconUrl(inv.melee),
+      isEmpty: false,
+    };
+    handgunSlot = inv.handgun
+      ? {
+          weaponType: inv.handgun.type,
+          iconUrl: getWeaponIconUrl(inv.handgun.type),
+          ammo: inv.activeSlot === 'handgun' ? fighter.ammo : inv.handgun.ammo,
+          isEmpty: false,
+        }
+      : {
+          iconUrl: '',
+          isEmpty: true,
+        };
+    primarySlot = inv.primary
+      ? {
+          weaponType: inv.primary.type,
+          iconUrl: getWeaponIconUrl(inv.primary.type),
+          ammo: inv.activeSlot === 'primary' ? fighter.ammo : inv.primary.ammo,
+          isEmpty: false,
+        }
+      : {
+          iconUrl: '',
+          isEmpty: true,
+        };
+  } else {
+    const wSlot = slotForWeapon(fighter.equippedWeapon);
+    if (wSlot === 'handgun') {
+      meleeSlot = { weaponType: WeaponType.Fists, iconUrl: '/assets/weapons/Fist.png', isEmpty: false };
+      handgunSlot = {
+        weaponType: fighter.equippedWeapon,
+        iconUrl: getWeaponIconUrl(fighter.equippedWeapon),
+        ammo: fighter.ammo,
+        isEmpty: false,
+      };
+      primarySlot = { iconUrl: '', isEmpty: true };
+    } else if (wSlot === 'primary') {
+      meleeSlot = { weaponType: WeaponType.Fists, iconUrl: '/assets/weapons/Fist.png', isEmpty: false };
+      handgunSlot = { iconUrl: '', isEmpty: true };
+      primarySlot = {
+        weaponType: fighter.equippedWeapon,
+        iconUrl: getWeaponIconUrl(fighter.equippedWeapon),
+        ammo: fighter.ammo,
+        isEmpty: false,
+      };
+    } else if (wSlot === 'throwable') {
+      meleeSlot = { weaponType: WeaponType.Fists, iconUrl: '/assets/weapons/Fist.png', isEmpty: false };
+      handgunSlot = { iconUrl: '', isEmpty: true };
+      primarySlot = { iconUrl: '', isEmpty: true };
+    } else {
+      meleeSlot = {
+        weaponType: fighter.equippedWeapon,
+        iconUrl: getWeaponIconUrl(fighter.equippedWeapon),
+        isEmpty: false,
+      };
+      handgunSlot = { iconUrl: '', isEmpty: true };
+      primarySlot = { iconUrl: '', isEmpty: true };
+    }
+  }
+
+  const gActive = grenades.activeType;
+  const gCount = grenades.ammo[gActive] || 0;
+  const totalG = getTotalGrenades(grenades);
+  const throwableSlot: FighterSlotInfo = {
+    weaponType: gActive,
+    iconUrl: getGrenadeIconUrl(gActive),
+    count: gCount,
+    isEmpty: totalG <= 0 && gCount <= 0,
+  };
+
+  return {
+    id: fighter.id,
+    name: fighter.name,
+    color,
+    portrait,
+    health: fighter.health,
+    maxHealth: fighter.maxHealth,
+    energy: fighter.stamina,
+    isAlive,
+    score,
+    activeSlot,
+    slots: {
+      melee: meleeSlot,
+      handgun: handgunSlot,
+      primary: primarySlot,
+      throwable: throwableSlot,
+    },
+  };
+};
+
+interface ArenaCanvasProps {
+  gameMode?: GameMode;
+  playerFaction?: BotFaction;
+  botFaction: BotFaction;
+  botSlots?: BotSlotConfig[];
+  maxRounds: number;
+  worldId?: string;
+  onExitToMenu: () => void;
+  onMatchComplete?: (playerWon: boolean) => void;
+}
+
+/**
+ * Interfaz unificada de Spritesheets por Facción / Personaje.
+ * Lee única y exclusivamente desde CharacterData.ts y WeaponData.ts como Fuente Única de Verdad (Fase 2).
+ */
+export type SpritesheetDef = FighterSheetConfig;
+
+export function getCharacterSpritesheetDef(faction?: BotFaction | string): FighterSheetConfig {
+  return getFighterSheetConfig(faction || BotFaction.Ninja);
+}
+
+/**
+ * Función de renderizado inteligente con corrección de escala uniforme y anclaje de pivote:
+ * Si la hoja de sprites fue renderizada a una escala menor (ej. animaciones de disparo con armas de 2 manos),
+ * aplica el factor de escala uniforme para igualar exactamente la altura de la animación base (idle/walk),
+ * y ancla los pies en la línea del suelo para mantener la cabeza y los pies estables sin saltos visuales.
+ */
+export function drawSheetFrame(
+  ctx: CanvasRenderingContext2D,
+  sheetImg: HTMLImageElement,
+  sheetId: string,
+  frameIndex: number,
+  fallbackCols: number,
+  fallbackRows: number,
+  drawX: number,
+  drawY: number,
+  charW: number,
+  charH: number
+): void {
+  const sheetMeta = (frameMetaData as Record<string, any>)[sheetId];
+  const uniformCfg = getUniformScaleConfig(sheetId);
+
+  if (sheetMeta && sheetMeta.frames && sheetMeta.frames[frameIndex]) {
+    const f = sheetMeta.frames[frameIndex];
+    const cellW = f.cellW || Math.floor(sheetImg.naturalWidth / (fallbackCols || 1)) || 1;
+    const cellH = f.cellH || Math.floor(sheetImg.naturalHeight / (fallbackRows || 1)) || 1;
+    const scaleX = charW / cellW;
+    const scaleY = charH / cellH;
+
+    if (uniformCfg) {
+      // 1. Escalado Uniforme (ancho y alto proporcionales para no deformar píxeles)
+      const uScale = uniformCfg.scaleFactor;
+      const destW = f.w * scaleX * uScale;
+      const destH = f.h * scaleY * uScale;
+
+      // 2. Anclaje del Pivote vertical (los pies permanecen fijos en la línea del suelo)
+      const targetGroundY = drawY + charH * uniformCfg.feetYRatio;
+      const destY = targetGroundY - destH;
+
+      // 3. Alineación horizontal (los pies y centro de masa quedan alineados con el centro x=0)
+      let destX: number;
+      if (uniformCfg.feetCenterXInCell !== undefined) {
+        const localX = f.x - f.cellX;
+        const offsetFromCenter = uniformCfg.feetCenterXInCell - localX;
+        destX = 0 - offsetFromCenter * scaleX * uScale;
+      } else {
+        destX = drawX + (f.x - f.cellX) * scaleX * uScale;
+      }
+
+      ctx.drawImage(sheetImg, f.x, f.y, f.w, f.h, destX, destY, destW, destH);
+    } else {
+      const destW = f.w * scaleX;
+      const destH = f.h * scaleY;
+      const destX = drawX + (f.x - f.cellX) * scaleX;
+      const destY = drawY + (f.y - f.cellY) * scaleY;
+      ctx.drawImage(sheetImg, f.x, f.y, f.w, f.h, destX, destY, destW, destH);
+    }
+  } else {
+    const cols = fallbackCols || 1;
+    const rows = fallbackRows || 1;
+    const frameW = sheetImg.naturalWidth / cols;
+    const frameH = sheetImg.naturalHeight / rows;
+    const safeFrame = Math.max(0, Math.min(cols * rows - 1, frameIndex));
+    const col = safeFrame % cols;
+    const row = Math.floor(safeFrame / cols);
+
+    if (uniformCfg) {
+      const uScale = uniformCfg.scaleFactor;
+      const destW = charW * uScale;
+      const destH = charH * uScale;
+      const targetGroundY = drawY + charH * uniformCfg.feetYRatio;
+      const destY = targetGroundY - destH;
+      const destX = drawX - (destW - charW) / 2;
+      ctx.drawImage(sheetImg, col * frameW, row * frameH, frameW, frameH, destX, destY, destW, destH);
+    } else {
+      ctx.drawImage(sheetImg, col * frameW, row * frameH, frameW, frameH, drawX, drawY, charW, charH);
+    }
+  }
+}
+
+/**
+ * Obtiene la duración exacta en ticks de un frame según frameMeta.json (Fase 3):
+ * Permite que los golpes pesados de Santa se sientan lentos y contundentes,
+ * y los ataques con espadas y armas rápidas se sientan veloces y ágiles.
+ */
+export function getFrameDuration(sheetId: string, frameIndex: number, defaultTicks: number = 4): number {
+  const meta = (frameMetaData as Record<string, any>)[sheetId];
+  if (meta?.frameDurations && meta.frameDurations[frameIndex] !== undefined) {
+    return meta.frameDurations[frameIndex];
+  }
+  if (meta?.frames && meta.frames[frameIndex]?.durationTicks !== undefined) {
+    return meta.frames[frameIndex].durationTicks;
+  }
+  return defaultTicks;
+}
+
+interface ProjectileEntity {
+  id: number;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  damage: number;
+  onFireDuration: number;
+  explosionRadius: number;
+  shooterId: number;
+  weaponType: WeaponType;
+  pelletCount: number;
+  lifeTicks: number;
+  maxLifeTicks: number;
+  isGrenade?: boolean;
+  isMolotov?: boolean;
+  isThrowable?: boolean;
+  grenadeType?: GrenadeType;
+  rotation?: number;
+  rotationSpeed?: number;
+  fuseTicks?: number;
+  color: string;
+  isStuck?: boolean;
+  stuckSurface?: 'floor' | 'wall' | 'ceiling';
+}
+
+interface SmokeCloudEntity {
+  id: number;
+  x: number;
+  y: number;
+  radius: number;
+  remainingTicks: number;
+  maxTicks: number;
+}
+
+interface WorldWeaponEntity {
+  id: number;
+  weaponType: WeaponType;
+  x: number;
+  y: number;
+  baseY: number;
+  bobTicks: number;
+  spawnSlotIndex?: number; // Índice del punto de spawn designado que generó esta arma
+}
+
+/**
+ * Representa el estado y ciclo de vida de un punto de spawn designado en el mapa.
+ * Permite que cada punto controle su propio ciclo de sustitución garantizando
+ * que nunca se solapen o acumulen armas en la misma ubicación.
+ */
+interface WeaponSpawnSlot {
+  slotIndex: number;
+  x: number;
+  y: number;
+  currentWeaponId: number | null; // ID del arma actual en este punto (null si ya fue recogida)
+  timer: number;                  // Contador de ticks para el siguiente ciclo de reemplazo
+  spawnInterval: number;          // Ticks totales requeridos para el reemplazo
+  lastWeaponType?: WeaponType;    // Último tipo de arma generada para promover variedad
+}
+
+interface MedkitEntity {
+  id: number;
+  x: number;
+  y: number;
+  baseY: number;
+  bobTicks: number;
+}
+
+interface DestructibleCrateEntity {
+  id: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  health: number;
+  maxHealth: number;
+  vx?: number;
+  vy?: number;
+}
+
+interface ExplosiveBarrelEntity {
+  id: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  health: number;
+  maxHealth: number;
+  vx?: number;
+  vy?: number;
+  lastHitterId?: number;
+}
+
+interface ConveyorEntity {
+  id: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  speed: number;
+  direction: 'left' | 'right';
+}
+
+interface HydraulicPressEntity {
+  id: string;
+  x: number;
+  baseY: number;
+  currentY: number;
+  w: number;
+  h: number;
+  tick: number;
+  cycle: number;
+  maxDrop: number;
+  crushDamage: number;
+  hasSlammedThisCycle: boolean;
+}
+
+interface FireZone {
+  x: number;
+  y: number;
+  radius: number;
+  remainingTicks: number;
+}
+
+interface Particle {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  life: number;
+  maxLife: number;
+  color: string;
+  size: number;
+}
+
+interface FloatingText {
+  id: number;
+  text: string;
+  x: number;
+  y: number;
+  color: string;
+  life: number;
+}
+
+export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
+  gameMode = 'vsBot',
+  playerFaction = BotFaction.Assassin,
+  botFaction,
+  botSlots,
+  maxRounds,
+  worldId = 'classic',
+  onExitToMenu,
+  onMatchComplete,
+}) => {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  // Dimensiones de la arena
+  const ARENA_WIDTH = 960;
+  const ARENA_HEIGHT = 540;
+
+  const playerArch = getBotArchetype(playerFaction);
+  const firstSlotFaction = (botSlots && botSlots.length > 0 && botSlots[0].faction !== 'RANDOM')
+    ? (botSlots[0].faction as BotFaction)
+    : botFaction;
+  const effectiveBotFaction = firstSlotFaction;
+  const botArch = getBotArchetype(effectiveBotFaction);
+  const currentWorld = getWorldConfig(worldId);
+
+  // React state for HUD
+  const [hudState, setHudState] = useState({
+    p1Health: 100,
+    p1MaxHealth: 100,
+    p1Stamina: 100,
+    p1Weapon: WeaponType.Fists,
+    p1Ammo: 0,
+    p1MaxAmmo: -1,
+    p1GrenadeType: GrenadeType.Frag,
+    p1GrenadeCount: START_WITH_GRENADES ? 3 : 0,
+    p1GrenadeTotal: START_WITH_GRENADES ? 3 : 0,
+    p1GrenadeMax: GRENADE_MAX_CAPACITY,
+    botHealth: botArch.maxHealth,
+    botMaxHealth: botArch.maxHealth,
+    botWeapon: WeaponType.Fists,
+    botAmmo: 0,
+    botGrenadeType: GrenadeType.Frag,
+    botGrenadeCount: START_WITH_GRENADES ? 3 : 0,
+    p2Health: 100,
+    p2MaxHealth: 100,
+    coopWave: 1,
+    aliveEnemies: 2,
+    totalWaveBots: 2,
+    round: 1,
+    maxRounds,
+    p1Score: 0,
+    botScore: 0,
+    announcement: '¡PELEA!',
+    isRoundOver: false,
+    isMatchOver: false,
+    matchWinner: '',
+    worldName: currentWorld.name,
+    fighters: [] as FighterBarData[],
+  });
+
+  // Esquema de controles en 1v1 Local ('wasd_p1': J1=WASD / J2=Flechas, 'arrows_p1': J1=Flechas / J2=WASD)
+  const [controlScheme, setControlScheme] = useState<'wasd_p1' | 'arrows_p1'>('wasd_p1');
+  const controlSchemeRef = useRef<'wasd_p1' | 'arrows_p1'>('wasd_p1');
+  useEffect(() => {
+    controlSchemeRef.current = controlScheme;
+  }, [controlScheme]);
+
+  // Menú de pausa y modales retro
+  const [isPaused, setIsPaused] = useState(false);
+  const isPausedRef = useRef(false);
+  useEffect(() => {
+    isPausedRef.current = isPaused;
+  }, [isPaused]);
+
+  const [showExitConfirm, setShowExitConfirm] = useState(false);
+  const showExitConfirmRef = useRef(false);
+  useEffect(() => {
+    showExitConfirmRef.current = showExitConfirm;
+  }, [showExitConfirm]);
+
+  const [showControlsModal, setShowControlsModal] = useState(false);
+  const showControlsModalRef = useRef(false);
+  useEffect(() => {
+    showControlsModalRef.current = showControlsModal;
+  }, [showControlsModal]);
+
+  const isMatchOverRef = useRef(false);
+  useEffect(() => {
+    isMatchOverRef.current = hudState.isMatchOver;
+  }, [hudState.isMatchOver]);
+
+  const [botPracticeMode, setBotPracticeMode] = useState(false);
+
+  // Estados específicos para MODO PRÁCTICA (Gimnasio)
+  const [practiceBotMode, setPracticeBotMode] = useState<'adaptive' | 'quiet' | 'aggressive'>('adaptive');
+  const practiceBotModeRef = useRef<'adaptive' | 'quiet' | 'aggressive'>('adaptive');
+  useEffect(() => {
+    practiceBotModeRef.current = practiceBotMode;
+  }, [practiceBotMode]);
+
+  const [showHitboxes, setShowHitboxes] = useState(false);
+  const showHitboxesRef = useRef(false);
+  useEffect(() => {
+    showHitboxesRef.current = showHitboxes;
+  }, [showHitboxes]);
+
+  const [showPracticeArsenal, setShowPracticeArsenal] = useState(false);
+  const showPracticeArsenalRef = useRef(false);
+  useEffect(() => {
+    showPracticeArsenalRef.current = showPracticeArsenal;
+  }, [showPracticeArsenal]);
+  const [tutorialStep, setTutorialStep] = useState(0);
+  const tutorialStepRef = useRef(0);
+  useEffect(() => {
+    tutorialStepRef.current = tutorialStep;
+  }, [tutorialStep]);
+
+  const [tutorialVisible, setTutorialVisible] = useState(true);
+  const [p1NearWeaponRack, setP1NearWeaponRack] = useState(false);
+
+  const tutorialInputProgressRef = useRef<{
+    moveTicks: number;
+    hasJumped: boolean;
+    hasRolled: boolean;
+    hasMeleeHit: boolean;
+    hasOpenedRack: boolean;
+    hasShot: boolean;
+    hasGrenaded: boolean;
+  }>({
+    moveTicks: 0,
+    hasJumped: false,
+    hasRolled: false,
+    hasMeleeHit: false,
+    hasOpenedRack: false,
+    hasShot: false,
+    hasGrenaded: false,
+  });
+
+  const trainingBotFsmTicksRef = useRef<number>(0);
+
+  // Estado mutado en el loop de 60Hz
+  const stateRef = useRef<{
+    p1: PlayerState;
+    p1Controller: PlayerController;
+    bots: BotInstance[];
+    // Compatibilidad temporal FASE C:
+    readonly bot: PlayerState;
+    readonly botAI: BotFSMData;
+    readonly botGrenades: GrenadeInventory;
+    botQuiet: boolean;
+    botScore: number;
+    p2Controller: PlayerController;
+    projectiles: ProjectileEntity[];
+    worldWeapons: WorldWeaponEntity[];
+    weaponSlots: WeaponSpawnSlot[];
+    p1Grenades: GrenadeInventory;
+    grenadePickups: GrenadePickupEntity[];
+    smokeClouds: SmokeCloudEntity[];
+    flashbangFlash: number;
+    grenadeImages: Record<GrenadeType, HTMLImageElement>;
+    medkits: MedkitEntity[];
+    crates: DestructibleCrateEntity[];
+    barrels: ExplosiveBarrelEntity[];
+    conveyors: ConveyorEntity[];
+    presses: HydraulicPressEntity[];
+    fireZones: FireZone[];
+    particles: Particle[];
+    floatingTexts: FloatingText[];
+    platforms: PlatformRect[];
+    worldConfig: WorldConfig;
+    worldTick: number;
+    screenShake: number;
+    hitStopTicks: number;
+    weaponSpawnTimer: number;
+    round: number;
+    p1Score: number;
+    roundActive: boolean;
+    announcement: string;
+    announcementTicks: number;
+    coopWave?: number;
+    coopIntermission?: boolean;
+    coopIntermissionTicks?: number;
+    nextEntityId: number;
+    keys: { [key: string]: boolean };
+    keysJustPressed: { [key: string]: boolean };
+    bgImage: HTMLImageElement | null;
+    p1Sprite: HTMLImageElement | null;
+    botSprite: HTMLImageElement | null;
+    p1WalkSheet: HTMLImageElement | null;
+    p1RunSheet: HTMLImageElement | null;
+    p1RollSheet: HTMLImageElement | null;
+    p1JumpSheet: HTMLImageElement | null;
+    p1MeleeSheet: HTMLImageElement | null;
+    p1OneHandSheet: HTMLImageElement | null;
+    p1TwoHandSheet: HTMLImageElement | null;
+    p1PistolSheet: HTMLImageElement | null;
+    p1RifleSheet: HTMLImageElement | null;
+    p1ThrowUpSheet: HTMLImageElement | null;
+    p1IdleSprite: HTMLImageElement | null;
+    p1SheetConfig: SpritesheetDef;
+    botWalkSheet: HTMLImageElement | null;
+    botRunSheet: HTMLImageElement | null;
+    botRollSheet: HTMLImageElement | null;
+    botJumpSheet: HTMLImageElement | null;
+    botMeleeSheet: HTMLImageElement | null;
+    botOneHandSheet: HTMLImageElement | null;
+    botTwoHandSheet: HTMLImageElement | null;
+    botPistolSheet: HTMLImageElement | null;
+    botRifleSheet: HTMLImageElement | null;
+    botThrowUpSheet: HTMLImageElement | null;
+    botIdleSprite: HTMLImageElement | null;
+    botSheetConfig: SpritesheetDef;
+    weaponImages: Record<string, HTMLImageElement>;
+    swordComboSheet: HTMLImageElement | null;
+    p1Faction: BotFaction;
+    botFaction: BotFaction;
+  } | null>(null);
+
+  // Helper para generar entidades interactivas del mundo
+  const createWorldHazards = useCallback((world: WorldConfig) => {
+    const crates: DestructibleCrateEntity[] = [];
+    const barrels: ExplosiveBarrelEntity[] = [];
+    const conveyors: ConveyorEntity[] = [];
+    const presses: HydraulicPressEntity[] = [];
+
+    world.hazards.forEach((h) => {
+      if (h.type === 'destructible_crate') {
+        crates.push({
+          id: h.id,
+          x: h.x,
+          y: h.y,
+          w: h.w,
+          h: h.h,
+          health: h.health || 25,
+          maxHealth: h.maxHealth || 25,
+          vx: 0,
+          vy: 0,
+        });
+      } else if (h.type === 'explosive_barrel') {
+        barrels.push({
+          id: h.id,
+          x: h.x,
+          y: h.y,
+          w: h.w,
+          h: h.h,
+          health: h.health || 30,
+          maxHealth: h.maxHealth || 30,
+          vx: 0,
+          vy: 0,
+        });
+      } else if (h.type === 'conveyor_belt') {
+        conveyors.push({
+          id: h.id,
+          x: h.x,
+          y: h.y,
+          w: h.w,
+          h: h.h,
+          speed: h.speed || 2.4,
+          direction: h.direction || 'right',
+        });
+      } else if (h.type === 'hydraulic_press') {
+        presses.push({
+          id: h.id,
+          x: h.x,
+          baseY: h.y,
+          currentY: h.y,
+          w: h.w,
+          h: h.h,
+          tick: 0,
+          cycle: h.cyclePeriodTicks || 180,
+          maxDrop: h.maxDropY || 100,
+          crushDamage: h.crushDamage || 40,
+          hasSlammedThisCycle: false,
+        });
+      }
+    });
+
+    return { crates, barrels, conveyors, presses };
+  }, []);
+
+  // Helpers de combate y efectos de partículas
+  const addSparks = (x: number, y: number, color: string, count: number = 8) => {
+    if (!stateRef.current) return;
+    for (let i = 0; i < count; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 40 + Math.random() * 90;
+      stateRef.current.particles.push({
+        x,
+        y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        life: 10 + Math.random() * 12,
+        maxLife: 22,
+        color,
+        size: 1.5 + Math.random() * 2,
+      });
+    }
+  };
+
+  const addBloodParticles = (x: number, y: number, dirX: number = 0, intensity: number = 10) => {
+    if (!stateRef.current) return;
+    const count = Math.min(24, Math.max(6, Math.round(intensity / 3)));
+    const bloodColors = ['#dc2626', '#b91c1c', '#991b1b', '#ef4444'];
+    for (let i = 0; i < count; i++) {
+      const angle = (dirX > 0 ? -0.3 : dirX < 0 ? Math.PI + 0.3 : -Math.PI / 2) + (Math.random() - 0.5) * 1.2;
+      const speed = 60 + Math.random() * 140;
+      stateRef.current.particles.push({
+        x: x + (Math.random() - 0.5) * 12,
+        y: y + (Math.random() - 0.5) * 16,
+        vx: Math.cos(angle) * speed + (dirX * 40),
+        vy: Math.sin(angle) * speed - 30,
+        life: 14 + Math.random() * 16,
+        maxLife: 30,
+        color: bloodColors[Math.floor(Math.random() * bloodColors.length)],
+        size: 1.8 + Math.random() * 2.2,
+      });
+    }
+  };
+
+  // ─────────────────────────────────────────────────────────────
+  // SISTEMA MODULAR DE INVENTARIO Y EQUIPAMIENTO POR RANURAS (FASE F1)
+  // ─────────────────────────────────────────────────────────────
+
+  /**
+   * Fija el estado de arma, animación del personaje y banderas del controlador según el arma.
+   */
+  const equipWeaponState = (
+    fighter: PlayerState,
+    type: WeaponType,
+    controller?: PlayerController
+  ): void => {
+    fighter.equippedWeapon = type;
+    const isOneHand = isOneHandWeapon(type);
+    const isThrowable = isThrowableWeapon(type);
+    const isRifle = isRifleWeapon(type);
+    const isTwoHand = isTwoHandWeapon(type);
+    const isPistol = isPistolWeapon(type);
+
+    if (isOneHand) {
+      fighter.characterState = 'arma_una_mano';
+      fighter.weaponState = 'arma_una_mano';
+      if (controller) controller.hasHeavyRifleEquipped = false;
+    } else if (isThrowable) {
+      fighter.characterState = 'arrojadiza';
+      fighter.weaponState = 'arrojadiza';
+      if (controller) controller.hasHeavyRifleEquipped = false;
+    } else if (isRifle) {
+      fighter.characterState = 'arma_dos_manos';
+      fighter.weaponState = 'rifle';
+      if (controller) controller.hasHeavyRifleEquipped = true;
+    } else if (isTwoHand) {
+      fighter.characterState = 'arma_dos_manos';
+      fighter.weaponState = 'arma_dos_manos';
+      if (controller) controller.hasHeavyRifleEquipped = false;
+    } else if (isPistol) {
+      fighter.characterState = 'arma_una_mano';
+      fighter.weaponState = 'pistola';
+      if (controller) controller.hasHeavyRifleEquipped = false;
+    } else {
+      fighter.characterState = 'desarmado';
+      fighter.weaponState = 'desarmado';
+      if (controller) controller.hasHeavyRifleEquipped = false;
+    }
+  };
+
+  /**
+   * Cambia de ranura de inventario para el luchador (J1 o J2 en 1v1).
+   */
+  const switchFighterSlot = (
+    fighter: PlayerState,
+    targetSlot: WeaponSlotType,
+    controller?: PlayerController,
+    grenades?: GrenadeInventory,
+    floatingTexts?: Array<{ id: number; text: string; x: number; y: number; color: string; life: number }>,
+    nextEntityIdRef?: { current: number }
+  ): boolean => {
+    if (!fighter.inventory || !fighter.isAlive) return false;
+    if ((fighter.slotCooldownTicks || 0) > 0) return false;
+
+    // No se puede cambiar de ranura durante un ataque, disparo, derribo, aturdimiento, rodada o agarre
+    if (
+      fighter.fsm === PlayerFSMState.Hitstun ||
+      fighter.fsm === PlayerFSMState.KnockedDown ||
+      fighter.fsm === PlayerFSMState.GetUp ||
+      fighter.fsm === PlayerFSMState.Roll
+    ) {
+      return false;
+    }
+    if (
+      fighter.isSwordAttacking ||
+      fighter.isMeleeComboAttacking ||
+      fighter.isOneHandAttacking ||
+      fighter.isTwoHandAttacking ||
+      fighter.isPistolShooting ||
+      fighter.isRifleShooting ||
+      fighter.isThrowing ||
+      fighter.isGrappling ||
+      fighter.isChargingHeavy
+    ) {
+      return false;
+    }
+
+    const currentSlot = fighter.inventory.activeSlot;
+
+    // Si ya está activa la ranura seleccionada:
+    if (currentSlot === targetSlot) {
+      if (targetSlot === 'throwable' && grenades) {
+        // Ciclar al siguiente tipo de granada si ya está activa la ranura 4
+        const nextType = cycleGrenadeType(grenades);
+        fighter.equippedWeapon = nextType === GrenadeType.Molotov ? WeaponType.Molotov : WeaponType.Grenade;
+        fighter.ammo = grenades.ammo[nextType] || 0;
+        fighter.characterState = 'arrojadiza';
+        fighter.weaponState = 'arrojadiza';
+        fighter.slotCooldownTicks = 8;
+        sounds.playPickup();
+        const gCfg = GRENADE_DATABASE[nextType];
+        if (floatingTexts && nextEntityIdRef) {
+          floatingTexts.push({
+            id: nextEntityIdRef.current++,
+            text: `¡${gCfg.shortName}! (${fighter.ammo} disp.)`,
+            x: fighter.x,
+            y: fighter.y - 35,
+            color: gCfg.color,
+            life: 30,
+          });
+        }
+        return true;
+      }
+      return false;
+    }
+
+    // Comprobar y ejecutar cambio a la ranura solicitada
+    if (targetSlot === 'melee') {
+      if (currentSlot === 'handgun' && fighter.inventory.handgun) {
+        fighter.inventory.handgun.ammo = fighter.ammo;
+      } else if (currentSlot === 'primary' && fighter.inventory.primary) {
+        fighter.inventory.primary.ammo = fighter.ammo;
+      }
+      fighter.inventory.activeSlot = 'melee';
+      fighter.ammo = 0;
+      equipWeaponState(fighter, fighter.inventory.melee, controller);
+      fighter.slotCooldownTicks = 8;
+      sounds.playPickup();
+      return true;
+    }
+
+    if (targetSlot === 'handgun') {
+      if (!fighter.inventory.handgun) {
+        // Ranura vacía: sonido seco de error y cooldown corto
+        fighter.slotCooldownTicks = 8;
+        sounds.playDryFire();
+        return false;
+      }
+      if (currentSlot === 'primary' && fighter.inventory.primary) {
+        fighter.inventory.primary.ammo = fighter.ammo;
+      }
+      fighter.inventory.activeSlot = 'handgun';
+      fighter.ammo = fighter.inventory.handgun.ammo;
+      equipWeaponState(fighter, fighter.inventory.handgun.type, controller);
+      fighter.slotCooldownTicks = 8;
+      sounds.playPickup();
+      return true;
+    }
+
+    if (targetSlot === 'primary') {
+      if (!fighter.inventory.primary) {
+        // Ranura vacía: sonido seco de error y cooldown corto
+        fighter.slotCooldownTicks = 8;
+        sounds.playDryFire();
+        return false;
+      }
+      if (currentSlot === 'handgun' && fighter.inventory.handgun) {
+        fighter.inventory.handgun.ammo = fighter.ammo;
+      }
+      fighter.inventory.activeSlot = 'primary';
+      fighter.ammo = fighter.inventory.primary.ammo;
+      equipWeaponState(fighter, fighter.inventory.primary.type, controller);
+      fighter.slotCooldownTicks = 8;
+      sounds.playPickup();
+      return true;
+    }
+
+    if (targetSlot === 'throwable') {
+      if (currentSlot === 'handgun' && fighter.inventory.handgun) {
+        fighter.inventory.handgun.ammo = fighter.ammo;
+      } else if (currentSlot === 'primary' && fighter.inventory.primary) {
+        fighter.inventory.primary.ammo = fighter.ammo;
+      }
+      fighter.inventory.activeSlot = 'throwable';
+      const gType = grenades?.activeType || GrenadeType.Frag;
+      fighter.equippedWeapon = gType === GrenadeType.Molotov ? WeaponType.Molotov : WeaponType.Grenade;
+      fighter.characterState = 'arrojadiza';
+      fighter.weaponState = 'arrojadiza';
+      if (controller) controller.hasHeavyRifleEquipped = false;
+      fighter.ammo = grenades ? (grenades.ammo[gType] || 0) : 0;
+      fighter.slotCooldownTicks = 8;
+      sounds.playPickup();
+      return true;
+    }
+
+    return false;
+  };
+
+  interface MeleeHitOptions {
+    reachX: number;
+    reachY: number;
+    baseDamage: number;
+    kbX: number;
+    kbY?: number;
+    stunTicks?: number;
+    hitStop?: number;
+    screenShake?: number;
+    causedKnockdown?: boolean;
+    isBlade?: boolean;
+    floatingTextPrefix?: string;
+  }
+
+  const resolveMeleeHits = (
+    s: NonNullable<typeof stateRef.current>,
+    attacker: PlayerState,
+    options: MeleeHitOptions
+  ): boolean => {
+    const allFighters = [s.p1, ...s.bots.map((b) => b.state)];
+    const facingDir = attacker.facingRight ? 1 : -1;
+    let didHitAny = false;
+
+    for (const target of allFighters) {
+      if (target.id === attacker.id || isSameTeam(attacker.id, target.id)) continue;
+      if (!target.isAlive || target.isGrabbed) continue;
+
+      const isInvuln =
+        target.id === s.p1.id
+          ? s.p1Controller.isInvulnerable
+          : target.id === 2 && (gameMode === 'local1v1' || gameMode === 'coop')
+          ? s.p2Controller.isInvulnerable
+          : target.fsm === PlayerFSMState.Roll;
+
+      if (isInvuln) continue;
+
+      const inReachX =
+        (facingDir > 0 && target.x >= attacker.x - 15 && target.x <= attacker.x + options.reachX) ||
+        (facingDir < 0 && target.x <= attacker.x + 15 && target.x >= attacker.x - options.reachX);
+      const inReachY = Math.abs(target.y - attacker.y) < options.reachY;
+
+      if (inReachX && inReachY) {
+        didHitAny = true;
+        if (options.isBlade) {
+          sounds.playBladeHit();
+          addSparks(target.x, target.y, '#38bdf8', 22);
+          addSparks(target.x, target.y, '#ffffff', 14);
+        } else {
+          sounds.playHit();
+          addSparks(target.x, target.y, '#f97316', 22);
+          addSparks(target.x, target.y, '#fbbf24', 14);
+        }
+
+        const finalDmg = options.baseDamage * (attacker.damageDealtModifier || 1.0);
+        const hitRes = CombatSystem.applyHit(target, {
+          damage: finalDmg,
+          kbX: facingDir * options.kbX,
+          kbY: options.kbY ?? -60,
+          stunTicks: options.stunTicks ?? 24,
+          hitStop: options.hitStop ?? 5,
+          screenShake: options.screenShake ?? 12,
+          causedKnockdown: options.causedKnockdown,
+          attacker,
+          weaponType: attacker.equippedWeapon,
+        });
+
+        s.screenShake = hitRes.screenShake;
+        s.hitStopTicks = hitRes.hitStop;
+
+        if (target.id === s.p1.id) {
+          s.p1Controller.setPosition(target.x, target.y);
+          s.p1Controller.vx = target.velocityX;
+          s.p1Controller.vy = target.velocityY;
+        } else if (target.id === 2 && (gameMode === 'local1v1' || gameMode === 'coop')) {
+          s.p2Controller.setPosition(target.x, target.y);
+          s.p2Controller.vx = target.velocityX;
+          s.p2Controller.vy = target.velocityY;
+        }
+
+        if (hitRes.isDead) {
+          sounds.playHit();
+        }
+        addBloodParticles(target.x, target.y, facingDir, hitRes.finalDamage);
+
+        target.isMeleeComboAttacking = false;
+        target.comboStep = 0;
+        target.meleeComboStep = 0;
+        target.comboBuffered = false;
+        target.comboWindowTicks = 0;
+        target.isOneHandAttacking = false;
+        target.isTwoHandAttacking = false;
+        target.isSwordAttacking = false;
+        target.isPistolShooting = false;
+        target.isRifleShooting = false;
+        target.isThrowing = false;
+
+        s.floatingTexts.push({
+          id: s.nextEntityId++,
+          text: `${options.floatingTextPrefix || ''}-${Math.round(hitRes.finalDamage)}`,
+          x: target.x,
+          y: target.y - 35,
+          color: options.isBlade ? '#38bdf8' : '#f97316',
+          life: 30,
+        });
+      }
+    }
+
+    return didHitAny;
+  };
+
+  /**
+   * P-D1: Selección y fijación de objetivo dinámico por bot.
+   * Reevalúa solo cuando inst.targetEvalTicks llegue a 0 (cada 30 ticks).
+   * Prioriza venganza (<180 ticks) y luego enemigo más cercano con desempate por vida.
+   */
+  const pickTarget = (inst: BotInstance, allFighters: PlayerState[]): PlayerState | null => {
+    const enemies = allFighters.filter((f) => f.id !== inst.id && f.isAlive && !isSameTeam(inst.id, f.id));
+    if (enemies.length === 0) {
+      inst.currentTargetId = undefined;
+      return null;
+    }
+
+    if (inst.targetEvalTicks === undefined) inst.targetEvalTicks = 0;
+
+    let currentTarget =
+      inst.currentTargetId !== undefined
+        ? enemies.find((e) => e.id === inst.currentTargetId)
+        : undefined;
+
+    if (inst.targetEvalTicks > 0 && currentTarget) {
+      inst.targetEvalTicks--;
+      return currentTarget;
+    }
+
+    // Reevalúa solo cuando inst.targetEvalTicks llegue a 0, cada 30 ticks
+    inst.targetEvalTicks = 30;
+
+    // Prioridad 1: Venganza contra el último atacante si fue golpeado recientemente (<180 ticks = 3s)
+    if (
+      inst.state.lastAttackerId !== undefined &&
+      (inst.state.lastHitTicks ?? 999) < 180
+    ) {
+      const revengeTarget = enemies.find((e) => e.id === inst.state.lastAttackerId);
+      if (revengeTarget) {
+        inst.currentTargetId = revengeTarget.id;
+        return revengeTarget;
+      }
+    }
+
+    // Prioridad 2: Enemigo más cercano, desempate por menor vida si distancias son similares (<15px)
+    let bestTarget = enemies[0];
+    let bestDist = Math.hypot(bestTarget.x - inst.state.x, bestTarget.y - inst.state.y);
+
+    for (let i = 1; i < enemies.length; i++) {
+      const e = enemies[i];
+      const dist = Math.hypot(e.x - inst.state.x, e.y - inst.state.y);
+      if (dist < bestDist - 15) {
+        bestTarget = e;
+        bestDist = dist;
+      } else if (Math.abs(dist - bestDist) <= 15) {
+        if (e.health < bestTarget.health) {
+          bestTarget = e;
+          bestDist = dist;
+        }
+      }
+    }
+
+    inst.currentTargetId = bestTarget.id;
+    return bestTarget;
+  };
+
+  // ─────────────────────────────────────────────────────────────
+  // SISTEMA MODULAR DE GESTIÓN Y CICLO DE VIDA DE ARMAS (SPAWN SLOTS)
+  // ─────────────────────────────────────────────────────────────
+
+  /**
+   * Inicializa la estructura de puntos de spawn asignados para la arena.
+   * Cada slot mantiene su estado, el ID del arma actualmente presente y
+   * su temporizador para el siguiente reemplazo.
+   */
+  const initializeWeaponSpawnSlots = (worldCfg: WorldConfig): WeaponSpawnSlot[] => {
+    return worldCfg.weaponSpawns.map((pos, idx) => ({
+      slotIndex: idx,
+      x: pos.x,
+      y: pos.y,
+      currentWeaponId: null,
+      timer: idx * 180, // Escalonamiento inicial para que las armas no ciclen en el mismo fotograma
+      spawnInterval: 780 + (idx % 3) * 60, // Ciclo individual de ~13 a 15 segundos (a 60 FPS)
+      lastWeaponType: undefined,
+    }));
+  };
+
+  /**
+   * Destruye de forma segura el arma presente en un punto de spawn específico.
+   * REGLA ESTRICTA: El arma anterior se elimina automáticamente antes de instanciar la nueva.
+   * Incluye comprobaciones estrictas de nulidad (null-checks): si el combatiente ya había
+   * recogido el arma antes del ciclo de spawn, la referencia nula se gestiona limpiamente sin errores.
+   *
+   * @param s Estado activo de la partida
+   * @param slotIndex Índice del punto de spawn designado
+   * @param triggerVisuals Determina si genera partículas de desvanecimiento
+   * @returns Entidad eliminada o null si no había ninguna arma tirada en el punto
+   */
+  const destroyWeaponAtSpawnSlot = (
+    s: NonNullable<typeof stateRef.current>,
+    slotIndex: number,
+    triggerVisuals: boolean = true
+  ): WorldWeaponEntity | null => {
+    if (!s || !s.weaponSlots || !s.weaponSlots[slotIndex]) return null;
+    const slot = s.weaponSlots[slotIndex];
+
+    // Validación de nulidad: si no hay arma registrada actualmente en este slot, salir limpiamente
+    if (slot.currentWeaponId === null) {
+      return null;
+    }
+
+    // Buscar el índice del arma en la lista del mundo por ID o proximidad al spawn point
+    const targetId = slot.currentWeaponId;
+    const weaponIdx = s.worldWeapons.findIndex(
+      (w) => w && (w.id === targetId || (w.spawnSlotIndex === slotIndex && Math.hypot(w.x - slot.x, w.baseY - slot.y) < 26))
+    );
+
+    // Validación de nulidad: si el arma ya fue recogida o eliminada previamente
+    if (weaponIdx === -1) {
+      slot.currentWeaponId = null;
+      return null;
+    }
+
+    const removedWeapon = s.worldWeapons[weaponIdx];
+    if (!removedWeapon) {
+      slot.currentWeaponId = null;
+      return null;
+    }
+
+    // Efecto visual sutil de desmaterialización / reemplazo del arma obsoleta
+    if (triggerVisuals) {
+      addSparks(removedWeapon.x, removedWeapon.y, '#94a3b8', 8);
+      addSparks(removedWeapon.x, removedWeapon.y, '#38bdf8', 6);
+    }
+
+    // Destrucción y eliminación limpia del arreglo del mundo
+    s.worldWeapons.splice(weaponIdx, 1);
+    slot.currentWeaponId = null;
+
+    return removedWeapon;
+  };
+
+  /**
+   * Instancia una nueva arma en el punto de spawn designado.
+   * Cumple con la regla estricta:
+   * 1. Destruye automáticamente cualquier arma previa en este punto exacto (si aún sigue allí).
+   * 2. Instancia la nueva arma en las coordenadas exactas del spawn point.
+   * 3. Reinicia el temporizador del ciclo de vida para este punto.
+   *
+   * @param s Estado activo de la partida
+   * @param slotIndex Índice del punto de spawn designado
+   * @param forcedWeaponType Tipo opcional forzado de arma
+   * @returns La nueva entidad WorldWeaponEntity instanciada
+   */
+  const instantiateWeaponAtSpawnSlot = (
+    s: NonNullable<typeof stateRef.current>,
+    slotIndex: number,
+    forcedWeaponType?: WeaponType
+  ): WorldWeaponEntity | null => {
+    if (!s || !s.weaponSlots || !s.weaponSlots[slotIndex]) return null;
+    const slot = s.weaponSlots[slotIndex];
+
+    // 1. DESTRUCCIÓN PREVIA: Asegurar que el arma anterior desaparezca antes de generar la nueva
+    destroyWeaponAtSpawnSlot(s, slotIndex, true);
+
+    // 2. SELECCIÓN DE ARMA: Elegir un arma aleatoria del catálogo (priorizando variedad)
+    let selectedWeaponType = forcedWeaponType;
+    if (!selectedWeaponType) {
+      const candidates = SpawnableWeaponsList.filter((w) => w !== slot.lastWeaponType);
+      const pool = candidates.length > 0 ? candidates : SpawnableWeaponsList;
+      selectedWeaponType = pool[Math.floor(Math.random() * pool.length)];
+    }
+
+    // 3. INSTANCIACIÓN: Crear la nueva entidad en el punto exacto
+    const newId = s.nextEntityId++;
+    const newWeapon: WorldWeaponEntity = {
+      id: newId,
+      weaponType: selectedWeaponType,
+      x: slot.x,
+      y: slot.y,
+      baseY: slot.y,
+      bobTicks: slotIndex * 15,
+      spawnSlotIndex: slotIndex,
+    };
+
+    // 4. REGISTRO EN EL MUNDO Y SLOT:
+    s.worldWeapons.push(newWeapon);
+    slot.currentWeaponId = newId;
+    slot.lastWeaponType = selectedWeaponType;
+    slot.timer = 0; // Reinicio estricto del temporizador del ciclo
+
+    // Efecto visual de aparición del arma
+    addSparks(slot.x, slot.y, '#38bdf8', 12);
+
+    return newWeapon;
+  };
+
+  /**
+   * Actualiza el ciclo de vida y temporizadores de todos los puntos de spawn en el mapa.
+   * Ejecutado en el tick principal a 60Hz. Cuando un punto cumple su tiempo de ciclo,
+   * reemplaza el arma automáticamente llamando a `instantiateWeaponAtSpawnSlot`.
+   */
+  const updateWeaponSpawns = (s: NonNullable<typeof stateRef.current>): void => {
+    if (!s || !s.weaponSlots || s.weaponSlots.length === 0) return;
+
+    for (let i = 0; i < s.weaponSlots.length; i++) {
+      const slot = s.weaponSlots[i];
+      if (!slot) continue;
+
+      slot.timer++;
+
+      // Al cumplirse el temporizador del ciclo para este punto exacto:
+      if (slot.timer >= slot.spawnInterval) {
+        instantiateWeaponAtSpawnSlot(s, i);
+      }
+    }
+  };
+
+  /**
+   * Determina si dos combatientes están en el mismo equipo (inmunidad a fuego amigo).
+   * En 'coop': J1 (id 1) y J2 (id 2) son Equipo 1 (Supervivientes); enemigos (id >= 3) son Equipo 2 (Horda).
+   * En otros modos: únicamente idA === idB.
+   */
+  const isSameTeam = useCallback((idA?: number, idB?: number): boolean => {
+    if (idA === undefined || idB === undefined) return false;
+    if (idA === idB) return true;
+    if (gameMode === 'coop') {
+      const isHumanA = idA === 1 || idA === 2;
+      const isHumanB = idB === 1 || idB === 2;
+      if (isHumanA && isHumanB) return true;
+      if (!isHumanA && !isHumanB) return true;
+      return false;
+    }
+    return false;
+  }, [gameMode]);
+
+  const createP2BotInstance = useCallback(
+    (worldCfg: WorldConfig, currentScoreMap?: Map<number, number>): BotInstance => {
+      const spawnBot = worldCfg.spawns[1] || { x: 760, y: 460 };
+      const effectiveP2Faction = botFaction || BotFaction.Ninja;
+      const arch = getBotArchetype(effectiveP2Faction);
+      const p2Name = `${arch.name.toUpperCase()} (J2)`;
+      const state = createPlayerState(2, p2Name, false, spawnBot.x, spawnBot.y, effectiveP2Faction);
+      state.faction = effectiveP2Faction;
+      state.maxHealth = arch.maxHealth;
+      state.health = arch.maxHealth;
+      state.speedModifier = arch.speedModifier;
+      state.damageDealtModifier = arch.damageDealtModifier;
+      state.damageTakenModifier = arch.damageTakenModifier;
+      state.meleeForceModifier = arch.meleeForceModifier;
+      state.lifestealOnHit = arch.lifestealOnHit ?? 0;
+      state.equippedWeapon = WeaponType.Fists;
+      state.ammo = 0;
+      state.characterState = 'desarmado';
+      state.weaponState = 'desarmado';
+      state.inventory = {
+        melee: WeaponType.Fists,
+        handgun: null,
+        primary: null,
+        activeSlot: 'melee',
+      };
+      state.slotCooldownTicks = 0;
+
+      const p2Ctrl = new PlayerController(spawnBot.x, spawnBot.y, false, 2);
+      p2Ctrl.facingRight = false;
+      p2Ctrl.setPlayerId(2);
+
+      let bSprite: HTMLImageElement | undefined;
+      if (arch.spriteUrl) {
+        bSprite = new Image();
+        bSprite.src = arch.spriteUrl;
+      }
+
+      return {
+        id: 2,
+        slot: 0,
+        faction: effectiveP2Faction,
+        state,
+        ai: createBotFSMData(BotAIType.Hard),
+        grenades: createGrenadeInventory(
+          GRENADE_MAX_CAPACITY,
+          GrenadeType.Frag,
+          START_WITH_GRENADES ? GRENADE_INITIAL_COUNT : 0
+        ),
+        controller: p2Ctrl,
+        quiet: false,
+        color: '#38bdf8',
+        score: currentScoreMap?.get(2) ?? 0,
+        sprite: bSprite,
+      };
+    },
+    [botFaction]
+  );
+
+  const createCoopWaveBots = useCallback(
+    (worldCfg: WorldConfig, wave: number, currentScoreMap?: Map<number, number>): BotInstance[] => {
+      const waveBotCount = wave === 1 ? 3 : wave === 2 ? 4 : wave === 3 ? 5 : Math.min(8, 4 + wave);
+      const hpMultiplier = 1.0 + (wave - 1) * 0.18;
+      const dmgMultiplier = 1.0 + (wave - 1) * 0.12;
+      const difficulty = wave === 1 ? 'normal' : wave === 2 ? 'hard' : 'expert';
+
+      const waveFactionsPool = [
+        BotFaction.Thug,
+        BotFaction.Punk,
+        BotFaction.Police,
+        BotFaction.Gangster,
+        BotFaction.MetroCop,
+        BotFaction.Soldier,
+        BotFaction.Boss_Berserker,
+        BotFaction.Biker,
+        BotFaction.Mutant,
+        BotFaction.Assassin,
+        BotFaction.Sniper,
+        BotFaction.Boss_Tank,
+      ];
+
+      const spawns = computeFighterSpawns(worldCfg, 2 + waveBotCount);
+      const botInstances: BotInstance[] = [];
+
+      for (let idx = 0; idx < waveBotCount; idx++) {
+        const id = idx + 3;
+        const faction = waveFactionsPool[(idx + (wave - 1) * 2) % waveFactionsPool.length];
+        const arch = getBotArchetype(faction);
+        const spawn = spawns[idx + 2] || { x: 300 + ((idx * 140) % 550), y: 460 };
+        const label = `${arch.name.toUpperCase()} (H${idx + 1})`;
+
+        const state = createPlayerState(id, label, true, spawn.x, spawn.y, faction);
+        state.faction = faction;
+        state.maxHealth = Math.round(arch.maxHealth * hpMultiplier);
+        state.health = state.maxHealth;
+        state.speedModifier = arch.speedModifier * (1 + Math.min(0.2, (wave - 1) * 0.04));
+        state.damageDealtModifier = arch.damageDealtModifier * dmgMultiplier;
+        state.damageTakenModifier = arch.damageTakenModifier;
+        state.meleeForceModifier = arch.meleeForceModifier;
+        state.lifestealOnHit = arch.lifestealOnHit ?? 0;
+
+        if (wave >= 3) {
+          const highWeapons = [WeaponType.Rifle, WeaponType.Assault, WeaponType.Carbine, WeaponType.Katana, WeaponType.Shotgun];
+          state.equippedWeapon = highWeapons[idx % highWeapons.length];
+          state.ammo = getWeapon(state.equippedWeapon)?.magSize || 20;
+          state.characterState = isRifleWeapon(state.equippedWeapon) ? 'rifle' : 'arma_dos_manos';
+          state.weaponState = isRifleWeapon(state.equippedWeapon) ? 'rifle' : 'arma_dos_manos';
+        } else if (wave === 2) {
+          const midWeapons = [WeaponType.Pistol, WeaponType.Revolver, WeaponType.Bat, WeaponType.Knife];
+          state.equippedWeapon = midWeapons[idx % midWeapons.length];
+          state.ammo = getWeapon(state.equippedWeapon)?.magSize || 12;
+          state.characterState = isPistolWeapon(state.equippedWeapon) ? 'pistola' : 'arma_una_mano';
+          state.weaponState = isPistolWeapon(state.equippedWeapon) ? 'pistola' : 'arma_una_mano';
+        } else {
+          state.equippedWeapon = idx % 2 === 0 ? WeaponType.Pistol : WeaponType.Fists;
+          state.ammo = idx % 2 === 0 ? 8 : 0;
+          state.characterState = idx % 2 === 0 ? 'pistola' : 'desarmado';
+          state.weaponState = idx % 2 === 0 ? 'pistola' : 'desarmado';
+        }
+
+        let bSprite: HTMLImageElement | undefined;
+        if (arch.spriteUrl) {
+          bSprite = new Image();
+          bSprite.src = arch.spriteUrl;
+        }
+
+        botInstances.push({
+          id,
+          slot: idx + 1,
+          faction,
+          state,
+          ai: createBotFSMData(arch.aiType, difficulty as any),
+          grenades: createGrenadeInventory(
+            GRENADE_MAX_CAPACITY,
+            GrenadeType.Frag,
+            wave >= 3 ? 1 : 0
+          ),
+          controller: undefined,
+          quiet: false,
+          color: '#f87171',
+          score: currentScoreMap?.get(id) ?? 0,
+          sprite: bSprite,
+        });
+      }
+
+      return botInstances;
+    },
+    []
+  );
+
+  const dropCoopSupplies = useCallback((s: NonNullable<typeof stateRef.current>) => {
+    const eligibleWeapons = SpawnableWeaponsList.filter((w) => w !== WeaponType.Fists);
+    const chosenW1 = eligibleWeapons[Math.floor(Math.random() * eligibleWeapons.length)];
+    const chosenW2 = eligibleWeapons[Math.floor(Math.random() * eligibleWeapons.length)];
+    const dropX1 = 340 + Math.random() * 80;
+    const dropX2 = 560 + Math.random() * 80;
+    const groundY = 475;
+
+    s.worldWeapons.push({
+      id: s.nextEntityId++,
+      weaponType: chosenW1,
+      x: dropX1,
+      y: groundY,
+      baseY: groundY,
+      bobTicks: 0,
+    });
+
+    s.worldWeapons.push({
+      id: s.nextEntityId++,
+      weaponType: chosenW2,
+      x: dropX2,
+      y: groundY,
+      baseY: groundY,
+      bobTicks: 20,
+    });
+
+    s.medkits.push({
+      id: s.nextEntityId++,
+      x: 460 + (Math.random() - 0.5) * 60,
+      y: groundY,
+      baseY: groundY,
+      bobTicks: 0,
+    });
+
+    s.grenadePickups.push({
+      id: s.nextEntityId++,
+      type: Math.random() > 0.5 ? GrenadeType.Frag : GrenadeType.Molotov,
+      amount: 2,
+      x: 480,
+      y: groundY,
+      baseY: groundY,
+      bobTicks: 10,
+    });
+
+    sounds.playPickup();
+    sounds.playMedkit();
+    addSparks(dropX1, groundY, '#facc15', 20);
+    addSparks(dropX2, groundY, '#38bdf8', 20);
+    addSparks(480, groundY, '#22c55e', 20);
+    s.floatingTexts.push({
+      id: s.nextEntityId++,
+      text: '¡SUMINISTROS DESPLEGADOS!',
+      x: 480,
+      y: groundY - 45,
+      color: '#22c55e',
+      life: 90,
+    });
+  }, []);
+
+  const spawnNextCoopWave = useCallback(
+    (s: NonNullable<typeof stateRef.current>, wave: number) => {
+      const p2Bot = s.bots.find((b) => b.id === 2);
+      const newWaveBots = createCoopWaveBots(s.worldConfig, wave);
+      if (p2Bot) {
+        s.bots = [p2Bot, ...newWaveBots];
+      } else {
+        s.bots = newWaveBots;
+      }
+      newWaveBots.forEach((b) => {
+        addSparks(b.state.x, b.state.y, '#ef4444', 20);
+      });
+      sounds.playRoundGong(true);
+    },
+    [createCoopWaveBots]
+  );
+
+  /**
+   * Crea las instancias de bots para la partida actual.
+   * En local1v1: 1 instancia (J2) controlada por p2Controller.
+   * En coop: J2 (humano, Team 1) + bots de la Oleada 1 (Team 2).
+   * En vsBot: hasta ENGINE_MAX_BOTS instancias según botSlots o botFaction.
+   */
+  const createBotInstances = useCallback(
+    (worldCfg: WorldConfig, currentScoreMap?: Map<number, number>): BotInstance[] => {
+      if (gameMode === 'local1v1') {
+        return [createP2BotInstance(worldCfg, currentScoreMap)];
+      }
+
+      if (gameMode === 'coop') {
+        const p2 = createP2BotInstance(worldCfg, currentScoreMap);
+        const waveBots = createCoopWaveBots(worldCfg, 1, currentScoreMap);
+        return [p2, ...waveBots];
+      }
+
+      const configuredSlots: BotSlotConfig[] =
+        botSlots && botSlots.length > 0
+          ? botSlots
+          : [{ faction: botFaction, difficulty: 'normal', team: 'independent' }];
+
+      const activeSlots = configuredSlots.slice(0, ENGINE_MAX_BOTS);
+      const allSpawns = computeFighterSpawns(worldCfg, 1 + activeSlots.length);
+
+      const explicitFactions = new Set<BotFaction>();
+      activeSlots.forEach((slot) => {
+        if (slot.faction !== 'RANDOM') explicitFactions.add(slot.faction);
+      });
+      let availableFactions = CANONICAL_BOT_FACTIONS.filter((f) => !explicitFactions.has(f));
+
+      const resolvedActiveSlots = activeSlots.map((slotCfg) => {
+        if (slotCfg.faction === 'RANDOM') {
+          if (availableFactions.length === 0) availableFactions = [...CANONICAL_BOT_FACTIONS];
+          const randIndex = Math.floor(Math.random() * availableFactions.length);
+          const randFaction = availableFactions.splice(randIndex, 1)[0];
+          return { ...slotCfg, faction: randFaction };
+        }
+        return slotCfg;
+      });
+
+      return resolvedActiveSlots.map((slotCfg, idx) => {
+        const id = idx + 2;
+        const faction = slotCfg.faction as BotFaction;
+        const arch = getBotArchetype(faction);
+        const spawn = allSpawns[idx + 1] || { x: 760, y: 460 };
+        const sameFactionCount = resolvedActiveSlots.filter((s) => s.faction === faction).length;
+        const label = sameFactionCount > 1 ? `${arch.name.toUpperCase()} ${idx + 1}` : arch.name.toUpperCase();
+
+        const state = createPlayerState(id, label, true, spawn.x, spawn.y, faction);
+        state.faction = faction;
+        state.maxHealth = arch.maxHealth;
+        state.health = arch.maxHealth;
+        state.speedModifier = arch.speedModifier;
+        state.damageDealtModifier = arch.damageDealtModifier;
+        state.damageTakenModifier = arch.damageTakenModifier;
+        state.meleeForceModifier = arch.meleeForceModifier;
+        state.lifestealOnHit = arch.lifestealOnHit ?? 0;
+        state.equippedWeapon = WeaponType.Fists;
+        state.ammo = 0;
+        state.characterState = 'desarmado';
+        state.weaponState = 'desarmado';
+        state.inventory = undefined;
+
+        const botColors = ['#f87171', '#fb923c', '#a855f7', '#ec4899', '#22d3ee'];
+        let bSprite: HTMLImageElement | undefined;
+        if (arch.spriteUrl) {
+          bSprite = new Image();
+          bSprite.src = arch.spriteUrl;
+        }
+
+        return {
+          id,
+          slot: idx,
+          slotConfig: slotCfg,
+          faction,
+          state,
+          ai: createBotFSMData(arch.aiType, slotCfg.difficulty),
+          grenades: createGrenadeInventory(
+            GRENADE_MAX_CAPACITY,
+            GrenadeType.Frag,
+            START_WITH_GRENADES ? GRENADE_INITIAL_COUNT : 0
+          ),
+          controller: undefined,
+          quiet: false,
+          color: botColors[idx % botColors.length],
+          score: currentScoreMap?.get(id) ?? 0,
+          sprite: bSprite,
+        };
+      });
+    },
+    [gameMode, botFaction, botSlots]
+  );
+
+  // Inicializar estado del juego
+  useEffect(() => {
+    const worldCfg = getWorldConfig(worldId);
+    const effectiveP1Faction = playerFaction || BotFaction.Ninja;
+    const effectiveP2Faction = botFaction || BotFaction.Ninja;
+
+    const arch = getBotArchetype(effectiveP2Faction);
+    const pArch = getBotArchetype(effectiveP1Faction);
+    const configuredSlots: BotSlotConfig[] =
+      botSlots && botSlots.length > 0
+        ? botSlots
+        : [{ faction: botFaction, difficulty: 'normal', team: 'independent' }];
+    const activeBotCount = gameMode === 'local1v1' ? 1 : Math.min(configuredSlots.length, ENGINE_MAX_BOTS);
+    const allSpawns = computeFighterSpawns(worldCfg, 1 + activeBotCount);
+    const spawnP1 = allSpawns[0] || { x: 200, y: 460 };
+    const p1Label = gameMode === 'local1v1' ? `${pArch.name.toUpperCase()} (J1)` : pArch.name.toUpperCase();
+
+    const p1 = createPlayerState(1, p1Label, false, spawnP1.x, spawnP1.y, effectiveP1Faction);
+    p1.faction = effectiveP1Faction;
+    p1.maxHealth = pArch.maxHealth;
+    p1.health = pArch.maxHealth;
+    p1.speedModifier = pArch.speedModifier;
+    p1.damageDealtModifier = pArch.damageDealtModifier;
+    p1.damageTakenModifier = pArch.damageTakenModifier;
+    p1.meleeForceModifier = pArch.meleeForceModifier;
+    p1.equippedWeapon = WeaponType.Fists;
+    p1.ammo = 0;
+    p1.characterState = 'desarmado';
+    p1.weaponState = 'desarmado';
+    p1.inventory = {
+      melee: WeaponType.Fists,
+      handgun: null,
+      primary: null,
+      activeSlot: 'melee',
+    };
+    p1.slotCooldownTicks = 0;
+    p1.isSwordAttacking = false;
+    p1.swordComboStep = 0;
+    p1.swordAnimFrame = 0;
+    p1.swordAnimTimer = 0;
+    p1.swordHasHit = false;
+    p1.swordComboBuffered = false;
+    p1.swordComboWindowTicks = 0;
+    p1.isTwoHandAttacking = false;
+    p1.twoHandAnimFrame = 0;
+    p1.twoHandAnimTimer = 0;
+    p1.twoHandHasHit = false;
+    p1.isOneHandAttacking = false;
+    p1.oneHandAnimFrame = 0;
+    p1.oneHandAnimTimer = 0;
+    p1.oneHandHasHit = false;
+
+    const initialBots = createBotInstances(worldCfg);
+
+    // Cargar imagen de fondo del escenario si existe
+    let bgImg: HTMLImageElement | null = null;
+    const bgUrl = worldCfg.parallaxLayers.find((l) => l.imageUrl)?.imageUrl || (worldCfg.id !== 'desert' && worldCfg.id !== 'industrial' ? worldCfg.preview : undefined);
+    if (bgUrl) {
+      bgImg = new Image();
+      bgImg.src = bgUrl;
+    }
+
+    // Carga de Spritesheet y texturas para P1 y Bot según su facción seleccionada
+    const p1Cfg = getCharacterSpritesheetDef(effectiveP1Faction);
+    const botCfg = getCharacterSpritesheetDef(effectiveP2Faction);
+
+    const loadSheet = (url?: string, _name?: string, _faction?: string): HTMLImageElement | null => {
+      if (!url) return null;
+      const img = new Image();
+      img.src = url;
+      return img;
+    };
+
+    const p1WalkSheet = p1Cfg.hasWalkSheet ? loadSheet(p1Cfg.walkSheetUrl, 'walk', effectiveP1Faction) : null;
+    const p1RunSheet = p1Cfg.hasRunSheet ? loadSheet(p1Cfg.runSheetUrl, 'run', effectiveP1Faction) : null;
+    const p1RollSheet = p1Cfg.hasRollSheet ? loadSheet(p1Cfg.rollSheetUrl, 'roll', effectiveP1Faction) : null;
+    const p1JumpSheet = p1Cfg.hasJumpSheet ? loadSheet(p1Cfg.jumpSheetUrl, 'jump', effectiveP1Faction) : null;
+    const p1MeleeSheet = p1Cfg.hasMeleeSheet ? loadSheet(p1Cfg.meleeSheetUrl, 'melee', effectiveP1Faction) : null;
+    const p1OneHandSheet = p1Cfg.hasOneHandAttackSheet ? loadSheet(p1Cfg.oneHandAttackSheetUrl, 'oneHandAttack', effectiveP1Faction) : null;
+    const p1TwoHandSheet = p1Cfg.hasTwoHandAttackSheet ? loadSheet(p1Cfg.twoHandAttackSheetUrl, 'twoHandAttack', effectiveP1Faction) : null;
+    const p1PistolSheet = p1Cfg.hasPistolShootSheet ? loadSheet(p1Cfg.pistolShootSheetUrl, 'pistolShoot', effectiveP1Faction) : null;
+    const p1RifleSheet = p1Cfg.hasRifleShootSheet ? loadSheet(p1Cfg.rifleShootSheetUrl, 'rifleShoot', effectiveP1Faction) : null;
+    const p1ThrowUpSheet = p1Cfg.hasThrowUpSheet ? loadSheet(p1Cfg.throwUpSheetUrl, 'throwUp', effectiveP1Faction) : null;
+
+    const p1IdleSprite = new Image();
+    p1IdleSprite.src = p1Cfg.idleUrl || pArch.spriteUrl || '/assets/sprites/player/ninja.png';
+
+    const botWalkSheet = botCfg.hasWalkSheet ? loadSheet(botCfg.walkSheetUrl, 'walk', effectiveP2Faction) : null;
+    const botRunSheet = botCfg.hasRunSheet ? loadSheet(botCfg.runSheetUrl, 'run', effectiveP2Faction) : null;
+    const botRollSheet = botCfg.hasRollSheet ? loadSheet(botCfg.rollSheetUrl, 'roll', effectiveP2Faction) : null;
+    const botJumpSheet = botCfg.hasJumpSheet ? loadSheet(botCfg.jumpSheetUrl, 'jump', effectiveP2Faction) : null;
+    const botMeleeSheet = botCfg.hasMeleeSheet ? loadSheet(botCfg.meleeSheetUrl, 'melee', effectiveP2Faction) : null;
+    const botOneHandSheet = botCfg.hasOneHandAttackSheet ? loadSheet(botCfg.oneHandAttackSheetUrl, 'oneHandAttack', effectiveP2Faction) : null;
+    const botTwoHandSheet = botCfg.hasTwoHandAttackSheet ? loadSheet(botCfg.twoHandAttackSheetUrl, 'twoHandAttack', effectiveP2Faction) : null;
+    const botPistolSheet = botCfg.hasPistolShootSheet ? loadSheet(botCfg.pistolShootSheetUrl, 'pistolShoot', effectiveP2Faction) : null;
+    const botRifleSheet = botCfg.hasRifleShootSheet ? loadSheet(botCfg.rifleShootSheetUrl, 'rifleShoot', effectiveP2Faction) : null;
+    const botThrowUpSheet = botCfg.hasThrowUpSheet ? loadSheet(botCfg.throwUpSheetUrl, 'throwUp', effectiveP2Faction) : null;
+
+    const botIdleSprite = new Image();
+    botIdleSprite.src = botCfg.idleUrl || arch.spriteUrl || '/assets/sprites/bot/agent.png';
+
+    // Preload weapon sprites from WeaponData.ts (Fuente Única de Verdad)
+    const weaponImages: Record<string, HTMLImageElement> = {};
+    Object.values(WeaponDatabase).forEach((w) => {
+      if (w.iconUrl) {
+        const wImg = new Image();
+        wImg.src = w.iconUrl;
+        weaponImages[w.type] = wImg;
+      }
+    });
+
+    const swordComboSheet = new Image();
+    swordComboSheet.src = '/assets/aistudio/assasin-asm_sword_triple_combo_3a606114.png';
+
+    // Preload grenade sprites
+    const grenadeImages = {} as Record<GrenadeType, HTMLImageElement>;
+    Object.values(GRENADE_DATABASE).forEach((g) => {
+      const gImg = new Image();
+      gImg.src = g.iconUrl;
+      grenadeImages[g.type] = gImg;
+    });
+
+    // Inicialización de slots de spawn y armas en el mundo
+    const weaponSlots = initializeWeaponSpawnSlots(worldCfg);
+    const worldWeapons: WorldWeaponEntity[] = [];
+
+    weaponSlots.forEach((slot, idx) => {
+      const weaponType = SpawnableWeaponsList[Math.floor(Math.random() * SpawnableWeaponsList.length)];
+      const wId = idx + 1;
+      worldWeapons.push({
+        id: wId,
+        weaponType,
+        x: slot.x,
+        y: slot.y,
+        baseY: slot.y,
+        bobTicks: idx * 20,
+        spawnSlotIndex: idx,
+      });
+      slot.currentWeaponId = wId;
+      slot.lastWeaponType = weaponType;
+    });
+
+    const hazards = createWorldHazards(worldCfg);
+    const spawnBot = worldCfg.spawns[1] || { x: 760, y: 460 };
+    const initialP1Grenades = createGrenadeInventory(GRENADE_MAX_CAPACITY, GrenadeType.Frag, START_WITH_GRENADES ? GRENADE_INITIAL_COUNT : 0);
+
+    stateRef.current = {
+      p1,
+      p1Controller: new PlayerController(spawnP1.x, spawnP1.y, true, 1),
+      bots: initialBots,
+      get bot() {
+        return this.bots[0]?.state;
+      },
+      get botAI() {
+        return this.bots[0]?.ai;
+      },
+      get botGrenades() {
+        return this.bots[0]?.grenades;
+      },
+      get botQuiet() {
+        return this.bots[0]?.quiet ?? false;
+      },
+      set botQuiet(v: boolean) {
+        if (this.bots[0]) this.bots[0].quiet = v;
+      },
+      get botScore() {
+        return this.bots[0]?.score ?? 0;
+      },
+      set botScore(v: number) {
+        if (this.bots[0]) this.bots[0].score = v;
+      },
+      p2Controller: initialBots[0]?.controller || new PlayerController(spawnBot.x, spawnBot.y, false, 2),
+      projectiles: [],
+      worldWeapons,
+      weaponSlots,
+      p1Grenades: initialP1Grenades,
+      grenadePickups: [],
+      smokeClouds: [],
+      flashbangFlash: 0,
+      grenadeImages,
+      medkits: [],
+      crates: hazards.crates,
+      barrels: hazards.barrels,
+      conveyors: hazards.conveyors,
+      presses: hazards.presses,
+      fireZones: [],
+      particles: [],
+      floatingTexts: [],
+      platforms: worldCfg.platforms,
+      worldConfig: worldCfg,
+      worldTick: 0,
+      screenShake: 0,
+      hitStopTicks: 0,
+      weaponSpawnTimer: 300,
+      round: 1,
+      p1Score: 0,
+      roundActive: true,
+      announcement: '¡PELEA!',
+      announcementTicks: 90,
+      nextEntityId: 20,
+      keys: {},
+      keysJustPressed: {},
+      bgImage: bgImg,
+      p1Sprite: p1IdleSprite,
+      botSprite: botIdleSprite,
+      p1WalkSheet,
+      p1RunSheet,
+      p1RollSheet,
+      p1JumpSheet,
+      p1MeleeSheet,
+      p1OneHandSheet,
+      p1TwoHandSheet,
+      p1PistolSheet,
+      p1RifleSheet,
+      p1ThrowUpSheet,
+      p1IdleSprite,
+      p1SheetConfig: p1Cfg,
+      botWalkSheet,
+      botRunSheet,
+      botRollSheet,
+      botJumpSheet,
+      botMeleeSheet,
+      botOneHandSheet,
+      botTwoHandSheet,
+      botPistolSheet,
+      botRifleSheet,
+      botThrowUpSheet,
+      botIdleSprite,
+      botSheetConfig: botCfg,
+      weaponImages,
+      swordComboSheet,
+      p1Faction: effectiveP1Faction,
+      botFaction: effectiveP2Faction,
+    };
+
+    // Iniciar ambientación procedural del mundo
+    sounds.startWorldAmbient(worldCfg.ambientSound);
+    sounds.playRoundGong(true);
+
+    const p1Portrait = getPlayerFactionPortrait(effectiveP1Faction);
+    const p1Color = getPlayerFactionColor(effectiveP1Faction);
+    const initialFighters: FighterBarData[] = [
+      buildFighterBarData(p1, p1Color, p1Portrait, 0, initialP1Grenades),
+      ...initialBots.map((b) =>
+        buildFighterBarData(
+          b.state,
+          b.color,
+          getBotArchetype(b.faction)?.spriteUrl || b.sprite?.src,
+          b.score,
+          b.grenades
+        )
+      ),
+    ];
+    setHudState((prev) => ({
+      ...prev,
+      fighters: initialFighters,
+    }));
+
+    return () => {
+      sounds.stopWorldAmbient();
+      stateRef.current = null;
+    };
+  }, [botFaction, playerFaction, maxRounds, worldId, createWorldHazards]);
+
+  // Reiniciar ronda o revancha manteniendo el mundo elegido
+  const restartRound = useCallback((isFullRematch: boolean = false) => {
+    if (!stateRef.current) return;
+    const s = stateRef.current;
+    const worldCfg = s.worldConfig;
+    const effectiveP1Faction = playerFaction || BotFaction.Ninja;
+    const effectiveP2Faction = botFaction || BotFaction.Ninja;
+    const arch = getBotArchetype(effectiveP2Faction);
+    const pArch = getBotArchetype(effectiveP1Faction);
+
+    const configuredSlots: BotSlotConfig[] =
+      botSlots && botSlots.length > 0
+        ? botSlots
+        : [{ faction: botFaction, difficulty: 'normal', team: 'independent' }];
+    const activeBotCount = gameMode === 'local1v1' ? 1 : Math.min(configuredSlots.length, ENGINE_MAX_BOTS);
+    const allSpawns = computeFighterSpawns(worldCfg, 1 + activeBotCount);
+    const spawnP1 = allSpawns[0] || { x: 200, y: 460 };
+
+    if (isFullRematch) {
+      s.p1Score = 0;
+      s.botScore = 0;
+      s.round = 1;
+      setHudState((prev) => ({
+        ...prev,
+        p1Score: 0,
+        botScore: 0,
+        round: 1,
+        isMatchOver: false,
+        matchWinner: '',
+      }));
+    }
+
+    const p1Label = gameMode === 'local1v1' ? `${pArch.name.toUpperCase()} (J1)` : pArch.name.toUpperCase();
+    const p2Label = gameMode === 'local1v1' ? `${arch.name.toUpperCase()} (J2)` : arch.name.toUpperCase();
+
+    s.p1 = createPlayerState(1, p1Label, false, spawnP1.x, spawnP1.y, effectiveP1Faction);
+    s.p1.faction = effectiveP1Faction;
+    s.p1.maxHealth = pArch.maxHealth;
+    s.p1.health = pArch.maxHealth;
+    s.p1.speedModifier = pArch.speedModifier;
+    s.p1.damageDealtModifier = pArch.damageDealtModifier;
+    s.p1.damageTakenModifier = pArch.damageTakenModifier;
+    s.p1.meleeForceModifier = pArch.meleeForceModifier;
+    s.p1.equippedWeapon = WeaponType.Fists;
+    s.p1.ammo = 0;
+    s.p1.characterState = 'desarmado';
+    s.p1.weaponState = 'desarmado';
+    s.p1.inventory = {
+      melee: WeaponType.Fists,
+      handgun: null,
+      primary: null,
+      activeSlot: 'melee',
+    };
+    s.p1.slotCooldownTicks = 0;
+    s.p1.isSwordAttacking = false;
+    s.p1.swordComboStep = 0;
+    s.p1.swordAnimFrame = 0;
+    s.p1.swordAnimTimer = 0;
+    s.p1.swordHasHit = false;
+    s.p1.swordComboBuffered = false;
+    s.p1.swordComboWindowTicks = 0;
+    s.p1.isOneHandAttacking = false;
+    s.p1.oneHandAnimFrame = 0;
+    s.p1.oneHandAnimTimer = 0;
+    s.p1.oneHandHasHit = false;
+    s.p1.isTwoHandAttacking = false;
+    s.p1.twoHandAnimFrame = 0;
+    s.p1.twoHandAnimTimer = 0;
+    s.p1.twoHandHasHit = false;
+    s.p1.isPistolShooting = false;
+    s.p1.pistolAnimFrame = 0;
+    s.p1.pistolAnimTimer = 0;
+    s.p1.pistolHasFired = false;
+    s.p1.isRifleShooting = false;
+    s.p1.rifleAnimFrame = 0;
+    s.p1.rifleAnimTimer = 0;
+    s.p1.rifleHasFired = false;
+    s.p1.isThrowing = false;
+    s.p1.throwAnimFrame = 0;
+    s.p1.throwAnimTimer = 0;
+    s.p1.throwHasReleased = false;
+    if (s.p1Controller) {
+      s.p1Controller.setPlayerId(1);
+      s.p1Controller.setPosition(spawnP1.x, spawnP1.y);
+      s.p1Controller.facingRight = true;
+      s.p1Controller.isShootingPistol = false;
+      s.p1Controller.isShootingRifle = false;
+      s.p1Controller.isThrowing = false;
+      s.p1Controller.hasHeavyRifleEquipped = false;
+    }
+
+    const scoreMap = new Map<number, number>();
+    if (!isFullRematch) {
+      s.bots.forEach((b) => scoreMap.set(b.id, b.score));
+    }
+    s.bots = createBotInstances(worldCfg, isFullRematch ? undefined : scoreMap);
+    if (s.bots[0]?.controller) {
+      s.p2Controller = s.bots[0].controller;
+    }
+
+    // Reinicializar puntos de spawn y armas en plataformas
+    s.weaponSlots = initializeWeaponSpawnSlots(worldCfg);
+    s.worldWeapons = [];
+    s.weaponSlots.forEach((slot, idx) => {
+      const weaponType = SpawnableWeaponsList[Math.floor(Math.random() * SpawnableWeaponsList.length)];
+      const wId = s.nextEntityId++;
+      s.worldWeapons.push({
+        id: wId,
+        weaponType,
+        x: slot.x,
+        y: slot.y,
+        baseY: slot.y,
+        bobTicks: idx * 20,
+        spawnSlotIndex: idx,
+      });
+      slot.currentWeaponId = wId;
+      slot.lastWeaponType = weaponType;
+    });
+
+    // Regenerar peligros si es revancha o se quedaron vacíos
+    if (isFullRematch || s.crates.length === 0 || s.barrels.length === 0) {
+      const hazards = createWorldHazards(worldCfg);
+      s.crates = hazards.crates;
+      s.barrels = hazards.barrels;
+      s.conveyors = hazards.conveyors;
+      s.presses = hazards.presses;
+    }
+
+    s.medkits = [];
+    s.projectiles = [];
+    s.particles = [];
+    s.fireZones = [];
+    s.floatingTexts = [];
+    s.p1Grenades = createGrenadeInventory(GRENADE_MAX_CAPACITY, GrenadeType.Frag, START_WITH_GRENADES ? GRENADE_INITIAL_COUNT : 0);
+    s.grenadePickups = [];
+    s.smokeClouds = [];
+    s.flashbangFlash = 0;
+    s.roundActive = true;
+    s.announcement = '¡PELEA!';
+    s.announcementTicks = 90;
+    s.weaponSpawnTimer = 300;
+
+    const p1Portrait = getPlayerFactionPortrait(effectiveP1Faction);
+    const p1Color = getPlayerFactionColor(effectiveP1Faction);
+    const roundFighters: FighterBarData[] = [
+      buildFighterBarData(s.p1, p1Color, p1Portrait, s.p1Score, s.p1Grenades),
+      ...s.bots.map((b) =>
+        buildFighterBarData(
+          b.state,
+          b.color,
+          getBotArchetype(b.faction)?.spriteUrl || b.sprite?.src,
+          b.score,
+          b.grenades
+        )
+      ),
+    ];
+    setHudState((prev) => ({
+      ...prev,
+      p1Score: s.p1Score,
+      botScore: s.botScore,
+      round: s.round,
+      fighters: roundFighters,
+    }));
+
+    sounds.playRoundGong(true);
+  }, [botFaction, playerFaction, createWorldHazards, botSlots, gameMode]);
+
+  // Manejador para equipar armas en Modo Práctica con munición infinita
+  const handleEquipPracticeWeapon = useCallback((weaponType: WeaponType) => {
+    const s = stateRef.current;
+    if (!s) return;
+    const p1 = s.p1;
+    const wData = getWeapon(weaponType);
+    if (!wData) return;
+    const wSlot = slotForWeapon(weaponType);
+
+    if (p1.inventory) {
+      if (wSlot === 'melee') {
+        p1.inventory.melee = weaponType;
+        p1.inventory.activeSlot = 'melee';
+        p1.ammo = 0;
+      } else if (wSlot === 'handgun') {
+        p1.inventory.handgun = { type: weaponType, ammo: 999 };
+        p1.inventory.activeSlot = 'handgun';
+        p1.ammo = 999;
+      } else if (wSlot === 'primary') {
+        p1.inventory.primary = { type: weaponType, ammo: 999 };
+        p1.inventory.activeSlot = 'primary';
+        p1.ammo = 999;
+      }
+    }
+    p1.equippedWeapon = weaponType;
+    p1.ammo = wSlot === 'melee' ? 0 : 999;
+    equipWeaponState(p1, weaponType, s.p1Controller);
+    sounds.playPickup();
+    s.floatingTexts.push({
+      id: s.nextEntityId++,
+      text: `¡EQUIPADO: ${wData.name.toUpperCase()}! (INFINITO)`,
+      x: p1.x,
+      y: p1.y - 35,
+      color: '#facc15',
+      life: 50,
+    });
+    setShowPracticeArsenal(false);
+    tutorialInputProgressRef.current.hasOpenedRack = true;
+    if (tutorialStepRef.current === 4) {
+      setTutorialStep(5);
+    }
+  }, []);
+
+  // Manejador para reiniciar vida y posición del Dummy en el gimnasio
+  const handleResetDummy = useCallback(() => {
+    const s = stateRef.current;
+    if (!s || s.bots.length === 0) return;
+    const dummy = s.bots[0].state;
+    dummy.health = dummy.maxHealth;
+    dummy.isAlive = true;
+    dummy.fsm = PlayerFSMState.Idle;
+    dummy.x = 620;
+    dummy.y = 450;
+    dummy.velocityX = 0;
+    dummy.velocityY = 0;
+    s.floatingTexts.push({
+      id: s.nextEntityId++,
+      text: '¡DUMMY RESTABLECIDO! (100 HP)',
+      x: 620,
+      y: 410,
+      color: '#22c55e',
+      life: 45,
+    });
+  }, []);
+
+  // Teclado y control de eventos
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!stateRef.current) return;
+      const key = e.key.toLowerCase();
+      const code = e.code;
+
+      // Modo Práctica: Si el estante de armas está abierto, aislar las teclas para la navegación del modal
+      if (showPracticeArsenalRef.current) {
+        if (code === 'Escape' || key === 'escape') {
+          e.preventDefault();
+          setShowPracticeArsenal(false);
+          if (stateRef.current) {
+            stateRef.current.keys = {};
+            stateRef.current.keysJustPressed = {};
+          }
+        }
+        return;
+      }
+
+      const preventedCodes = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'Comma', 'Period', 'Slash'];
+      if (preventedCodes.includes(code) || ['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' ', 'space'].includes(key)) {
+        e.preventDefault();
+      }
+
+      if (!stateRef.current.keys[code]) {
+        stateRef.current.keysJustPressed[code] = true;
+      }
+      if (!stateRef.current.keys[key]) {
+        stateRef.current.keysJustPressed[key] = true;
+      }
+      stateRef.current.keys[code] = true;
+      stateRef.current.keys[key] = true;
+
+      // ESC: Toggle Pausa o cerrar sub-modales (No debe pausar si la partida terminó)
+      if (code === 'Escape' || key === 'escape') {
+        if (showExitConfirmRef.current) {
+          setShowExitConfirm(false);
+          return;
+        }
+        if (showControlsModalRef.current) {
+          setShowControlsModal(false);
+          return;
+        }
+        if (isMatchOverRef.current) {
+          return;
+        }
+        setIsPaused((prev) => {
+          const next = !prev;
+          if (!next && stateRef.current) {
+            stateRef.current.keysJustPressed = {};
+          }
+          return next;
+        });
+        return;
+      }
+
+      // Interacción con Rack de Armas en Modo Práctica (tecla E)
+      if (gameMode === 'practice' && (code === 'KeyE' || key === 'e')) {
+        const s = stateRef.current;
+        if (s && s.p1) {
+          const distToRack = Math.hypot(s.p1.x - 140, s.p1.y - 470);
+          if (distToRack < 95) {
+            setShowPracticeArsenal((prev) => !prev);
+            tutorialInputProgressRef.current.hasOpenedRack = true;
+            if (tutorialStepRef.current === 4) {
+              setTutorialStep(5);
+            }
+            return;
+          }
+        }
+      }
+
+      // Alternar visualización del tutorial con H en Modo Práctica
+      if (gameMode === 'practice' && (code === 'KeyH' || key === 'h')) {
+        setTutorialVisible((prev) => !prev);
+      }
+
+      // Teclas exclusivas de DEBUG (activas únicamente con ?debug=1 en la URL)
+      const isDebug = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('debug') === '1';
+      if (isDebug) {
+        if (code === 'KeyR' || key === 'r') {
+          restartRound(stateRef.current.p1Score >= Math.floor(maxRounds / 2) + 1 || stateRef.current.botScore >= Math.floor(maxRounds / 2) + 1);
+        }
+        if (code === 'KeyC' || key === 'c' || code === 'KeyT' || key === 't') {
+          const nextType = cycleGrenadeType(stateRef.current.p1Grenades);
+          const gCfg = GRENADE_DATABASE[nextType];
+          sounds.playPickup();
+          stateRef.current.floatingTexts.push({
+            id: stateRef.current.nextEntityId++,
+            text: `DEBUG: ${gCfg.shortName} (${stateRef.current.p1Grenades.ammo[nextType]} disp.)`,
+            x: stateRef.current.p1.x,
+            y: stateRef.current.p1.y - 35,
+            color: gCfg.color,
+            life: 30,
+          });
+        }
+        if ((code === 'KeyY' || key === 'y') && gameMode === 'local1v1') {
+          const p2Bot = stateRef.current.bots.find((b) => b.id === 2) || stateRef.current.bots[0];
+          if (p2Bot) {
+            const nextType = cycleGrenadeType(p2Bot.grenades);
+            const gCfg = GRENADE_DATABASE[nextType];
+            sounds.playPickup();
+            stateRef.current.floatingTexts.push({
+              id: stateRef.current.nextEntityId++,
+              text: `DEBUG J2: ${gCfg.shortName} (${p2Bot.grenades.ammo[nextType]} disp.)`,
+              x: p2Bot.state.x,
+              y: p2Bot.state.y - 35,
+              color: gCfg.color,
+              life: 30,
+            });
+          }
+        }
+        if (code === 'KeyB' || key === 'b') {
+          stateRef.current.botQuiet = !stateRef.current.botQuiet;
+          setBotPracticeMode(stateRef.current.botQuiet);
+          for (const b of stateRef.current.bots) {
+            b.quiet = stateRef.current.botQuiet;
+          }
+          const bState = stateRef.current.bots[0]?.state;
+          stateRef.current.floatingTexts.push({
+            id: stateRef.current.nextEntityId++,
+            text: stateRef.current.botQuiet ? 'BOTS: QUIETOS (PRÁCTICA)' : 'BOTS: IA ACTIVA',
+            x: bState?.x ?? 760,
+            y: (bState?.y ?? 460) - 45,
+            color: stateRef.current.botQuiet ? '#38bdf8' : '#ef4444',
+            life: 45,
+          });
+        }
+      }
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (!stateRef.current) return;
+      const key = e.key.toLowerCase();
+      const code = e.code;
+      stateRef.current.keys[code] = false;
+      stateRef.current.keys[key] = false;
+      delete stateRef.current.keysJustPressed[code];
+      delete stateRef.current.keysJustPressed[key];
+    };
+
+    // Prevenir teclas pegadas al cambiar de pestaña o perder foco de ventana
+    const handleResetKeys = () => {
+      if (!stateRef.current) return;
+      stateRef.current.keys = {};
+      stateRef.current.keysJustPressed = {};
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('blur', handleResetKeys);
+    document.addEventListener('visibilitychange', handleResetKeys);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('blur', handleResetKeys);
+      document.removeEventListener('visibilitychange', handleResetKeys);
+    };
+  }, [restartRound, maxRounds, gameMode]);
+
+  // Helpers de combate y efectos
+  const createExplosion = (
+    x: number,
+    y: number,
+    radius: number,
+    damage: number,
+    spawnFire: boolean,
+    shooterId?: number
+  ) => {
+    if (!stateRef.current) return;
+    const s = stateRef.current;
+    s.screenShake = 16;
+    sounds.playExplosion();
+
+    addSparks(x, y, '#f97316', 30);
+    addSparks(x, y, '#ef4444', 20);
+    addSparks(x, y, '#fde047', 15);
+
+    if (spawnFire) {
+      s.fireZones.push({
+        x,
+        y,
+        radius: radius * 0.7,
+        remainingTicks: 300,
+      });
+    }
+
+    const allFighters = [s.p1, ...s.bots.map((b) => b.state)];
+    const attacker = shooterId !== undefined ? allFighters.find((f) => f.id === shooterId) : undefined;
+
+    // Daño a combatientes mediante CombatSystem.applyHit con falloff, stun y hit-stop
+    allFighters.forEach((target) => {
+      if (!target.isAlive) return;
+      if (shooterId !== undefined && isSameTeam(shooterId, target.id)) return;
+      const dist = Math.hypot(target.x - x, target.y - y);
+      if (dist < radius) {
+        const falloff = 1 - dist / radius;
+        const dealt = damage * falloff;
+        const kbDir = target.x >= x ? 1 : -1;
+        const kbDist = Math.max(0.2, falloff);
+
+        const hitRes = CombatSystem.applyHit(target, {
+          damage: dealt,
+          kbX: kbDir * (180 + 220 * kbDist),
+          kbY: -180 - 160 * kbDist,
+          stunTicks: GameConstants.HitstunTicksStrong,
+          hitStop: 5,
+          causedKnockdown: true,
+          attacker,
+          screenShake: 14,
+        });
+
+        target.fireTicks = 180;
+        target.isOnFire = true;
+
+        if (target.id === s.p1.id) {
+          s.p1Controller.setPosition(target.x, target.y);
+          s.p1Controller.vx = target.velocityX;
+          s.p1Controller.vy = target.velocityY;
+        } else if (target.id === 2 && (gameMode === 'local1v1' || gameMode === 'coop')) {
+          s.p2Controller.setPosition(target.x, target.y);
+          s.p2Controller.vx = target.velocityX;
+          s.p2Controller.vy = target.velocityY;
+        }
+
+        target.isMeleeComboAttacking = false;
+        target.comboStep = 0;
+        target.meleeComboStep = 0;
+        target.comboBuffered = false;
+        target.comboWindowTicks = 0;
+        target.isOneHandAttacking = false;
+        target.isTwoHandAttacking = false;
+        target.isPistolShooting = false;
+        target.isRifleShooting = false;
+        target.isThrowing = false;
+
+        s.floatingTexts.push({
+          id: s.nextEntityId++,
+          text: `-${Math.round(hitRes.finalDamage)}`,
+          x: target.x,
+          y: target.y - 35,
+          color: '#f97316',
+          life: 40,
+        });
+      }
+    });
+
+    // Daño en cadena a cajas y barriles
+    s.crates.forEach((c) => {
+      const dist = Math.hypot(c.x + c.w / 2 - x, c.y + c.h / 2 - y);
+      if (dist < radius) {
+        c.health -= damage * (1 - dist / radius);
+      }
+    });
+
+    s.barrels.forEach((b) => {
+      const dist = Math.hypot(b.x + b.w / 2 - x, b.y + b.h / 2 - y);
+      if (dist < radius) {
+        b.health -= damage * (1 - dist / radius);
+        if (shooterId !== undefined) {
+          b.lastHitterId = shooterId;
+        }
+      }
+    });
+  };
+
+  /**
+   * Resuelve la detonación visual y física específica según el tipo de granada arrojada:
+   * - Frag: Explosión HE clásica destructiva + onda expansiva
+   * - Smoke: Cortina de humo denso persistente que bloquea visión
+   * - Flashbang: Ráfaga enceguecedora + aturdimiento masivo (Hitstun) a combatientes
+   * - Molotov: Impacto directo y generación de zona de fuego prolongada
+   */
+  const triggerGrenadeDetonation = (
+    s: NonNullable<typeof stateRef.current>,
+    pr: ProjectileEntity
+  ) => {
+    if (pr.weaponType === WeaponType.C4) {
+      createExplosion(pr.x, pr.y, 85, pr.damage || 60, false, pr.shooterId);
+      addSparks(pr.x, pr.y, '#ef4444', 35);
+      addSparks(pr.x, pr.y, '#f97316', 25);
+      s.screenShake = 22;
+      sounds.playExplosion();
+      return;
+    }
+
+    if (pr.weaponType === WeaponType.Mine) {
+      createExplosion(pr.x, pr.y, 60, pr.damage || 45, false, pr.shooterId);
+      addSparks(pr.x, pr.y, '#f59e0b', 28);
+      s.screenShake = 14;
+      sounds.playExplosion();
+      return;
+    }
+
+    if (pr.weaponType === WeaponType.Baseball) {
+      return;
+    }
+
+    const gType = pr.grenadeType || GrenadeType.Frag;
+    const gCfg = GRENADE_DATABASE[gType];
+
+    switch (gType) {
+      case GrenadeType.Frag: {
+        createExplosion(pr.x, pr.y, gCfg.explosionRadius, gCfg.damage, false, pr.shooterId);
+        addSparks(pr.x, pr.y, '#f97316', 30);
+        addSparks(pr.x, pr.y, '#e2e8f0', 20);
+        addSparks(pr.x, pr.y, '#34d399', 15);
+        s.screenShake = 16;
+        sounds.playExplosion();
+        break;
+      }
+
+      case GrenadeType.Smoke: {
+        s.screenShake = 6;
+        s.smokeClouds.push({
+          id: s.nextEntityId++,
+          x: pr.x,
+          y: pr.y,
+          radius: gCfg.explosionRadius,
+          remainingTicks: gCfg.smokeDurationTicks || 360,
+          maxTicks: gCfg.smokeDurationTicks || 360,
+        });
+
+        // 45 partículas densas de humo
+        for (let k = 0; k < 45; k++) {
+          const ang = Math.random() * Math.PI * 2;
+          const spd = 15 + Math.random() * 50;
+          s.particles.push({
+            x: pr.x + (Math.random() - 0.5) * 24,
+            y: pr.y + (Math.random() - 0.5) * 18,
+            vx: Math.cos(ang) * spd,
+            vy: Math.sin(ang) * spd * 0.4 - 10,
+            life: 180 + Math.random() * 120,
+            maxLife: 300,
+            color: k % 2 === 0 ? 'rgba(203, 213, 225, 0.7)' : 'rgba(148, 163, 184, 0.6)',
+            size: 14 + Math.random() * 16,
+          });
+        }
+
+        const allSmokeFighters = [s.p1, ...s.bots.map((b) => b.state)];
+        const smokeAttacker = pr.shooterId !== undefined ? allSmokeFighters.find((f) => f.id === pr.shooterId) : undefined;
+
+        allSmokeFighters.forEach((target) => {
+          if (!target.isAlive) return;
+          if (pr.shooterId !== undefined && isSameTeam(pr.shooterId, target.id)) return;
+          const dist = Math.hypot(target.x - pr.x, target.y - pr.y);
+          if (dist < gCfg.explosionRadius) {
+            const falloff = 1 - dist / gCfg.explosionRadius;
+            const dealt = gCfg.damage * falloff;
+            const kbDir = target.x >= pr.x ? 1 : -1;
+            CombatSystem.applyHit(target, {
+              damage: dealt,
+              kbX: kbDir * 35 * falloff,
+              kbY: -20 * falloff,
+              stunTicks: 14,
+              hitStop: 2,
+              causedKnockdown: false,
+              attacker: smokeAttacker,
+              screenShake: 4,
+            });
+            if (target.id === s.p1.id) {
+              s.p1Controller.setPosition(target.x, target.y);
+              s.p1Controller.vx = target.velocityX;
+              s.p1Controller.vy = target.velocityY;
+            } else if (target.id === 2 && (gameMode === 'local1v1' || gameMode === 'coop')) {
+              s.p2Controller.setPosition(target.x, target.y);
+              s.p2Controller.vx = target.velocityX;
+              s.p2Controller.vy = target.velocityY;
+            }
+          }
+        });
+
+        s.floatingTexts.push({
+          id: s.nextEntityId++,
+          text: '¡CORTINA DE HUMO!',
+          x: pr.x,
+          y: pr.y - 30,
+          color: '#cbd5e1',
+          life: 45,
+        });
+        break;
+      }
+
+      case GrenadeType.Flashbang: {
+        s.flashbangFlash = 35;
+        s.screenShake = 12;
+        sounds.playRoundGong(false);
+
+        addSparks(pr.x, pr.y, '#fef08a', 35);
+        addSparks(pr.x, pr.y, '#ffffff', 25);
+        addSparks(pr.x, pr.y, '#38bdf8', 15);
+
+        const allFlashFighters = [s.p1, ...s.bots.map((b) => b.state)];
+        const flashAttacker = pr.shooterId !== undefined ? allFlashFighters.find((f) => f.id === pr.shooterId) : undefined;
+
+        allFlashFighters.forEach((target) => {
+          if (!target.isAlive) return;
+          const dist = Math.hypot(target.x - pr.x, target.y - pr.y);
+          if (dist < gCfg.explosionRadius) {
+            const kbDir = target.x >= pr.x ? 1 : -1;
+            CombatSystem.applyHit(target, {
+              damage: gCfg.damage,
+              kbX: kbDir * 80,
+              kbY: -60,
+              stunTicks: gCfg.stunTicks || 70,
+              hitStop: 4,
+              attacker: flashAttacker,
+              screenShake: 12,
+            });
+            if (target.id === s.p1.id) {
+              s.p1Controller.setPosition(target.x, target.y);
+              s.p1Controller.vx = target.velocityX;
+              s.p1Controller.vy = target.velocityY;
+            } else if (target.id === 2 && gameMode === 'local1v1') {
+              s.p2Controller.setPosition(target.x, target.y);
+              s.p2Controller.vx = target.velocityX;
+              s.p2Controller.vy = target.velocityY;
+            }
+            s.floatingTexts.push({
+              id: s.nextEntityId++,
+              text: '¡CEGADO / ATURDIDO!',
+              x: target.x,
+              y: target.y - 35,
+              color: '#facc15',
+              life: 45,
+            });
+          }
+        });
+        break;
+      }
+
+      case GrenadeType.Molotov: {
+        sounds.playExplosion();
+        addSparks(pr.x, pr.y, '#f97316', 30);
+        addSparks(pr.x, pr.y, '#93c5fd', 15);
+        createExplosion(pr.x, pr.y, gCfg.explosionRadius, gCfg.damage, true, pr.shooterId);
+        break;
+      }
+    }
+  };
+
+  // LOOP PRINCIPAL DE JUEGO (60Hz)
+  useEffect(() => {
+    let animId: number;
+
+    const updateGame = () => {
+      const s = stateRef.current;
+      if (!s) return;
+      const updateStart = performance.now();
+
+      // B-09 HIT-STOP: Congela la simulación durante el impacto mientras el shake continúa
+      if (s.hitStopTicks > 0) {
+        s.hitStopTicks--;
+        if (s.screenShake > 0) {
+          s.screenShake *= 0.88;
+          if (s.screenShake < 0.1) s.screenShake = 0;
+        }
+        return;
+      }
+
+      s.worldTick++;
+      const p1 = s.p1;
+      const keys = s.keys;
+      const allFighters = [s.p1, ...s.bots.map((b) => b.state)];
+
+      for (const f of allFighters) {
+        if (f.lastHitTicks !== undefined) {
+          f.lastHitTicks++;
+        }
+      }
+
+      // Destello blanco de golpe (Hit Flash Feedback: 2 frames)
+      if (p1.hitFlashTicks > 0) p1.hitFlashTicks--;
+      for (const inst of s.bots) {
+        if (inst.state.hitFlashTicks > 0) inst.state.hitFlashTicks--;
+      }
+
+      // Anuncios
+      if (s.announcementTicks > 0) {
+        s.announcementTicks--;
+        if (s.announcementTicks <= 0 && s.roundActive) {
+          s.announcement = '';
+        }
+      }
+
+      // Modo Práctica: Munición infinita y detección de proximidad al estante de armas
+      if (gameMode === 'practice') {
+        if (p1.equippedWeapon !== WeaponType.Fists && p1.ammo < 50) {
+          p1.ammo = 999;
+        }
+        s.p1Grenades.ammo[GrenadeType.Frag] = 99;
+        s.p1Grenades.ammo[GrenadeType.Molotov] = 99;
+
+        const distToRack = Math.hypot(p1.x - 140, p1.y - 470);
+        setP1NearWeaponRack(distToRack < 90);
+
+        // Respawn instantáneo de P1 si cae o pierde vida
+        if (p1.health <= 0 || p1.y > 530) {
+          p1.health = p1.maxHealth;
+          p1.isAlive = true;
+          p1.fsm = PlayerFSMState.Idle;
+          p1.x = 240;
+          p1.y = 450;
+          p1.velocityX = 0;
+          p1.velocityY = 0;
+          s.p1Controller.setPosition(240, 450);
+          s.p1Controller.vx = 0;
+          s.p1Controller.vy = 0;
+          s.floatingTexts.push({
+            id: s.nextEntityId++,
+            text: '¡VIDA RESTABLECIDA!',
+            x: 240,
+            y: 410,
+            color: '#38bdf8',
+            life: 40,
+          });
+        }
+
+        // Respawn instantáneo del Dummy si cae o pierde vida
+        for (const inst of s.bots) {
+          const b = inst.state;
+          if (b.health <= 0 || b.y > 530) {
+            b.health = b.maxHealth;
+            b.isAlive = true;
+            b.fsm = PlayerFSMState.Idle;
+            b.x = 620;
+            b.y = 450;
+            b.velocityX = 0;
+            b.velocityY = 0;
+            s.floatingTexts.push({
+              id: s.nextEntityId++,
+              text: '¡DUMMY RESTABLECIDO! (+100 HP)',
+              x: 620,
+              y: 410,
+              color: '#22c55e',
+              life: 45,
+            });
+            if (tutorialStepRef.current === 3) {
+              setTutorialStep(4);
+            }
+          }
+        }
+      } else {
+        // Comprobar muerte automática convencional si la salud llega a 0 o menos por cualquier daño
+        if (p1.isAlive && p1.health <= 0) {
+          p1.health = 0;
+          p1.isAlive = false;
+          PlayerFSM.tryTransition(p1, PlayerFSMState.Dead);
+        }
+        for (const inst of s.bots) {
+          const b = inst.state;
+          if (b.isAlive && b.health <= 0) {
+            b.health = 0;
+            b.isAlive = false;
+            PlayerFSM.tryTransition(b, PlayerFSMState.Dead);
+          }
+        }
+      }
+
+      // Fin de ronda y match
+      // En modo 'coop': supervivencia por oleadas. La ronda continúa mientras al menos un humano esté en pie.
+      // Si ambos humanos caen al mismo tiempo -> DERROTA / FIN DE PARTIDA.
+      // Si todos los bots de la oleada son eliminados -> OLEADA COMPLETADA -> TEMPORIZADOR 3S -> SUMINISTROS -> SIGUIENTE OLEADA.
+      const aliveFighters = allFighters.filter((f) => f.isAlive);
+
+      if (gameMode === 'coop') {
+        const p2Inst = s.bots.find((b) => b.id === 2);
+        const p1Alive = p1.isAlive;
+        const p2Alive = p2Inst ? p2Inst.state.isAlive : false;
+        const bothHumansDead = !p1Alive && !p2Alive;
+
+        if (bothHumansDead && s.roundActive) {
+          s.roundActive = false;
+          s.announcement = '¡AMBOS JUGADORES HAN CAÍDO!';
+          s.announcementTicks = 9999;
+          sounds.playRoundGong(false);
+          setTimeout(() => {
+            const wavesCleared = Math.max(0, (s.coopWave || 1) - 1);
+            setHudState((prev) => ({
+              ...prev,
+              isMatchOver: true,
+              matchWinner: `¡AMBOS JUGADORES HAN CAÍDO! OLEADAS SUPERADAS: ${wavesCleared}`,
+            }));
+            if (onMatchComplete) onMatchComplete(false);
+          }, 1800);
+        } else if (!bothHumansDead && s.roundActive) {
+          const enemyBots = s.bots.filter((b) => b.id >= 3);
+          const aliveEnemyBots = enemyBots.filter((b) => b.state.isAlive);
+
+          if (enemyBots.length > 0 && aliveEnemyBots.length === 0) {
+            if (!s.coopIntermission) {
+              s.coopIntermission = true;
+              s.coopIntermissionTicks = 180; // 3 segundos (180 ticks a 60fps)
+              s.announcement = '¡OLEADA COMPLETADA! PREPARANDO SIGUIENTE...';
+              s.announcementTicks = 180;
+              sounds.playRoundGong(true);
+
+              // Auto-reanimar al compañero caído al completar la oleada
+              if (!p1.isAlive) {
+                p1.isAlive = true;
+                p1.health = Math.round(p1.maxHealth * 0.6);
+                p1.x = s.worldConfig.spawns[0]?.x ?? 200;
+                p1.y = s.worldConfig.spawns[0]?.y ?? 460;
+                s.p1Controller.setPosition(p1.x, p1.y);
+                s.p1Controller.isInvulnerable = true;
+                s.p1Controller.invulnerableTicks = 120;
+                PlayerFSM.tryTransition(p1, PlayerFSMState.Idle);
+                s.floatingTexts.push({
+                  id: s.nextEntityId++,
+                  text: '¡REANIMADO PARA OLEADA!',
+                  x: p1.x,
+                  y: p1.y - 40,
+                  color: '#22c55e',
+                  life: 60,
+                });
+              }
+              if (p2Inst && !p2Inst.state.isAlive) {
+                p2Inst.state.isAlive = true;
+                p2Inst.state.health = Math.round(p2Inst.state.maxHealth * 0.6);
+                p2Inst.state.x = s.worldConfig.spawns[1]?.x ?? 760;
+                p2Inst.state.y = s.worldConfig.spawns[1]?.y ?? 460;
+                s.p2Controller.setPosition(p2Inst.state.x, p2Inst.state.y);
+                s.p2Controller.isInvulnerable = true;
+                s.p2Controller.invulnerableTicks = 120;
+                PlayerFSM.tryTransition(p2Inst.state, PlayerFSMState.Idle);
+                s.floatingTexts.push({
+                  id: s.nextEntityId++,
+                  text: '¡REANIMADO PARA OLEADA!',
+                  x: p2Inst.state.x,
+                  y: p2Inst.state.y - 40,
+                  color: '#38bdf8',
+                  life: 60,
+                });
+              }
+
+              // Desplegar suministros (armas aleatorias + botiquines en el suelo)
+              dropCoopSupplies(s);
+            } else {
+              s.coopIntermissionTicks = (s.coopIntermissionTicks ?? 180) - 1;
+              if (s.coopIntermissionTicks <= 0) {
+                s.coopIntermission = false;
+                s.coopWave = (s.coopWave || 1) + 1;
+                spawnNextCoopWave(s, s.coopWave);
+                s.announcement = `¡OLEADA ${s.coopWave}!`;
+                s.announcementTicks = 90;
+              }
+            }
+          }
+        }
+
+        // Sistema de reanimación interactiva en combate (cerca del compañero caído)
+        if (s.roundActive) {
+          // J2 vivo reanima a J1 caído
+          if (!p1.isAlive && p2Alive && p2Inst) {
+            const dist = Math.hypot(p2Inst.state.x - p1.x, p2Inst.state.y - p1.y);
+            if (dist < 60) {
+              const p2ReviveKey = !!s.keysJustPressed['KeyN'] || !!s.keysJustPressed['KeyE'] || !!s.keysJustPressed['KeyM'];
+              if (p2ReviveKey) {
+                p1.isAlive = true;
+                p1.health = Math.round(p1.maxHealth * 0.45);
+                PlayerFSM.tryTransition(p1, PlayerFSMState.Idle);
+                s.p1Controller.isInvulnerable = true;
+                s.p1Controller.invulnerableTicks = 120;
+                sounds.playMedkit();
+                addSparks(p1.x, p1.y, '#22c55e', 24);
+                s.floatingTexts.push({
+                  id: s.nextEntityId++,
+                  text: '¡REANIMADO POR J2!',
+                  x: p1.x,
+                  y: p1.y - 40,
+                  color: '#22c55e',
+                  life: 60,
+                });
+              }
+            }
+          }
+
+          // J1 vivo reanima a J2 caído
+          if (p1Alive && !p2Alive && p2Inst) {
+            const dist = Math.hypot(p1.x - p2Inst.state.x, p1.y - p2Inst.state.y);
+            if (dist < 60) {
+              const p1ReviveKey = !!s.keysJustPressed['KeyE'] || !!s.keysJustPressed['KeyF'];
+              if (p1ReviveKey) {
+                p2Inst.state.isAlive = true;
+                p2Inst.state.health = Math.round(p2Inst.state.maxHealth * 0.45);
+                PlayerFSM.tryTransition(p2Inst.state, PlayerFSMState.Idle);
+                s.p2Controller.isInvulnerable = true;
+                s.p2Controller.invulnerableTicks = 120;
+                sounds.playMedkit();
+                addSparks(p2Inst.state.x, p2Inst.state.y, '#38bdf8', 24);
+                s.floatingTexts.push({
+                  id: s.nextEntityId++,
+                  text: '¡REANIMADO POR J1!',
+                  x: p2Inst.state.x,
+                  y: p2Inst.state.y - 40,
+                  color: '#38bdf8',
+                  life: 60,
+                });
+              }
+            }
+          }
+        }
+      } else if (gameMode !== 'practice' && s.roundActive && aliveFighters.length <= 1) {
+        s.roundActive = false;
+        const winner = aliveFighters[0] || null;
+        const p1Won = winner && winner.id === p1.id;
+
+        if (p1Won) {
+          s.p1Score++;
+          s.announcement = '¡JUGADOR 1 GANA!';
+          sounds.playRoundGong(true);
+        } else if (winner) {
+          const winningBot = s.bots.find((b) => b.state.id === winner.id);
+          if (winningBot) {
+            winningBot.score++;
+          }
+          s.announcement =
+            gameMode === 'local1v1'
+              ? '¡JUGADOR 2 GANA!'
+              : winningBot
+              ? `¡${winningBot.state.name} GANA!`
+              : '¡BOT GANA!';
+          sounds.playRoundGong(false);
+        } else {
+          s.announcement = '¡EMPATE!';
+          sounds.playRoundGong(false);
+        }
+        s.announcementTicks = 150;
+
+        const maxBotScore = Math.max(0, ...s.bots.map((b) => b.score));
+        const neededWins = Math.floor(maxRounds / 2) + 1;
+        if (s.p1Score >= neededWins || maxBotScore >= neededWins) {
+          const matchWon = s.p1Score > maxBotScore;
+          setTimeout(() => {
+            if (stateRef.current) {
+              stateRef.current.announcement = matchWon
+                ? '¡VICTORIA TOTAL!'
+                : gameMode === 'local1v1'
+                ? '¡VICTORIA DEL JUGADOR 2!'
+                : '¡DERROTA!';
+              stateRef.current.announcementTicks = 9999;
+            }
+            setHudState((prev) => ({
+              ...prev,
+              isMatchOver: true,
+              matchWinner: matchWon
+                ? '¡VICTORIA DEL JUGADOR 1!'
+                : gameMode === 'local1v1'
+                ? '¡VICTORIA DEL JUGADOR 2!'
+                : '¡EL BOT HA VENCIDO!',
+            }));
+            if (onMatchComplete) onMatchComplete(matchWon);
+          }, 2000);
+        } else {
+          setTimeout(() => {
+            if (stateRef.current) {
+              s.round++;
+              restartRound(false);
+            }
+          }, 2500);
+        }
+      }
+
+      // ─────────────────────────────────────────────────────────
+      // 1. INPUT HUMANO (P1)
+      // ─────────────────────────────────────────────────────────
+      if (p1.isAlive && s.roundActive) {
+        const is1v1 = gameMode === 'local1v1' || gameMode === 'coop';
+        const scheme = controlSchemeRef.current;
+        s.p1Controller.setPlayerId(1);
+        const p1RawInput = s.p1Controller.readInput(keys, s.keysJustPressed, is1v1, scheme);
+        const p1Combat = s.p1Controller.readCombatInput(keys, s.keysJustPressed, is1v1, scheme);
+
+        const nextIdObj = {
+          get current() {
+            return s.nextEntityId;
+          },
+          set current(v: number) {
+            s.nextEntityId = v;
+          },
+        };
+
+        // Cambio de ranuras de armas P1 (1, 2, 3, 4)
+        if (p1Combat.slot1Just) {
+          switchFighterSlot(p1, 'melee', s.p1Controller, s.p1Grenades, s.floatingTexts, nextIdObj);
+        } else if (p1Combat.slot2Just) {
+          switchFighterSlot(p1, 'handgun', s.p1Controller, s.p1Grenades, s.floatingTexts, nextIdObj);
+        } else if (p1Combat.slot3Just) {
+          switchFighterSlot(p1, 'primary', s.p1Controller, s.p1Grenades, s.floatingTexts, nextIdObj);
+        } else if (p1Combat.slot4Just) {
+          switchFighterSlot(p1, 'throwable', s.p1Controller, s.p1Grenades, s.floatingTexts, nextIdObj);
+        }
+
+        const moveDir = p1RawInput.moveDir;
+        const leftKey = moveDir === -1;
+        const rightKey = moveDir === 1;
+        const runHeld = p1RawInput.run;
+        const jumpJustPressed = p1RawInput.jump;
+        const jumpHeld = p1RawInput.jumpHeld;
+        const rollPressed = p1RawInput.roll;
+        const dropThrough = !!p1RawInput.dropThrough;
+        const p1Controls = is1v1 ? CONTROLS.LOCAL_1V1_P1 : CONTROLS.SOLO;
+        const crouchHeld = isAnyPressed(keys, p1Controls.down);
+
+        const isNinjaComboLocked = !!p1.isSwordAttacking || !!p1.isMeleeComboAttacking || !!p1.isOneHandAttacking || !!p1.isTwoHandAttacking || !!p1.isThrowing;
+        const isShootingPistol = !!p1.isPistolShooting;
+
+        if (s.p1Controller) {
+          s.p1Controller.hasHeavyRifleEquipped = isRifleWeapon(p1.equippedWeapon);
+        }
+
+        const p1Input: PlayerInput = {
+          moveDir: isNinjaComboLocked ? 0 : moveDir,
+          run: (isNinjaComboLocked || isShootingPistol) ? false : runHeld,
+          jump: isNinjaComboLocked ? false : jumpJustPressed,
+          jumpHeld: isNinjaComboLocked ? false : jumpHeld,
+          roll: isNinjaComboLocked ? false : rollPressed,
+          dropThrough: isNinjaComboLocked ? false : dropThrough,
+        };
+
+        // Recuperación activa de derribo para P1 mediante teclas de movimiento (Flechas, salto, rodada)
+        if (p1.fsm === PlayerFSMState.KnockedDown || p1.fsm === PlayerFSMState.GetUp) {
+          const hasDirInput = moveDir !== 0;
+          const hasVerticalInput = jumpJustPressed || (hasDirInput && rollPressed) || crouchHeld;
+          const anyMovementPressed =
+            hasDirInput ||
+            hasVerticalInput ||
+            isAnyPressed(keys, p1Controls.melee) ||
+            isAnyPressed(keys, p1Controls.fire);
+
+          // Si presiona teclas tras un mínimo amortiguamiento de impacto (4 ticks)
+          if (anyMovementPressed && p1.stateTicks >= 4) {
+            if ((rollPressed && hasDirInput) || (crouchHeld && hasDirInput)) {
+              // Rodada de escape / recuperación inmediata
+              if (hasDirInput) p1.facingRight = moveDir > 0;
+              PlayerFSM.tryTransition(p1, PlayerFSMState.Roll);
+              s.p1Controller.setPosition(p1.x, p1.y);
+              s.p1Controller.isOnFloor = p1.onGround;
+              s.p1Controller.facingRight = p1.facingRight;
+              s.p1Controller.state = ControllerState.Roll;
+              p1.rollTicks = GameConstants.RollDurationTicks;
+              p1.invulnerabilityTicks = 20;
+              sounds.playRoll();
+              s.floatingTexts.push({
+                id: s.nextEntityId++,
+                text: '¡RODADA DE RECUPERACIÓN!',
+                x: p1.x,
+                y: p1.y - 28,
+                color: '#38bdf8',
+                life: 25,
+              });
+            } else if (jumpJustPressed) {
+              // Salto de recuperación vertical
+              PlayerFSM.tryTransition(p1, PlayerFSMState.Jump);
+              s.p1Controller.setPosition(p1.x, p1.y);
+              s.p1Controller.isOnFloor = false;
+              s.p1Controller.vy = -GameConstants.JumpVelocity;
+              p1.velocityY = -GameConstants.JumpVelocity;
+              p1.invulnerabilityTicks = 16;
+              sounds.playJump();
+              s.floatingTexts.push({
+                id: s.nextEntityId++,
+                text: '¡SALTO DE RECUPERACIÓN!',
+                x: p1.x,
+                y: p1.y - 28,
+                color: '#4ade80',
+                life: 25,
+              });
+            } else {
+              // Levantarse inmediatamente al presionar flecha izquierda / derecha, o tecla de dirección
+              if (hasDirInput) {
+                p1.facingRight = moveDir > 0;
+                s.p1Controller.facingRight = p1.facingRight;
+              }
+              PlayerFSM.tryTransition(p1, PlayerFSMState.Idle);
+              s.p1Controller.setPosition(p1.x, p1.y);
+              s.p1Controller.isOnFloor = p1.onGround;
+              s.p1Controller.state = ControllerState.Idle;
+              p1.invulnerabilityTicks = 18;
+              addSparks(p1.x, p1.y + 12, '#38bdf8', 8);
+              s.floatingTexts.push({
+                id: s.nextEntityId++,
+                text: '¡DE PIE!',
+                x: p1.x,
+                y: p1.y - 28,
+                color: '#e2e8f0',
+                life: 25,
+              });
+            }
+          }
+        }
+
+        if (
+          p1.fsm !== PlayerFSMState.KnockedDown &&
+          p1.fsm !== PlayerFSMState.GetUp &&
+          p1.fsm !== PlayerFSMState.Hitstun
+        ) {
+          const prevRoll = s.p1Controller.state === ControllerState.Roll;
+          const prevJump = s.p1Controller.state === ControllerState.Jump;
+
+          s.p1Controller.update(1 / 60, p1Input, s.platforms);
+
+          // Progreso automático de tutorial por inputs del jugador (Modo Práctica)
+          if (gameMode === 'practice') {
+            const step = tutorialStepRef.current;
+            if (step === 0 && moveDir !== 0) {
+              tutorialInputProgressRef.current.moveTicks++;
+              if (tutorialInputProgressRef.current.moveTicks >= 25) {
+                setTutorialStep(1);
+              }
+            } else if (step === 1 && (jumpJustPressed || s.p1Controller.state === ControllerState.Jump)) {
+              setTutorialStep(2);
+            } else if (step === 2 && (rollPressed || s.p1Controller.state === ControllerState.Roll)) {
+              setTutorialStep(3);
+            }
+          }
+
+          if (p1.isMeleeComboAttacking || p1.isOneHandAttacking || p1.isTwoHandAttacking || p1.isSwordAttacking || p1.isThrowing) {
+            s.p1Controller.vx = 0;
+            p1.velocityX = 0;
+            s.p1Controller.state = ControllerState.Idle;
+            p1.fsm = PlayerFSMState.MeleeAttack;
+          }
+
+          p1.x = s.p1Controller.x;
+          p1.y = s.p1Controller.y;
+          p1.velocityX = (p1.isMeleeComboAttacking || p1.isOneHandAttacking || p1.isTwoHandAttacking || p1.isSwordAttacking || p1.isThrowing) ? 0 : s.p1Controller.vx;
+          p1.velocityY = s.p1Controller.vy;
+          p1.facingRight = s.p1Controller.facingRight;
+          p1.onGround = s.p1Controller.isOnFloor;
+
+          const isGymratP1 = p1.faction === BotFaction.Gymrat || (playerFaction || BotFaction.Ninja) === BotFaction.Gymrat || p1.name.toUpperCase().includes('GYMRAT');
+          if (isGymratP1) {
+            if (!p1.gymratPrevOnGround && p1.onGround) {
+              p1.gymratLandingTicks = 6;
+            }
+            p1.gymratPrevOnGround = p1.onGround;
+
+            if (p1.gymratLandingTicks && p1.gymratLandingTicks > 0) {
+              if (Math.abs(p1.velocityX) > 20 || p1Input.moveDir !== 0) {
+                p1.gymratLandingTicks = 0;
+              } else {
+                p1.gymratLandingTicks--;
+              }
+            }
+          }
+
+          const isSantaP1 = p1.faction === BotFaction.Santa || (playerFaction || BotFaction.Ninja) === BotFaction.Santa || p1.name.toUpperCase().includes('SANTA');
+          if (isSantaP1) {
+            if (!p1.santaPrevOnGround && p1.onGround) {
+              p1.santaLandingTicks = 6;
+            }
+            p1.santaPrevOnGround = p1.onGround;
+
+            if (p1.santaLandingTicks && p1.santaLandingTicks > 0) {
+              if (Math.abs(p1.velocityX) > 20 || p1Input.moveDir !== 0) {
+                p1.santaLandingTicks = 0;
+              } else {
+                p1.santaLandingTicks--;
+              }
+            }
+          }
+
+          if (s.p1Controller.state === ControllerState.Roll) {
+            if (!prevRoll) {
+              sounds.playRoll();
+              p1.rollTicks = GameConstants.RollDurationTicks;
+            }
+            p1.fsm = PlayerFSMState.Roll;
+            if (s.p1Controller.isInvulnerable || (isSantaP1 && s.p1Controller.rollProgress >= 0.25 && s.p1Controller.rollProgress <= 0.75)) {
+              p1.invulnerabilityTicks = Math.max(p1.invulnerabilityTicks, 2);
+            }
+            if (Math.random() < 0.65) {
+              const dustDir = p1.facingRight ? -1 : 1;
+              s.particles.push({
+                x: p1.x + dustDir * 10,
+                y: p1.y + 16,
+                vx: dustDir * (25 + Math.random() * 45),
+                vy: -8 - Math.random() * 15,
+                life: 14,
+                maxLife: 20,
+                color: '#cbd5e1',
+                size: 3,
+              });
+            }
+          } else if (s.p1Controller.state === ControllerState.Jump) {
+            if (!prevJump) sounds.playJump();
+            p1.fsm = PlayerFSMState.Jump;
+          } else if (s.p1Controller.state === ControllerState.Fall) {
+            p1.fsm = PlayerFSMState.Fall;
+          } else if (s.p1Controller.state === ControllerState.Run || s.p1Controller.state === ControllerState.Walk) {
+            if (p1.fsm !== PlayerFSMState.MeleeAttack && p1.fsm !== PlayerFSMState.RangedFire) {
+              p1.fsm = PlayerFSMState.Run;
+            }
+          } else {
+            if (p1.fsm !== PlayerFSMState.MeleeAttack && p1.fsm !== PlayerFSMState.RangedFire) {
+              p1.fsm = crouchHeld ? PlayerFSMState.Crouch : PlayerFSMState.Idle;
+            }
+          }
+        }
+
+        const meleePressed = p1Combat.melee;
+        const firePressed = p1Combat.fire;
+        const throwPressed = p1Combat.throwGrenade;
+
+        // Melee Attack P1 - Advanced Melee System
+        const p1FacingDir = p1.facingRight ? 1 : -1;
+        const meleeHeld = meleePressed;
+        const meleeJustPressed = p1Combat.meleeJust;
+        const fireJustPressed = p1Combat.fireJust;
+        const throwJustPressed = p1Combat.throwJust;
+
+        const grabbedTarget = p1.isGrappling && p1.grabbedTargetId !== null
+          ? (s.bots.find((b) => b.id === p1.grabbedTargetId)?.state || null)
+          : null;
+
+        if (p1.isGrappling && grabbedTarget) {
+          p1.grappleTicks++;
+          grabbedTarget.x = p1.x + p1FacingDir * 24;
+          grabbedTarget.y = p1.y;
+          grabbedTarget.velocityX = 0;
+          grabbedTarget.velocityY = 0;
+          grabbedTarget.isGrabbed = true;
+          if (grabbedTarget.id === 2 && gameMode === 'local1v1') {
+            s.p2Controller.setPosition(grabbedTarget.x, grabbedTarget.y);
+            s.p2Controller.vx = 0;
+            s.p2Controller.vy = 0;
+          }
+
+          if (meleeJustPressed) {
+            sounds.playThrow();
+            const throwDirX = leftKey ? -1 : (rightKey ? 1 : p1FacingDir);
+            const throwUp = jumpHeld || !crouchHeld;
+            const throwHit = CombatSystem.resolveThrow(p1, grabbedTarget, throwDirX, throwUp);
+
+            p1.isGrappling = false;
+            p1.grabbedTargetId = null;
+            grabbedTarget.isGrabbed = false;
+            p1.attackCooldown = 26;
+            s.screenShake = 10;
+            addSparks(grabbedTarget.x, grabbedTarget.y, '#38bdf8', 18);
+
+            s.floatingTexts.push({
+              id: s.nextEntityId++,
+              text: `¡LANZAMIENTO! -${Math.round(throwHit.damageDealt)}`,
+              x: grabbedTarget.x,
+              y: grabbedTarget.y - 35,
+              color: '#38bdf8',
+              life: 38,
+            });
+
+            s.crates.forEach((c) => {
+              if (Math.hypot(grabbedTarget.x - (c.x + c.w / 2), grabbedTarget.y - (c.y + c.h / 2)) < 52) {
+                c.health -= 20;
+                c.vx = throwDirX * 360;
+                sounds.playCrateBreak();
+              }
+            });
+            s.barrels.forEach((b) => {
+              if (Math.hypot(grabbedTarget.x - (b.x + b.w / 2), grabbedTarget.y - (b.y + b.h / 2)) < 52) {
+                b.health -= 15;
+                b.vx = throwDirX * 420;
+                sounds.playHit();
+              }
+            });
+          } else if (p1.grappleTicks > 50) {
+            p1.isGrappling = false;
+            p1.grabbedTargetId = null;
+            grabbedTarget.isGrabbed = false;
+            p1.attackCooldown = 15;
+          }
+        } else {
+          const potentialGrappleTargets = s.bots
+            .map((b) => b.state)
+            .filter(
+              (b) =>
+                b.isAlive &&
+                !b.isGrabbed &&
+                (b.id === 2 && gameMode === 'local1v1' ? !s.p2Controller.isInvulnerable : b.fsm !== PlayerFSMState.Roll)
+            );
+          const nearRival = potentialGrappleTargets.find(
+            (b) => Math.hypot(b.x - p1.x, b.y - p1.y) < 38 && Math.abs(b.y - p1.y) < 26
+          );
+
+          if (
+            meleeJustPressed &&
+            nearRival &&
+            p1.attackCooldown <= 0 &&
+            p1.onGround &&
+            (crouchHeld || (p1.facingRight ? rightKey : leftKey))
+          ) {
+            p1.isGrappling = true;
+            p1.grabbedTargetId = nearRival.id;
+            p1.grappleTicks = 0;
+            nearRival.isGrabbed = true;
+            sounds.playGrapple();
+            s.floatingTexts.push({
+              id: s.nextEntityId++,
+              text: '¡AGARRE!',
+              x: p1.x,
+              y: p1.y - 30,
+              color: '#f59e0b',
+              life: 30,
+            });
+          } else if (
+            meleeJustPressed &&
+            p1.attackCooldown <= 0 &&
+            (crouchHeld || s.p1Controller.state === ControllerState.Roll) &&
+            p1.onGround
+          ) {
+            const isBladeP1 = isBladeWeapon(p1.equippedWeapon);
+            p1.isSliding = true;
+            p1.slideTicks = 18;
+            p1.attackCooldown = isBladeP1 ? 24 : 28;
+            p1.velocityX = p1FacingDir * (isBladeP1 ? 460 : 430);
+            s.p1Controller.vx = p1.velocityX;
+            if (isBladeP1) {
+              sounds.playSwordSwing();
+              sounds.playSlide();
+            } else {
+              sounds.playSlide();
+            }
+            PlayerFSM.tryTransition(p1, PlayerFSMState.CrouchSlide);
+            addSparks(p1.x, p1.y + 16, isBladeP1 ? '#e0f2fe' : '#94a3b8', 14);
+
+            for (const bInst of s.bots) {
+              const bState = bInst.state;
+              if (!bState.isAlive || bState.isGrabbed || isSameTeam(p1.id, bState.id)) continue;
+              if (isBladeP1) {
+                const slideHit = CombatSystem.resolveBladeDashSlash(p1, bState);
+                if (slideHit.didHit) {
+                  sounds.playBladeHit();
+                  s.screenShake = 9;
+                  addSparks(bState.x, bState.y + 12, '#38bdf8', 18);
+                  addSparks(bState.x, bState.y + 12, '#ffffff', 12);
+                  s.floatingTexts.push({
+                    id: s.nextEntityId++,
+                    text: `¡TAJO RASANTE! -${Math.round(slideHit.damageDealt)}`,
+                    x: bState.x,
+                    y: bState.y - 25,
+                    color: '#38bdf8',
+                    life: 35,
+                  });
+                }
+              } else {
+                const slideHit = CombatSystem.resolveSlideTackle(p1, bState);
+                if (slideHit.didHit) {
+                  sounds.playHit();
+                  s.screenShake = 8;
+                  addSparks(bState.x, bState.y + 12, '#38bdf8', 16);
+                  s.floatingTexts.push({
+                    id: s.nextEntityId++,
+                    text: `¡BARRIDA! -${Math.round(slideHit.damageDealt)}`,
+                    x: bState.x,
+                    y: bState.y - 25,
+                    color: '#38bdf8',
+                    life: 35,
+                  });
+                }
+              }
+            }
+
+            s.crates.forEach((c) => {
+              if (Math.hypot(p1.x - (c.x + c.w / 2), p1.y - (c.y + c.h / 2)) < 50) {
+                c.health -= isBladeP1 ? 25 : 15;
+                c.vx = p1FacingDir * 320;
+                sounds.playHit();
+                addSparks(c.x + 16, c.y + 16, '#d97706', 10);
+              }
+            });
+            s.barrels.forEach((b) => {
+              if (Math.hypot(p1.x - (b.x + b.w / 2), b.y - (b.y + b.h / 2)) < 50) {
+                b.health -= 15;
+                b.vx = p1FacingDir * 380;
+                sounds.playHit();
+                addSparks(b.x + 12, b.y + 16, '#ef4444', 10);
+              }
+            });
+          }
+        }
+
+        // ─────────────────────────────────────────────────────────
+        // ─────────────────────────────────────────────────────────
+        // ⚠️ REGLA DE ORO - TECLAS SEPARADAS (NO MEZCLAR)
+        // 1. Tecla "N": EXCLUSIVA para golpes cuerpo a cuerpo (puños, espadas, hachas).
+        // 2. Tecla "M": EXCLUSIVA para disparar armas de fuego (pistolas, rifles, escopetas).
+        // 3. Tecla "," (coma) o "L": EXCLUSIVA para lanzar bombas/granadas (Grenade, Molotov, C4, Baseball, Mine).
+        // ─────────────────────────────────────────────────────────
+        const isPistol = isPistolWeapon(p1.equippedWeapon);
+        const isRifle = isRifleWeapon(p1.equippedWeapon);
+        const isThrowable = isThrowableWeapon(p1.equippedWeapon);
+        const isFirearm = isRifle || isPistol || (p1.equippedWeapon !== WeaponType.Fists && getWeapon(p1.equippedWeapon).category === 'Firearm');
+
+        // ═════════════════════════════════════════════════════════
+        // 1. TECLA "N": EXCLUSIVA PARA GOLPES CUERPO A CUERPO
+        // ═════════════════════════════════════════════════════════
+        if (
+          meleeJustPressed &&
+          p1.isAlive &&
+          s.roundActive &&
+          p1.fsm !== PlayerFSMState.KnockedDown &&
+          p1.fsm !== PlayerFSMState.GetUp &&
+          p1.fsm !== PlayerFSMState.Hitstun &&
+          p1.fsm !== PlayerFSMState.Roll &&
+          !p1.isGrappling &&
+          !p1.isThrowing
+        ) {
+          // ── FASE 4: SISTEMA DE AGARRE DE ARMAS (WeaponGrip) ──
+          // 1 Mano: Katana, Machete, Knife, Baton, ShockBaton, Whip, CueStick.
+          // 2 Manos: Axe, Bat, LeadPipe, Hammer, Chair, Pipe, Bottle, Teapot, Pillow.
+          // FALLBACK: Si el personaje no posee el spritesheet para ese agarre, usa animación Melee de puños sin crashear.
+          const p1IsNinja = (playerFaction || BotFaction.Ninja) === BotFaction.Ninja || p1.name.toUpperCase().includes('NINJA');
+          const hasTwoHandSheet = !!(s.p1TwoHandSheet && s.p1TwoHandSheet.complete && s.p1TwoHandSheet.naturalWidth > 0) || !!s.p1SheetConfig?.hasTwoHandAttackSheet;
+          const hasOneHandSheet = !!(s.p1OneHandSheet && s.p1OneHandSheet.complete && s.p1OneHandSheet.naturalWidth > 0) || !!s.p1SheetConfig?.hasOneHandAttackSheet;
+
+          if (isTwoHandWeapon(p1.equippedWeapon) && hasTwoHandSheet) {
+            // Ataque a dos manos (Golpe pesado): animación One Shot, duraciones ponderadas y hit frame por arma
+            if (!p1.isTwoHandAttacking) {
+              p1.isTwoHandAttacking = true;
+              p1.twoHandAnimFrame = 0;
+              p1.twoHandAnimTimer = 0;
+              p1.twoHandHasHit = false;
+
+              p1.velocityX = 0;
+              s.p1Controller.vx = 0;
+              s.p1Controller.state = ControllerState.Idle;
+              PlayerFSM.tryTransition(p1, PlayerFSMState.MeleeAttack);
+
+              if (isBladeWeapon(p1.equippedWeapon)) {
+                sounds.playSwordSwing();
+              } else {
+                sounds.playPunch();
+              }
+            }
+          } else if (p1IsNinja && isSwordWeapon(p1.equippedWeapon)) {
+            // Combo exclusivo de Katana/Espada del Ninja (3 tajos encadenados)
+            if (p1.isSwordAttacking) {
+              if ((p1.swordComboStep || 0) < 2) {
+                p1.swordComboBuffered = true;
+                p1.swordComboWindowTicks = 32;
+
+                if ((p1.swordAnimFrame || 0) >= 3) {
+                  p1.swordComboStep = (p1.swordComboStep || 0) + 1;
+                  p1.swordAnimFrame = 0;
+                  p1.swordAnimTimer = 0;
+                  p1.swordHasHit = false;
+                  p1.swordComboBuffered = false;
+                  p1.swordComboWindowTicks = 32;
+                  sounds.playSwordSwing();
+                }
+              }
+            } else {
+              let nextStep = 0;
+              if ((p1.swordComboWindowTicks || 0) > 0 && (p1.swordComboStep || 0) > 0 && (p1.swordComboStep || 0) <= 2) {
+                nextStep = p1.swordComboStep || 0;
+              } else {
+                nextStep = 0;
+              }
+
+              p1.isSwordAttacking = true;
+              p1.swordComboStep = nextStep;
+              p1.swordAnimFrame = 0;
+              p1.swordAnimTimer = 0;
+              p1.swordHasHit = false;
+              p1.swordComboBuffered = false;
+              p1.swordComboWindowTicks = 32;
+
+              p1.velocityX = 0;
+              s.p1Controller.vx = 0;
+              s.p1Controller.state = ControllerState.Idle;
+              PlayerFSM.tryTransition(p1, PlayerFSMState.MeleeAttack);
+
+              sounds.playSwordSwing();
+            }
+          } else if (isOneHandWeapon(p1.equippedWeapon) && p1.equippedWeapon !== WeaponType.Fists && hasOneHandSheet) {
+            // Ataque a una mano (one_hand_attack)
+            if (!p1.isOneHandAttacking) {
+              p1.isOneHandAttacking = true;
+              p1.oneHandAnimFrame = 0;
+              p1.oneHandAnimTimer = 0;
+              p1.oneHandHasHit = false;
+
+              p1.velocityX = 0;
+              s.p1Controller.vx = 0;
+              s.p1Controller.state = ControllerState.Idle;
+              PlayerFSM.tryTransition(p1, PlayerFSMState.MeleeAttack);
+
+              if (isBladeWeapon(p1.equippedWeapon)) {
+                sounds.playSwordSwing();
+              } else {
+                sounds.playPunch();
+              }
+            }
+          } else {
+            // Sistema de combo melee desarmado (Puños / Golpes cuerpo a cuerpo)
+            // Funciona desarmado o si porta arma de fuego/bomba pero presiona tecla de golpe melee (N)
+            const isGymratP1 = (playerFaction || BotFaction.Ninja) === BotFaction.Gymrat || p1.name.toUpperCase().includes('GYMRAT');
+
+            if (isGymratP1) {
+              if (p1.isMeleeComboAttacking) {
+                // Durante la ejecución de la animación, presionar de nuevo la tecla encadena el siguiente golpe
+                if (p1.meleeAnimFrame < 4) {
+                  p1.comboBuffered = true;
+                  p1.comboWindowTicks = 34;
+                }
+              } else {
+                let startFrame = 0;
+                let step = 0;
+                if (p1.comboWindowTicks > 0 && p1.comboStep === 1) {
+                  // Encadena Patada (Frame 3, idx 2)
+                  startFrame = 2;
+                  step = 1;
+                } else if (p1.comboWindowTicks > 0 && p1.comboStep === 2) {
+                  // Encadena Gancho / Remate (Frame 5, idx 4)
+                  startFrame = 4;
+                  step = 2;
+                } else {
+                  // Inicia en Puñetazo recto (Frame 1, idx 0)
+                  startFrame = 0;
+                  step = 0;
+                }
+
+                p1.isMeleeComboAttacking = true;
+                p1.meleeComboStep = step;
+                p1.comboStep = step;
+                p1.meleeAnimFrame = startFrame;
+                p1.meleeAnimTimer = 0;
+                p1.meleeHasHit = false;
+                p1.comboBuffered = false;
+                p1.comboWindowTicks = 34;
+
+                p1.velocityX = 0;
+                s.p1Controller.vx = 0;
+                s.p1Controller.state = ControllerState.Idle;
+                PlayerFSM.tryTransition(p1, PlayerFSMState.MeleeAttack);
+
+                sounds.playPunch();
+              }
+            } else {
+              if (p1.isMeleeComboAttacking) {
+                if (p1.meleeComboStep < 2) {
+                  p1.comboBuffered = true;
+                  p1.comboWindowTicks = 34;
+
+                  if (p1.meleeAnimFrame >= 3) {
+                    p1.meleeComboStep++;
+                    p1.comboStep = p1.meleeComboStep;
+                    p1.meleeAnimFrame = 0;
+                    p1.meleeAnimTimer = 0;
+                    p1.meleeHasHit = false;
+                    p1.comboBuffered = false;
+                    p1.comboWindowTicks = 34;
+                    sounds.playPunch();
+                  }
+                }
+              } else {
+                let nextStep = 0;
+                if (p1.comboWindowTicks > 0 && p1.comboStep > 0 && p1.comboStep <= 2) {
+                  nextStep = p1.comboStep;
+                } else {
+                  nextStep = 0;
+                }
+
+                p1.isMeleeComboAttacking = true;
+                p1.meleeComboStep = nextStep;
+                p1.comboStep = nextStep;
+                p1.meleeAnimFrame = 0;
+                p1.meleeAnimTimer = 0;
+                p1.meleeHasHit = false;
+                p1.comboBuffered = false;
+                p1.comboWindowTicks = 34;
+
+                p1.velocityX = 0;
+                s.p1Controller.vx = 0;
+                s.p1Controller.state = ControllerState.Idle;
+                PlayerFSM.tryTransition(p1, PlayerFSMState.MeleeAttack);
+
+                sounds.playPunch();
+              }
+            }
+          }
+        }
+
+        // ═════════════════════════════════════════════════════════
+        // 2. TECLA "M": EXCLUSIVA PARA DISPARAR ARMAS DE FUEGO
+        // ═════════════════════════════════════════════════════════
+        if (
+          (fireJustPressed || (firePressed && (p1.isRifleShooting || p1.isPistolShooting))) &&
+          p1.isAlive &&
+          s.roundActive &&
+          p1.fsm !== PlayerFSMState.KnockedDown &&
+          p1.fsm !== PlayerFSMState.GetUp &&
+          p1.fsm !== PlayerFSMState.Hitstun &&
+          p1.fsm !== PlayerFSMState.Roll &&
+          !p1.isGrappling &&
+          !p1.isThrowing
+        ) {
+          if (isFirearm && isRifle) {
+            // Disparo de rifles/escopetas a dos manos (rifle_shoot - 4 frames con retroceso en frame 3)
+            if (p1.attackCooldown <= 0 && !p1.isRifleShooting) {
+              if (p1.ammo > 0) {
+                const wpn = getWeapon(p1.equippedWeapon);
+                p1.isRifleShooting = true;
+                p1.rifleAnimFrame = 0;
+                p1.rifleAnimTimer = 0;
+                p1.rifleHasRecoilApplied = false;
+                s.p1Controller.isShootingRifle = true;
+
+                if (gameMode === 'practice' && tutorialStepRef.current === 5) {
+                  setTutorialStep(6);
+                  tutorialInputProgressRef.current.hasShot = true;
+                }
+
+                if (s.p1Faction === BotFaction.Gymrat || s.p1Faction === BotFaction.Santa) {
+                  // Para Gymrat y Santa: la bala se instancia en el Frame 2 (fogonazo) y el retroceso en Frame 3
+                  p1.rifleHasFired = false;
+                  p1.attackCooldown = Math.max(wpn.cooldownTicks, 12);
+                  p1.ammo--;
+                  PlayerFSM.tryTransition(p1, PlayerFSMState.RangedFire);
+                } else {
+                  // Ninja y otros: instanciación inmediata original
+                  p1.rifleHasFired = true;
+                  p1.attackCooldown = Math.max(wpn.cooldownTicks, 10);
+                  p1.ammo--;
+                  PlayerFSM.tryTransition(p1, PlayerFSMState.RangedFire);
+                  sounds.playGunshot(wpn.soundType || wpn.type.toLowerCase());
+
+                  const dir = p1.facingRight ? 1 : -1;
+                  const muzzleX = p1.x + dir * 32;
+                  const muzzleY = p1.y - 7;
+
+                  addSparks(muzzleX, muzzleY, '#fde047', 12);
+                  addSparks(muzzleX, muzzleY, '#ffffff', 6);
+                  s.screenShake = Math.min(14, Math.max(5, (wpn.damage || 25) / 3));
+
+                  const count = wpn.pelletCount || 1;
+                  for (let i = 0; i < count; i++) {
+                    const spreadAngle = ((Math.random() - 0.5) * ((wpn.accuracyDeg || 4) * Math.PI / 180)) / 2;
+                    const speed = wpn.projectileSpeed || 950;
+                    s.projectiles.push({
+                      id: s.nextEntityId++,
+                      x: muzzleX,
+                      y: muzzleY,
+                      vx: dir * speed * Math.cos(spreadAngle),
+                      vy: speed * Math.sin(spreadAngle),
+                      damage: (wpn.damage / count) * p1.damageDealtModifier,
+                      onFireDuration: wpn.onFireDuration || 0,
+                      explosionRadius: wpn.explosionRadius || 0,
+                      shooterId: p1.id,
+                      weaponType: p1.equippedWeapon,
+                      pelletCount: count,
+                      lifeTicks: 0,
+                      maxLifeTicks: 60,
+                      color: wpn.color || '#facc15',
+                    });
+                  }
+                }
+              } else {
+                p1.attackCooldown = 15;
+                sounds.playDryFire();
+              }
+            }
+          } else if (isFirearm && isPistol) {
+            // Disparo de pistolas a una mano (pistol_shoot - 4 frames)
+            if (p1.attackCooldown <= 0 && !p1.isPistolShooting) {
+              if (p1.ammo > 0) {
+                const wpn = getWeapon(p1.equippedWeapon);
+                p1.isPistolShooting = true;
+                p1.pistolAnimFrame = 0;
+                p1.pistolAnimTimer = 0;
+                p1.pistolHasRecoilApplied = false;
+                s.p1Controller.isShootingPistol = true;
+
+                if (gameMode === 'practice' && tutorialStepRef.current === 5) {
+                  setTutorialStep(6);
+                  tutorialInputProgressRef.current.hasShot = true;
+                }
+
+                p1.attackCooldown = Math.max(wpn.cooldownTicks, 14);
+                p1.ammo--;
+                PlayerFSM.tryTransition(p1, PlayerFSMState.RangedFire);
+
+                const isDelayedFirePistol = s.p1Faction === BotFaction.Gymrat || s.p1Faction === BotFaction.Santa || p1.faction === BotFaction.Santa || p1.name.toUpperCase().includes('SANTA');
+                if (!isDelayedFirePistol) {
+                  // Para Ninja: disparo inmediato con destello
+                  p1.pistolHasFired = true;
+                  sounds.playGunshot(wpn.type.toLowerCase());
+
+                  const dir = p1.facingRight ? 1 : -1;
+                  const muzzleX = p1.x + dir * 28;
+                  const muzzleY = p1.y - 6;
+
+                  addSparks(muzzleX, muzzleY, '#fde047', 8);
+                  s.screenShake = Math.min(10, Math.max(3, (wpn.damage || 20) / 4));
+
+                  const count = wpn.pelletCount || 1;
+                  for (let i = 0; i < count; i++) {
+                    const spreadAngle = ((Math.random() - 0.5) * ((wpn.accuracyDeg || 3) * Math.PI / 180)) / 2;
+                    const speed = wpn.projectileSpeed || 900;
+                    s.projectiles.push({
+                      id: s.nextEntityId++,
+                      x: muzzleX,
+                      y: muzzleY,
+                      vx: dir * speed * Math.cos(spreadAngle),
+                      vy: speed * Math.sin(spreadAngle),
+                      damage: (wpn.damage / count) * p1.damageDealtModifier,
+                      onFireDuration: wpn.onFireDuration || 0,
+                      explosionRadius: wpn.explosionRadius || 0,
+                      shooterId: p1.id,
+                      weaponType: p1.equippedWeapon,
+                      pelletCount: count,
+                      lifeTicks: 0,
+                      maxLifeTicks: 60,
+                      color: '#facc15',
+                    });
+                  }
+                } else {
+                  // Para Gymrat y Santa: la bala se crea exactamente en el Frame 2 (fogonazo)
+                  p1.pistolHasFired = false;
+                }
+              } else {
+                p1.attackCooldown = 15;
+                sounds.playDryFire();
+              }
+            }
+          } else if (p1.attackCooldown <= 0) {
+            // Sin arma de fuego equipada: sonido corto de clic en seco y cooldown de 20 ticks
+            p1.attackCooldown = 20;
+            sounds.playDryFire();
+          }
+        }
+
+        // ═════════════════════════════════════════════════════════
+        // 3. TECLA "," (coma) O "L": EXCLUSIVA PARA LANZAR BOMBAS/GRANADAS
+        // Lista de Objetos: Grenade, Molotov, C4, Baseball, Mine (o inventario de granadas)
+        // ═════════════════════════════════════════════════════════
+        if (
+          (throwJustPressed || (isThrowable && fireJustPressed)) &&
+          p1.isAlive &&
+          s.roundActive &&
+          p1.fsm !== PlayerFSMState.KnockedDown &&
+          p1.fsm !== PlayerFSMState.GetUp &&
+          p1.fsm !== PlayerFSMState.Hitstun &&
+          p1.fsm !== PlayerFSMState.Roll &&
+          !p1.isGrappling &&
+          !p1.isThrowing
+        ) {
+          const hasGrenadesInInventory = getTotalGrenades(s.p1Grenades) > 0;
+          if (p1.attackCooldown <= 0) {
+            if (isThrowable && p1.ammo > 0) {
+              p1.isThrowing = true;
+              p1.throwAnimFrame = 0;
+              p1.throwAnimTimer = 0;
+              p1.throwHasReleased = false;
+              // Guardar la inercia previa del movimiento antes de detener al personaje
+              p1.throwInitialInertia = p1.velocityX * 0.45;
+              // Movimiento: El personaje se detiene mientras ejecuta el lanzamiento
+              p1.velocityX = 0;
+              s.p1Controller.vx = 0;
+              s.p1Controller.state = ControllerState.Idle;
+              s.p1Controller.isThrowing = true;
+              p1.attackCooldown = 25;
+              PlayerFSM.tryTransition(p1, PlayerFSMState.MeleeAttack);
+              sounds.playSwordSwing();
+            } else if (hasGrenadesInInventory) {
+              p1.isThrowing = true;
+              p1.throwAnimFrame = 0;
+              p1.throwAnimTimer = 0;
+              p1.throwHasReleased = false;
+              p1.throwInitialInertia = p1.velocityX * 0.45;
+              p1.velocityX = 0;
+              s.p1Controller.vx = 0;
+              s.p1Controller.state = ControllerState.Idle;
+              s.p1Controller.isThrowing = true;
+              p1.attackCooldown = 25;
+              PlayerFSM.tryTransition(p1, PlayerFSMState.MeleeAttack);
+              sounds.playSwordSwing();
+            } else {
+              p1.attackCooldown = 15;
+              sounds.playDryFire();
+              s.floatingTexts.push({
+                id: s.nextEntityId++,
+                text: '¡SIN BOMBAS / GRANADAS!',
+                x: p1.x,
+                y: p1.y - 30,
+                color: '#ef4444',
+                life: 25,
+              });
+            }
+          }
+        }
+
+        // ─────────────────────────────────────────────────────────
+        // LÓGICA DE AVANCE Y RESOLUCIÓN DEL ATAQUE A DOS MANOS (two_hand_attack)
+        // 6 Fotogramas, One Shot, más lenta (4 ticks/frame = ~66ms/frame) y con mayor hitbox por ser golpe pesado
+        // ─────────────────────────────────────────────────────────
+        if (p1.isTwoHandAttacking) {
+          // Bloqueo estricto de movimiento: el personaje no puede caminar, correr ni saltar
+          p1.velocityX = 0;
+          s.p1Controller.vx = 0;
+          s.p1Controller.state = ControllerState.Idle;
+          p1.fsm = PlayerFSMState.MeleeAttack;
+
+          const p1IsSanta =
+            (playerFaction || BotFaction.Ninja) === BotFaction.Santa ||
+            p1.name.toUpperCase().includes('SANTA');
+          const charPrefix = p1IsSanta ? 'santaclo_' : (s.p1Faction === BotFaction.Gymrat ? 'gymrat_' : 'ninja_');
+          const totalTwoHandFrames = p1IsSanta ? 5 : (s.p1SheetConfig?.twoHandTotalFrames || 6);
+
+          p1.twoHandAnimTimer = (p1.twoHandAnimTimer || 0) + 1;
+          // Duración dinámica ponderada (windup lento, impacto veloz, recuperación pesada)
+          const ticksPerFrame = getFrameDuration(`${charPrefix}two_hand_attack`, p1.twoHandAnimFrame || 0, p1IsSanta ? 5 : 4);
+          if (p1.twoHandAnimTimer >= ticksPerFrame) {
+            p1.twoHandAnimTimer = 0;
+            p1.twoHandAnimFrame = (p1.twoHandAnimFrame || 0) + 1;
+
+            if (p1.twoHandAnimFrame >= totalTwoHandFrames) {
+              // Al terminar el último frame (One Shot: frame 5 para Santa), vuelve al estado normal (Idle)
+              p1.isTwoHandAttacking = false;
+              p1.twoHandAnimFrame = 0;
+              p1.twoHandAnimTimer = 0;
+              p1.twoHandHasHit = false;
+              p1.fsm = PlayerFSMState.Idle;
+            }
+          }
+
+          // Detección de impacto calibrado por tipo de arma (FASE 3 Motor v2):
+          // Hacha/Martillo en frame 4 (idx 3), Bate/Tubo en frame 3, Katana en frame 2
+          const targetHitFrame = getWeaponHitFrame(p1.equippedWeapon, p1IsSanta ? 3 : 3);
+          if (!p1.twoHandHasHit && (p1.twoHandAnimFrame || 0) === targetHitFrame) {
+            p1.twoHandHasHit = true;
+            const wpn = getWeapon(p1.equippedWeapon);
+            const isBlade = isBladeWeapon(p1.equippedWeapon);
+            const baseDmg = (wpn.damage || 25) * (p1IsSanta ? 2.2 : 1.6); // Golpe pesado devastador para Santa
+
+            resolveMeleeHits(s, p1, {
+              reachX: p1IsSanta ? 114 : 98,
+              reachY: p1IsSanta ? 78 : 62,
+              baseDamage: baseDmg,
+              kbX: p1IsSanta ? 390 : 340,
+              kbY: p1IsSanta ? 220 : 150, // Golpe hacia abajo y hacia adelante (azotando contra el suelo)
+              causedKnockdown: true,
+              stunTicks: p1IsSanta ? 42 : 32,
+              hitStop: p1IsSanta ? 8 : 6,
+              screenShake: p1IsSanta ? 24 : 16,
+              isBlade,
+              floatingTextPrefix: p1IsSanta
+                ? `¡AZOTE DEVASTADOR (${wpn.name.toUpperCase()})! `
+                : `¡AZOTE PESADO (${wpn.name.toUpperCase()})! `,
+            });
+            sounds.playPunch();
+            addSparks(
+              p1.x + (p1.facingRight ? 45 : -45),
+              p1.y + 18,
+              p1IsSanta ? '#ef4444' : '#f97316',
+              p1IsSanta ? 24 : 18
+            );
+          }
+        }
+
+        // ─────────────────────────────────────────────────────────
+        // LÓGICA DE AVANCE Y RESOLUCIÓN DEL COMBATE CON ESPADA DEL NINJA
+        // 3 Tajos Fluidos, Rápidos y Letales (one_hand_attack de 5 frames)
+        // Bloqueo estricto de movimiento + combo ágil y letal contra el rival
+        // ─────────────────────────────────────────────────────────
+        if (p1.isSwordAttacking) {
+          p1.velocityX = 0;
+          s.p1Controller.vx = 0;
+          s.p1Controller.state = ControllerState.Idle;
+          p1.fsm = PlayerFSMState.MeleeAttack;
+
+          p1.swordAnimTimer = (p1.swordAnimTimer || 0) + 1;
+          if (p1.swordAnimTimer >= 2) {
+            p1.swordAnimTimer = 0;
+            p1.swordAnimFrame = (p1.swordAnimFrame || 0) + 1;
+
+            if (p1.swordComboBuffered && (p1.swordAnimFrame || 0) >= 3 && (p1.swordComboStep || 0) < 2) {
+              p1.swordComboStep = (p1.swordComboStep || 0) + 1;
+              p1.swordAnimFrame = 0;
+              p1.swordAnimTimer = 0;
+              p1.swordHasHit = false;
+              p1.swordComboBuffered = false;
+              p1.swordComboWindowTicks = 32;
+              sounds.playSwordSwing();
+            } else if ((p1.swordAnimFrame || 0) >= 5) {
+              if (p1.swordComboBuffered && (p1.swordComboStep || 0) < 2) {
+                p1.swordComboStep = (p1.swordComboStep || 0) + 1;
+                p1.swordAnimFrame = 0;
+                p1.swordAnimTimer = 0;
+                p1.swordHasHit = false;
+                p1.swordComboBuffered = false;
+                p1.swordComboWindowTicks = 32;
+                sounds.playSwordSwing();
+              } else {
+                p1.isSwordAttacking = false;
+                p1.swordAnimFrame = 0;
+                p1.swordAnimTimer = 0;
+                p1.swordHasHit = false;
+                p1.fsm = PlayerFSMState.Idle;
+
+                if ((p1.swordComboStep || 0) >= 2) {
+                  p1.swordComboStep = 0;
+                  p1.swordComboWindowTicks = 0;
+                } else {
+                  p1.swordComboStep = (p1.swordComboStep || 0) + 1;
+                  p1.swordComboWindowTicks = 26;
+                }
+              }
+            }
+          }
+
+          if (!p1.swordHasHit && (p1.swordAnimFrame || 0) >= 2) {
+            p1.swordHasHit = true;
+            const p1FacingDir = p1.facingRight ? 1 : -1;
+            const currentStep = p1.swordComboStep || 0;
+            const hitReach = currentStep === 0 ? 68 : currentStep === 1 ? 74 : 84;
+            const wpn = getWeapon(p1.equippedWeapon);
+            const wpnName = wpn.name || 'ESPADA';
+
+            for (const bInst of s.bots) {
+              const bot = bInst.state;
+              if (!bot.isAlive || bot.isGrabbed || isSameTeam(p1.id, bot.id)) continue;
+              const isInvuln =
+                bot.id === 2 && (gameMode === 'local1v1' || gameMode === 'coop')
+                  ? s.p2Controller.isInvulnerable
+                  : bot.fsm !== PlayerFSMState.Roll;
+              if (isInvuln) continue;
+
+              const isBotInReach =
+                ((p1FacingDir > 0 && bot.x >= p1.x - 10 && bot.x <= p1.x + hitReach) ||
+                 (p1FacingDir < 0 && bot.x <= p1.x + 10 && bot.x >= p1.x - hitReach)) &&
+                Math.abs(bot.y - p1.y) < 42;
+
+              if (isBotInReach) {
+                sounds.playBladeHit();
+                let damage = 22 * p1.damageDealtModifier;
+                let shake = 6;
+                let stun = 16;
+                let hitStop = 3;
+                let kbX = p1FacingDir * 190;
+                let isKnockdown = false;
+                let textPrefix = `¡TAJO I (${wpnName.toUpperCase()})!`;
+                let textColor = '#38bdf8';
+
+                if (currentStep === 0) {
+                  damage = 22 * p1.damageDealtModifier;
+                  shake = 6;
+                  stun = 16;
+                  hitStop = 3;
+                  kbX = p1FacingDir * 190;
+                  addSparks(bot.x, bot.y, '#38bdf8', 16);
+                  addSparks(bot.x, bot.y, '#ffffff', 10);
+                } else if (currentStep === 1) {
+                  damage = 30 * p1.damageDealtModifier;
+                  shake = 9;
+                  stun = 20;
+                  hitStop = 4;
+                  kbX = p1FacingDir * 270;
+                  textPrefix = `¡TAJO II (${wpnName.toUpperCase()})!`;
+                  addSparks(bot.x, bot.y, '#38bdf8', 22);
+                  addSparks(bot.x, bot.y, '#ffffff', 14);
+                } else {
+                  damage = 44 * p1.damageDealtModifier;
+                  shake = 14;
+                  stun = 28;
+                  hitStop = 6;
+                  kbX = p1FacingDir * 390;
+                  isKnockdown = true;
+                  textPrefix = `¡REMATE NINJA (${wpnName.toUpperCase()})!`;
+                  textColor = '#06b6d4';
+                  sounds.playHeavyBladeSlash();
+                  addSparks(bot.x, bot.y - 10, '#38bdf8', 28);
+                  addSparks(bot.x, bot.y - 10, '#e0f2fe', 22);
+                  addSparks(bot.x, bot.y - 10, '#ffffff', 16);
+                  CombatSystem.disarmPlayer(bot);
+                }
+
+                const hitRes = CombatSystem.applyHit(bot, {
+                  damage,
+                  kbX,
+                  kbY: isKnockdown ? -270 : undefined,
+                  stunTicks: stun,
+                  hitStop,
+                  screenShake: shake,
+                  causedKnockdown: isKnockdown,
+                  attacker: p1,
+                  weaponType: p1.equippedWeapon,
+                });
+
+                s.screenShake = hitRes.screenShake;
+                s.hitStopTicks = hitRes.hitStop;
+                if (gameMode === 'local1v1') {
+                  s.p2Controller.setPosition(bot.x, bot.y);
+                  s.p2Controller.vx = bot.velocityX;
+                  s.p2Controller.vy = bot.velocityY;
+                }
+                if (hitRes.isDead) {
+                  sounds.playBladeHit();
+                }
+                addBloodParticles(bot.x, bot.y, p1FacingDir, hitRes.finalDamage);
+
+                s.floatingTexts.push({
+                  id: s.nextEntityId++,
+                  text: `${textPrefix} -${Math.round(hitRes.finalDamage)}`,
+                  x: bot.x,
+                  y: bot.y - 32,
+                  color: textColor,
+                  life: isKnockdown ? 48 : 36,
+                });
+              }
+            }
+
+            s.crates.forEach((c) => {
+              if (Math.hypot(p1.x + p1FacingDir * 32 - (c.x + c.w / 2), p1.y - (c.y + c.h / 2)) < 52) {
+                c.health -= 35;
+                c.vx = p1FacingDir * 340;
+                sounds.playBladeHit();
+                addSparks(c.x + 16, c.y + 16, '#38bdf8', 12);
+              }
+            });
+            s.barrels.forEach((b) => {
+              if (Math.hypot(p1.x + p1FacingDir * 32 - (b.x + b.w / 2), p1.y - (b.y + b.h / 2)) < 52) {
+                b.health -= 30;
+                b.vx = p1FacingDir * 380;
+                sounds.playBladeHit();
+                addSparks(b.x + 12, b.y + 16, '#ef4444', 12);
+              }
+            });
+          }
+        }
+
+        if ((p1.swordComboWindowTicks || 0) > 0) {
+          p1.swordComboWindowTicks = (p1.swordComboWindowTicks || 0) - 1;
+          if (p1.swordComboWindowTicks <= 0 && !p1.isSwordAttacking) {
+            p1.swordComboStep = 0;
+          }
+        }
+
+        // ─────────────────────────────────────────────────────────
+        // LÓGICA DE AVANCE Y RESOLUCIÓN DEL ATAQUE A UNA MANO (one_hand_attack)
+        // 5 Fotogramas, One Shot, mayor velocidad que los puños (2 ticks/frame vs 3 ticks/frame)
+        // ─────────────────────────────────────────────────────────
+        if (p1.isOneHandAttacking) {
+          // Bloqueo estricto de movimiento: el personaje no puede caminar, correr ni saltar
+          p1.velocityX = 0;
+          s.p1Controller.vx = 0;
+          s.p1Controller.state = ControllerState.Idle;
+          p1.fsm = PlayerFSMState.MeleeAttack;
+
+          const isGymratP1 = (playerFaction || BotFaction.Ninja) === BotFaction.Gymrat || p1.name.toUpperCase().includes('GYMRAT');
+          const isSantaP1 = (playerFaction || BotFaction.Ninja) === BotFaction.Santa || p1.name.toUpperCase().includes('SANTA');
+          const charPrefix = isSantaP1 ? 'santaclo_' : (isGymratP1 ? 'gymrat_' : 'ninja_');
+          const totalOneHandFrames = s.p1SheetConfig?.oneHandTotalFrames || 5;
+
+          p1.oneHandAnimTimer = (p1.oneHandAnimTimer || 0) + 1;
+          const ticksPerFrame = getFrameDuration(`${charPrefix}one_hand_attack`, p1.oneHandAnimFrame || 0, isGymratP1 ? 3 : 2);
+
+          if (p1.oneHandAnimTimer >= ticksPerFrame) {
+            p1.oneHandAnimTimer = 0;
+            p1.oneHandAnimFrame = (p1.oneHandAnimFrame || 0) + 1;
+
+            if (p1.oneHandAnimFrame >= totalOneHandFrames) {
+              // Al terminar el último frame (One Shot), vuelve inmediatamente al estado normal (Idle o walk/run)
+              p1.isOneHandAttacking = false;
+              p1.oneHandAnimFrame = 0;
+              p1.oneHandAnimTimer = 0;
+              p1.oneHandHasHit = false;
+              p1.fsm = PlayerFSMState.Idle;
+            }
+          }
+
+          // Detección de impacto calibrado por tipo de arma (FASE 3 Motor v2):
+          // Katana, Machete, Espada en frame 2, Cuchillo en frame 1
+          const targetOneHandHitFrame = getWeaponHitFrame(p1.equippedWeapon, 2);
+          const isOneHandImpactFrame = (p1.oneHandAnimFrame || 0) === targetOneHandHitFrame;
+          if (!p1.oneHandHasHit && isOneHandImpactFrame) {
+            p1.oneHandHasHit = true;
+            const p1FacingDir = p1.facingRight ? 1 : -1;
+            // Alcance mayor que el de los puños (puños = 50-55 px, One Hand = 65 px para Gymrat)
+            const hitReach = isGymratP1 ? 65 : 58;
+            const wpn = getWeapon(p1.equippedWeapon);
+            const isBlade = isBladeWeapon(p1.equippedWeapon);
+            const baseDmg = wpn.damage || 16;
+            const finalDmg = baseDmg * p1.damageDealtModifier;
+
+            for (const bInst of s.bots) {
+              const bot = bInst.state;
+              if (!bot.isAlive || bot.isGrabbed) continue;
+              const isInvuln =
+                bot.id === 2 && gameMode === 'local1v1'
+                  ? s.p2Controller.isInvulnerable
+                  : bot.fsm !== PlayerFSMState.Roll;
+              if (isInvuln) continue;
+
+              const isBotInReach =
+                ((p1FacingDir > 0 && bot.x >= p1.x - 10 && bot.x <= p1.x + hitReach) ||
+                 (p1FacingDir < 0 && bot.x <= p1.x + 10 && bot.x >= p1.x - hitReach)) &&
+                Math.abs(bot.y - p1.y) < 34;
+
+              if (isBotInReach) {
+                if (isBlade) {
+                  sounds.playBladeHit();
+                  addSparks(bot.x, bot.y, isGymratP1 ? '#f97316' : '#38bdf8', 18);
+                  addSparks(bot.x, bot.y, '#ffffff', 12);
+                } else {
+                  sounds.playHit();
+                  addSparks(bot.x, bot.y, isGymratP1 ? '#f97316' : '#f59e0b', 16);
+                  addSparks(bot.x, bot.y, '#fde047', 10);
+                }
+
+                const hitRes = CombatSystem.applyHit(bot, {
+                  damage: finalDmg,
+                  kbX: p1FacingDir * 170,
+                  stunTicks: GameConstants.HitstunTicksLight,
+                  attacker: p1,
+                  weaponType: p1.equippedWeapon,
+                  screenShake: 7,
+                });
+                s.screenShake = hitRes.screenShake;
+                s.hitStopTicks = hitRes.hitStop;
+                if (gameMode === 'local1v1') {
+                  s.p2Controller.setPosition(bot.x, bot.y);
+                  s.p2Controller.vx = bot.velocityX;
+                  s.p2Controller.vy = bot.velocityY;
+                }
+                addBloodParticles(bot.x, bot.y, p1FacingDir, hitRes.finalDamage);
+
+                s.floatingTexts.push({
+                  id: s.nextEntityId++,
+                  text: `¡${wpn.name.toUpperCase()}! -${Math.round(hitRes.finalDamage)}`,
+                  x: bot.x,
+                  y: bot.y - 32,
+                  color: isBlade ? '#38bdf8' : '#f59e0b',
+                  life: 35,
+                });
+              }
+            }
+
+            // Impacto en cajas del escenario
+            s.crates.forEach((c) => {
+              if (Math.hypot(p1.x + p1FacingDir * 30 - (c.x + c.w / 2), p1.y - (c.y + c.h / 2)) < 48) {
+                c.health -= baseDmg * 1.2;
+                c.vx = p1FacingDir * 290;
+                sounds.playHit();
+                addSparks(c.x + 16, c.y + 16, '#d97706', 12);
+              }
+            });
+
+            // Impacto en barriles
+            s.barrels.forEach((b) => {
+              if (Math.hypot(p1.x + p1FacingDir * 30 - (b.x + b.w / 2), p1.y - (b.y + b.h / 2)) < 48) {
+                b.health -= baseDmg;
+                b.vx = p1FacingDir * 330;
+                sounds.playHit();
+                addSparks(b.x + 12, b.y + 16, '#ef4444', 12);
+              }
+            });
+          }
+        }
+
+        // ─────────────────────────────────────────────────────────
+        // LÓGICA DE AVANCE Y RETROCESO DE DISPARO CON PISTOLA (pistol_shoot)
+        // 4 Fotogramas:
+        // Frame 0: Apuntado frontal y disparo con fogonazo
+        // Frame 1: Empuje de disparo
+        // Frame 2: (Frame 3) Mano levantada hacia arriba: Retroceso / Recarga
+        // Frame 3: Retorno a la posición de guardia
+        // Permite moverse a velocidad de caminar mientras dispara (no puede correr)
+        // ─────────────────────────────────────────────────────────
+        if (p1.isPistolShooting) {
+          if (p1.fsm === PlayerFSMState.KnockedDown || p1.fsm === PlayerFSMState.Hitstun || !p1.isAlive) {
+            p1.isPistolShooting = false;
+            p1.pistolAnimFrame = 0;
+            p1.pistolAnimTimer = 0;
+            p1.pistolHasFired = false;
+            p1.pistolHasRecoilApplied = false;
+            s.p1Controller.isShootingPistol = false;
+          } else {
+            s.p1Controller.isShootingPistol = true;
+
+            // Orientación del apuntado (Superfighters):
+            // Si se mueve, orienta hacia la dirección del movimiento; si está quieto, mantiene última dirección
+            const p1Controls = gameMode === 'local1v1' ? CONTROLS.LOCAL_1V1_P1 : CONTROLS.SOLO;
+            const moveDir = isAnyPressed(keys, p1Controls.left)
+              ? -1
+              : isAnyPressed(keys, p1Controls.right)
+              ? 1
+              : 0;
+
+            if (moveDir !== 0) {
+              p1.facingRight = moveDir > 0;
+              s.p1Controller.facingRight = p1.facingRight;
+            }
+
+            const isDelayedPistolP1 = s.p1Faction === BotFaction.Gymrat || s.p1Faction === BotFaction.Santa || p1.faction === BotFaction.Santa || p1.name.toUpperCase().includes('SANTA');
+            const isSantaP1 = s.p1Faction === BotFaction.Santa || p1.faction === BotFaction.Santa || p1.name.toUpperCase().includes('SANTA');
+            const p1CharPrefix = isSantaP1 ? 'santaclo_' : (s.p1Faction === BotFaction.Gymrat ? 'gymrat_' : 'ninja_');
+
+            // CREACIÓN DE BALA EN FRAME 2 (index 1) para Gymrat y Santa (donde está el fogonazo / muzzle flash)
+            if (isDelayedPistolP1 && p1.pistolAnimFrame === 1 && !p1.pistolHasFired) {
+              p1.pistolHasFired = true;
+              const wpn = getWeapon(p1.equippedWeapon);
+              sounds.playGunshot(wpn.type.toLowerCase());
+
+              const dir = p1.facingRight ? 1 : -1;
+              const muzzleX = p1.x + dir * (isSantaP1 ? 36 : 32);
+              const muzzleY = p1.y - (isSantaP1 ? 8 : 6);
+
+              addSparks(muzzleX, muzzleY, '#fde047', 10);
+              s.screenShake = Math.min(10, Math.max(3, (wpn.damage || 20) / 4));
+
+              const count = wpn.pelletCount || 1;
+              for (let i = 0; i < count; i++) {
+                const spreadAngle = ((Math.random() - 0.5) * ((wpn.accuracyDeg || 3) * Math.PI / 180)) / 2;
+                const speed = wpn.projectileSpeed || 900;
+                s.projectiles.push({
+                  id: s.nextEntityId++,
+                  x: muzzleX,
+                  y: muzzleY,
+                  vx: dir * speed * Math.cos(spreadAngle),
+                  vy: speed * Math.sin(spreadAngle),
+                  damage: (wpn.damage / count) * p1.damageDealtModifier,
+                  onFireDuration: wpn.onFireDuration || 0,
+                  explosionRadius: wpn.explosionRadius || 0,
+                  shooterId: p1.id,
+                  weaponType: p1.equippedWeapon,
+                  pelletCount: count,
+                  lifeTicks: 0,
+                  maxLifeTicks: 60,
+                  color: '#facc15',
+                });
+              }
+            }
+
+            // RETROCESO (KICK) EN FRAME 3 (index 2) para Gymrat y Santa (sacudida del cuerpo hacia atrás)
+            if (isDelayedPistolP1 && p1.pistolAnimFrame === 2 && !p1.pistolHasRecoilApplied) {
+              p1.pistolHasRecoilApplied = true;
+              const kickDir = p1.facingRight ? -1 : 1;
+              const kickForce = isSantaP1 ? 85 : 65;
+              p1.x += kickDir * (isSantaP1 ? 3 : 2);
+              p1.velocityX += kickDir * kickForce;
+              s.p1Controller.vx += kickDir * kickForce;
+              s.p1Controller.setPosition(p1.x, p1.y);
+            }
+
+            p1.pistolAnimTimer = (p1.pistolAnimTimer || 0) + 1;
+            const ticksForP1Frame = getFrameDuration(`${p1CharPrefix}pistol_shoot`, p1.pistolAnimFrame || 0, isSantaP1 ? 3 : (s.p1Faction === BotFaction.Gymrat ? 4 : 3));
+            if (p1.pistolAnimTimer >= ticksForP1Frame) {
+              p1.pistolAnimTimer = 0;
+              p1.pistolAnimFrame = (p1.pistolAnimFrame || 0) + 1;
+
+              // Comprobar creación de bala al avanzar al Frame 2 (index 1)
+              if (isDelayedPistolP1 && p1.pistolAnimFrame === 1 && !p1.pistolHasFired) {
+                p1.pistolHasFired = true;
+                const wpn = getWeapon(p1.equippedWeapon);
+                sounds.playGunshot(wpn.type.toLowerCase());
+
+                const dir = p1.facingRight ? 1 : -1;
+                const muzzleX = p1.x + dir * (isSantaP1 ? 36 : 32);
+                const muzzleY = p1.y - (isSantaP1 ? 8 : 6);
+
+                addSparks(muzzleX, muzzleY, '#fde047', 10);
+                s.screenShake = Math.min(10, Math.max(3, (wpn.damage || 20) / 4));
+
+                const count = wpn.pelletCount || 1;
+                for (let i = 0; i < count; i++) {
+                  const spreadAngle = ((Math.random() - 0.5) * ((wpn.accuracyDeg || 3) * Math.PI / 180)) / 2;
+                  const speed = wpn.projectileSpeed || 900;
+                  s.projectiles.push({
+                    id: s.nextEntityId++,
+                    x: muzzleX,
+                    y: muzzleY,
+                    vx: dir * speed * Math.cos(spreadAngle),
+                    vy: speed * Math.sin(spreadAngle),
+                    damage: (wpn.damage / count) * p1.damageDealtModifier,
+                    onFireDuration: wpn.onFireDuration || 0,
+                    explosionRadius: wpn.explosionRadius || 0,
+                    shooterId: p1.id,
+                    weaponType: p1.equippedWeapon,
+                    pelletCount: count,
+                    lifeTicks: 0,
+                    maxLifeTicks: 60,
+                    color: '#facc15',
+                  });
+                }
+              }
+
+              // Comprobar retroceso al avanzar al Frame 3 (index 2)
+              if (isDelayedPistolP1 && p1.pistolAnimFrame === 2 && !p1.pistolHasRecoilApplied) {
+                p1.pistolHasRecoilApplied = true;
+                const kickDir = p1.facingRight ? -1 : 1;
+                const kickForce = isSantaP1 ? 85 : 65;
+                p1.x += kickDir * (isSantaP1 ? 3 : 2);
+                p1.velocityX += kickDir * kickForce;
+                s.p1Controller.vx += kickDir * kickForce;
+                s.p1Controller.setPosition(p1.x, p1.y);
+              }
+
+              if (p1.pistolAnimFrame >= 4) {
+                // Ciclo continuo si mantiene disparo con arma automática (Uzi, SilencedUzi, MachinePistol)
+                const isAuto =
+                  p1.equippedWeapon === WeaponType.Uzi ||
+                  p1.equippedWeapon === WeaponType.SilencedUzi ||
+                  p1.equippedWeapon === WeaponType.MachinePistol;
+                const nHeld = isAnyPressed(keys, p1Controls.fire);
+
+                if (isAuto && nHeld && p1.ammo > 0 && p1.attackCooldown <= 0) {
+                  p1.pistolAnimFrame = 0;
+                  p1.pistolHasFired = false;
+                  p1.pistolHasRecoilApplied = false;
+                  p1.ammo--;
+                  const wpn = getWeapon(p1.equippedWeapon);
+                  p1.attackCooldown = Math.max(wpn.cooldownTicks, 10);
+                  if (!isDelayedPistolP1) {
+                    p1.pistolHasFired = true;
+                    sounds.playGunshot(wpn.type.toLowerCase());
+
+                    const dir = p1.facingRight ? 1 : -1;
+                    const muzzleX = p1.x + dir * 28;
+                    const muzzleY = p1.y - 6;
+
+                    addSparks(muzzleX, muzzleY, '#fde047', 8);
+                    s.screenShake = 3;
+
+                    const speed = wpn.projectileSpeed || 900;
+                    const spreadAngle = ((Math.random() - 0.5) * ((wpn.accuracyDeg || 4) * Math.PI / 180)) / 2;
+                    s.projectiles.push({
+                      id: s.nextEntityId++,
+                      x: muzzleX,
+                      y: muzzleY,
+                      vx: dir * speed * Math.cos(spreadAngle),
+                      vy: speed * Math.sin(spreadAngle),
+                      damage: wpn.damage * p1.damageDealtModifier,
+                      onFireDuration: 0,
+                      explosionRadius: 0,
+                      shooterId: p1.id,
+                      weaponType: p1.equippedWeapon,
+                      pelletCount: 1,
+                      lifeTicks: 0,
+                      maxLifeTicks: 60,
+                      color: '#facc15',
+                    });
+                  }
+                } else {
+                  p1.isPistolShooting = false;
+                  p1.pistolAnimFrame = 0;
+                  p1.pistolAnimTimer = 0;
+                  p1.pistolHasFired = false;
+                  p1.pistolHasRecoilApplied = false;
+                  s.p1Controller.isShootingPistol = false;
+                  if (p1.fsm === PlayerFSMState.RangedFire) {
+                    p1.fsm = PlayerFSMState.Idle;
+                  }
+                }
+              }
+            }
+          }
+        } else if (s.p1Controller) {
+          s.p1Controller.isShootingPistol = false;
+        }
+
+        // ─────────────────────────────────────────────────────────
+        // LÓGICA DE AVANCE Y RETROCESO DE DISPARO CON RIFLE/ESCOPETA (rifle_shoot)
+        // 4 Fotogramas:
+        // Frame 0: Apuntado frontal y disparo con gran fogonazo
+        // Frame 1: Empuje de disparo y retroceso
+        // Frame 2: (Frame 3) Sacudida hacia atrás: Fuerte retroceso del disparo
+        // Frame 3: Recuperación y vuelta al apuntado
+        // Permite moverse a velocidad de caminar mientras dispara (no puede correr)
+        // ─────────────────────────────────────────────────────────
+        if (p1.isRifleShooting) {
+          if (p1.fsm === PlayerFSMState.KnockedDown || p1.fsm === PlayerFSMState.Hitstun || !p1.isAlive) {
+            p1.isRifleShooting = false;
+            p1.rifleAnimFrame = 0;
+            p1.rifleAnimTimer = 0;
+            s.p1Controller.isShootingRifle = false;
+          } else {
+            s.p1Controller.isShootingRifle = true;
+
+            // Orientación del apuntado (Superfighters):
+            // Si se mueve, orienta hacia la dirección del movimiento; si está quieto, mantiene última dirección
+            const p1Controls = gameMode === 'local1v1' ? CONTROLS.LOCAL_1V1_P1 : CONTROLS.SOLO;
+            const moveDir = isAnyPressed(keys, p1Controls.left)
+              ? -1
+              : isAnyPressed(keys, p1Controls.right)
+              ? 1
+              : 0;
+
+            if (moveDir !== 0) {
+              p1.facingRight = moveDir > 0;
+              s.p1Controller.facingRight = p1.facingRight;
+            }
+
+            p1.rifleAnimTimer = (p1.rifleAnimTimer || 0) + 1;
+            // 4 ticks por frame (~66ms por frame)
+            if (p1.rifleAnimTimer >= 4) {
+              p1.rifleAnimTimer = 0;
+              p1.rifleAnimFrame = (p1.rifleAnimFrame || 0) + 1;
+            }
+
+            // Para Gymrat y Santa: la bala se instancia exactamente en el Frame 2 (fogonazo, idx 1),
+            // y en el Frame 3 (recoil, idx 2) recibe el retroceso físico (knockback hacia atrás)
+            if (s.p1Faction === BotFaction.Gymrat || s.p1Faction === BotFaction.Santa) {
+              if (p1.rifleAnimFrame === 1 && !p1.rifleHasFired) {
+                p1.rifleHasFired = true;
+                const wpn = getWeapon(p1.equippedWeapon);
+                sounds.playGunshot(wpn.soundType || wpn.type.toLowerCase());
+
+                const dir = p1.facingRight ? 1 : -1;
+                const muzzleX = p1.x + dir * 36;
+                const muzzleY = p1.y - 7;
+
+                addSparks(muzzleX, muzzleY, '#fde047', 14);
+                addSparks(muzzleX, muzzleY, '#ffffff', 8);
+                s.screenShake = Math.min(14, Math.max(5, (wpn.damage || 25) / 3));
+
+                const count = wpn.pelletCount || 1;
+                for (let i = 0; i < count; i++) {
+                  const spreadAngle = ((Math.random() - 0.5) * ((wpn.accuracyDeg || 4) * Math.PI / 180)) / 2;
+                  const speed = wpn.projectileSpeed || 950;
+                  s.projectiles.push({
+                    id: s.nextEntityId++,
+                    x: muzzleX,
+                    y: muzzleY,
+                    vx: dir * speed * Math.cos(spreadAngle),
+                    vy: speed * Math.sin(spreadAngle),
+                    damage: (wpn.damage / count) * p1.damageDealtModifier,
+                    onFireDuration: wpn.onFireDuration || 0,
+                    explosionRadius: wpn.explosionRadius || 0,
+                    shooterId: p1.id,
+                    weaponType: p1.equippedWeapon,
+                    pelletCount: count,
+                    lifeTicks: 0,
+                    maxLifeTicks: 60,
+                    color: wpn.color || '#facc15',
+                  });
+                }
+              } else if (p1.rifleAnimFrame === 2 && !p1.rifleHasRecoilApplied) {
+                p1.rifleHasRecoilApplied = true;
+                const kickDir = p1.facingRight ? -1 : 1;
+                p1.x += kickDir * 5;
+                p1.velocityX += kickDir * 120;
+                if (s.p1Controller) {
+                  s.p1Controller.vx += kickDir * 120;
+                  s.p1Controller.setPosition(p1.x, p1.y);
+                }
+              }
+            }
+
+            if ((p1.rifleAnimFrame ?? 0) >= 4) {
+              // Ciclo continuo si mantiene disparo o golpe con arma automática (M60, Assault, TommyGun, SMG, Carbine, MP50)
+              const isAuto =
+                p1.equippedWeapon === WeaponType.M60 ||
+                p1.equippedWeapon === WeaponType.Assault ||
+                p1.equippedWeapon === WeaponType.Rifle ||
+                p1.equippedWeapon === WeaponType.TommyGun ||
+                p1.equippedWeapon === WeaponType.SMG ||
+                p1.equippedWeapon === WeaponType.Carbine ||
+                p1.equippedWeapon === WeaponType.MP50;
+              const nHeld = isAnyPressed(keys, p1Controls.fire) || isAnyPressed(keys, p1Controls.melee);
+
+              if (isAuto && nHeld && p1.ammo > 0 && p1.attackCooldown <= 0) {
+                p1.rifleAnimFrame = 0;
+                p1.rifleAnimTimer = 0;
+                p1.rifleHasRecoilApplied = false;
+
+                if (s.p1Faction === BotFaction.Gymrat || s.p1Faction === BotFaction.Santa) {
+                  p1.rifleHasFired = false;
+                  p1.ammo--;
+                  const wpn = getWeapon(p1.equippedWeapon);
+                  p1.attackCooldown = Math.max(wpn.cooldownTicks, 8);
+                } else {
+                  p1.ammo--;
+                  const wpn = getWeapon(p1.equippedWeapon);
+                  p1.attackCooldown = Math.max(wpn.cooldownTicks, 8);
+                  sounds.playGunshot(wpn.soundType || wpn.type.toLowerCase());
+
+                  const dir = p1.facingRight ? 1 : -1;
+                  const muzzleX = p1.x + dir * 32;
+                  const muzzleY = p1.y - 7;
+
+                  addSparks(muzzleX, muzzleY, '#fde047', 10);
+                  addSparks(muzzleX, muzzleY, '#ffffff', 5);
+                  s.screenShake = 4;
+
+                  const speed = wpn.projectileSpeed || 950;
+                  const spreadAngle = ((Math.random() - 0.5) * ((wpn.accuracyDeg || 4) * Math.PI / 180)) / 2;
+                  s.projectiles.push({
+                    id: s.nextEntityId++,
+                    x: muzzleX,
+                    y: muzzleY,
+                    vx: dir * speed * Math.cos(spreadAngle),
+                    vy: speed * Math.sin(spreadAngle),
+                    damage: wpn.damage * p1.damageDealtModifier,
+                    onFireDuration: wpn.onFireDuration || 0,
+                    explosionRadius: wpn.explosionRadius || 0,
+                    shooterId: p1.id,
+                    weaponType: p1.equippedWeapon,
+                    pelletCount: 1,
+                    lifeTicks: 0,
+                    maxLifeTicks: 60,
+                    color: wpn.color || '#facc15',
+                  });
+                }
+              } else {
+                p1.isRifleShooting = false;
+                p1.rifleAnimFrame = 0;
+                p1.rifleAnimTimer = 0;
+                p1.rifleHasFired = false;
+                p1.rifleHasRecoilApplied = false;
+                s.p1Controller.isShootingRifle = false;
+                if (p1.fsm === PlayerFSMState.RangedFire) {
+                  p1.fsm = PlayerFSMState.Idle;
+                }
+              }
+            }
+          }
+        } else if (s.p1Controller) {
+          s.p1Controller.isShootingRifle = false;
+        }
+
+        // ─────────────────────────────────────────────────────────
+        // LÓGICA DE AVANCE Y LANZAMIENTO (throw_up - 5 Frames, One Shot)
+        // Requisitos de la mecánica:
+        // - Frame 0 (1): Brazo recogido hacia atrás
+        // - Frame 1 (2): Elevación del brazo
+        // - Frame 2 (3): Brazo extendido hacia adelante -> EXACTAMENTE AQUÍ SE SUELTA EL OBJETO
+        // - Frame 3 (4): Descenso y seguimiento del brazo
+        // - Frame 4 (5): Conclusión del lanzamiento y retorno a guardia
+        // - Movimiento: El personaje se detiene o se mueve a velocidad de caminar mientras ejecuta el lanzamiento.
+        // - Lógica de apuntado (Superfighters): Sale hacia donde mira (flip_h) y hereda inercia de movimiento.
+        // ─────────────────────────────────────────────────────────
+        if (p1.isThrowing) {
+          if (p1.fsm === PlayerFSMState.KnockedDown || p1.fsm === PlayerFSMState.Hitstun || !p1.isAlive) {
+            p1.isThrowing = false;
+            p1.throwAnimFrame = 0;
+            p1.throwAnimTimer = 0;
+            p1.throwHasReleased = false;
+            s.p1Controller.isThrowing = false;
+          } else {
+            s.p1Controller.isThrowing = true;
+            // Movimiento: El personaje se detiene mientras ejecuta el lanzamiento
+            p1.velocityX = 0;
+            s.p1Controller.vx = 0;
+            s.p1Controller.state = ControllerState.Idle;
+
+            // Orientación según la dirección hacia la que mira (flip_h):
+            // Si pulsa izquierda/derecha actualiza la orientación; si no, mantiene la última dirección
+            const p1Controls = gameMode === 'local1v1' ? CONTROLS.LOCAL_1V1_P1 : CONTROLS.SOLO;
+            const moveDir = isAnyPressed(keys, p1Controls.left)
+              ? -1
+              : isAnyPressed(keys, p1Controls.right)
+              ? 1
+              : 0;
+
+            if (moveDir !== 0) {
+              p1.facingRight = moveDir > 0;
+              s.p1Controller.facingRight = p1.facingRight;
+            }
+
+            // Ejecución del lanzamiento exactamente en el Frame 4 para Santa Claus (índice 3: brazo extendido hacia arriba/derecha)
+            // Y en el Frame 3 (índice 2) para Ninja y Gymrat
+            const isSantaP1 = (playerFaction || BotFaction.Ninja) === BotFaction.Santa || p1.faction === BotFaction.Santa || p1.name.toUpperCase().includes('SANTA');
+            const targetReleaseFrame = s.p1SheetConfig?.throwUpReleaseFrame ?? (isSantaP1 ? 3 : 2);
+            if (p1.throwAnimFrame === targetReleaseFrame && !p1.throwHasReleased) {
+              p1.throwHasReleased = true;
+
+              if (gameMode === 'practice' && tutorialStepRef.current === 6) {
+                tutorialInputProgressRef.current.hasGrenaded = true;
+                setTutorialStep(7);
+              }
+
+              const dir = p1.facingRight ? 1 : -1;
+              const launchX = p1.x + dir * (isSantaP1 ? 30 : 26);
+              const launchY = p1.y - (isSantaP1 ? 24 : 14);
+
+              // El objeto hereda la inercia previa del movimiento
+              const inheritedInertia = p1.throwInitialInertia || 0;
+              const wType = p1.equippedWeapon;
+              const isThrowable = isThrowableWeapon(wType);
+
+              if (isThrowable) {
+                p1.ammo--;
+                const wpn = getWeapon(wType);
+
+                if (wType === WeaponType.Grenade) {
+                  const gCfg = GRENADE_DATABASE[GrenadeType.Frag];
+                  sounds.playGunshot('grenade');
+                  s.projectiles.push({
+                    id: s.nextEntityId++,
+                    x: launchX,
+                    y: launchY,
+                    vx: dir * 440 + inheritedInertia,
+                    vy: -300,
+                    damage: gCfg.damage * p1.damageDealtModifier,
+                    onFireDuration: 0,
+                    explosionRadius: gCfg.explosionRadius,
+                    shooterId: p1.id,
+                    weaponType: WeaponType.Grenade,
+                    pelletCount: 1,
+                    lifeTicks: 0,
+                    maxLifeTicks: gCfg.fuseTicks || 85,
+                    isGrenade: true,
+                    isThrowable: true,
+                    grenadeType: GrenadeType.Frag,
+                    rotation: 0,
+                    rotationSpeed: dir * 0.25,
+                    color: gCfg.color,
+                  });
+                } else if (wType === WeaponType.Molotov) {
+                  const gCfg = GRENADE_DATABASE[GrenadeType.Molotov];
+                  sounds.playGunshot('grenade');
+                  s.projectiles.push({
+                    id: s.nextEntityId++,
+                    x: launchX,
+                    y: launchY,
+                    vx: dir * 390 + inheritedInertia,
+                    vy: -270,
+                    damage: gCfg.damage * p1.damageDealtModifier,
+                    onFireDuration: gCfg.burnDurationTicks || 240,
+                    explosionRadius: gCfg.explosionRadius,
+                    shooterId: p1.id,
+                    weaponType: WeaponType.Molotov,
+                    pelletCount: 1,
+                    lifeTicks: 0,
+                    maxLifeTicks: 70,
+                    isGrenade: true,
+                    isMolotov: true,
+                    isThrowable: true,
+                    grenadeType: GrenadeType.Molotov,
+                    rotation: 0,
+                    rotationSpeed: dir * 0.28,
+                    color: gCfg.color,
+                  });
+                } else if (wType === WeaponType.C4) {
+                  sounds.playGunshot('grenade');
+                  s.projectiles.push({
+                    id: s.nextEntityId++,
+                    x: launchX,
+                    y: launchY,
+                    vx: dir * 350 + inheritedInertia,
+                    vy: -240,
+                    damage: (wpn.damage || 60) * p1.damageDealtModifier,
+                    onFireDuration: 0,
+                    explosionRadius: wpn.explosionRadius || 85,
+                    shooterId: p1.id,
+                    weaponType: WeaponType.C4,
+                    pelletCount: 1,
+                    lifeTicks: 0,
+                    maxLifeTicks: 80,
+                    isGrenade: true,
+                    isThrowable: true,
+                    rotation: 0,
+                    rotationSpeed: dir * 0.18,
+                    color: '#ef4444',
+                  });
+                } else if (wType === WeaponType.Mine) {
+                  sounds.playPickup();
+                  s.projectiles.push({
+                    id: s.nextEntityId++,
+                    x: launchX,
+                    y: launchY,
+                    vx: dir * 280 + inheritedInertia,
+                    vy: -180,
+                    damage: (wpn.damage || 45) * p1.damageDealtModifier,
+                    onFireDuration: 0,
+                    explosionRadius: wpn.explosionRadius || 60,
+                    shooterId: p1.id,
+                    weaponType: WeaponType.Mine,
+                    pelletCount: 1,
+                    lifeTicks: 0,
+                    maxLifeTicks: 250,
+                    isGrenade: true,
+                    isThrowable: true,
+                    rotation: 0,
+                    rotationSpeed: dir * 0.12,
+                    color: '#f59e0b',
+                  });
+                } else if (wType === WeaponType.Baseball) {
+                  sounds.playPunch();
+                  s.projectiles.push({
+                    id: s.nextEntityId++,
+                    x: launchX,
+                    y: launchY,
+                    vx: dir * 650 + inheritedInertia,
+                    vy: -140,
+                    damage: (wpn.damage || 14) * p1.damageDealtModifier,
+                    onFireDuration: 0,
+                    explosionRadius: 0,
+                    shooterId: p1.id,
+                    weaponType: WeaponType.Baseball,
+                    pelletCount: 1,
+                    lifeTicks: 0,
+                    maxLifeTicks: 90,
+                    isGrenade: true,
+                    isThrowable: true,
+                    rotation: 0,
+                    rotationSpeed: dir * 0.45,
+                    color: '#f8fafc',
+                  });
+                }
+
+                s.floatingTexts.push({
+                  id: s.nextEntityId++,
+                  text: `¡${wpn.name}! (${p1.ammo} rest.)`,
+                  x: p1.x,
+                  y: p1.y - 32,
+                  color: wpn.color || '#38bdf8',
+                  life: 30,
+                });
+              } else {
+                // Lanzamiento desde inventario de granadas (Tecla ',' o 'L')
+                const thrownType = consumeGrenade(s.p1Grenades);
+                if (thrownType) {
+                  sounds.playGunshot('grenade');
+                  const gCfg = GRENADE_DATABASE[thrownType];
+                  s.projectiles.push({
+                    id: s.nextEntityId++,
+                    x: launchX,
+                    y: launchY,
+                    vx: dir * 420 + inheritedInertia,
+                    vy: -310,
+                    damage: gCfg.damage * p1.damageDealtModifier,
+                    onFireDuration: gCfg.burnDurationTicks || 0,
+                    explosionRadius: gCfg.explosionRadius,
+                    shooterId: p1.id,
+                    weaponType: WeaponType.Grenade,
+                    pelletCount: 1,
+                    lifeTicks: 0,
+                    maxLifeTicks: gCfg.fuseTicks || 85,
+                    isGrenade: true,
+                    isMolotov: thrownType === GrenadeType.Molotov,
+                    isThrowable: true,
+                    grenadeType: thrownType,
+                    rotation: 0,
+                    rotationSpeed: dir * 0.24,
+                    color: gCfg.color,
+                  });
+
+                  s.floatingTexts.push({
+                    id: s.nextEntityId++,
+                    text: `¡${gCfg.shortName}! (${s.p1Grenades.ammo[thrownType]} rest.)`,
+                    x: p1.x,
+                    y: p1.y - 32,
+                    color: gCfg.color,
+                    life: 30,
+                  });
+                }
+              }
+            }
+
+            p1.throwAnimTimer = (p1.throwAnimTimer || 0) + 1;
+            // 4 ticks por fotograma (~66ms por frame para 5 frames en ~330ms)
+            if (p1.throwAnimTimer >= 4) {
+              p1.throwAnimTimer = 0;
+              p1.throwAnimFrame = (p1.throwAnimFrame || 0) + 1;
+
+              if (p1.throwAnimFrame >= 5) {
+                // Fin de la animación One Shot
+                p1.isThrowing = false;
+                p1.throwAnimFrame = 0;
+                p1.throwAnimTimer = 0;
+                p1.throwHasReleased = false;
+                s.p1Controller.isThrowing = false;
+
+                if (isThrowableWeapon(p1.equippedWeapon) && p1.ammo <= 0) {
+                  p1.equippedWeapon = WeaponType.Fists;
+                  p1.characterState = 'desarmado';
+                  p1.weaponState = 'desarmado';
+                }
+
+                if (p1.fsm === PlayerFSMState.MeleeAttack) {
+                  p1.fsm = PlayerFSMState.Idle;
+                }
+              }
+            }
+          }
+        } else if (s.p1Controller) {
+          s.p1Controller.isThrowing = false;
+        }
+
+        // Sincronizar flag de arma pesada para reducción de velocidad y bloqueo de carrera
+        if (s.p1Controller) {
+          s.p1Controller.hasHeavyRifleEquipped = isRifleWeapon(p1.equippedWeapon);
+        }
+
+        // Cuenta regresiva de la ventana de combo: si pasa el tiempo sin presionar 'N', se reinicia a 0
+        if (p1.comboWindowTicks > 0) {
+          p1.comboWindowTicks--;
+          if (p1.comboWindowTicks <= 0 && !p1.isMeleeComboAttacking) {
+            p1.comboStep = 0;
+            p1.meleeComboStep = 0;
+          }
+        }
+
+        // Lógica de avance fotograma a fotograma y resolución de daño del combo
+        if (p1.isMeleeComboAttacking) {
+          // Bloqueo estricto de movimiento: no puede caminar, correr ni saltar
+          p1.velocityX = 0;
+          s.p1Controller.vx = 0;
+          s.p1Controller.state = ControllerState.Idle;
+          p1.fsm = PlayerFSMState.MeleeAttack;
+
+          const isGymratP1 = (playerFaction || BotFaction.Ninja) === BotFaction.Gymrat || p1.name.toUpperCase().includes('GYMRAT');
+
+          if (isGymratP1) {
+            p1.meleeAnimTimer++;
+            // Velocidad contundente para luchador pesado (~12-14 FPS, 4 a 5 ticks por frame a 60Hz)
+            const isImpactFrame = (p1.meleeAnimFrame === 1 || p1.meleeAnimFrame === 3 || p1.meleeAnimFrame === 4);
+            const targetTicksForFrame = isImpactFrame ? 5 : 4;
+
+            if (p1.meleeAnimTimer >= targetTicksForFrame) {
+              p1.meleeAnimTimer = 0;
+
+              if (p1.meleeAnimFrame === 0) {
+                // Pasa de Frame 1 (prep puño) a Frame 2 (puñetazo recto)
+                p1.meleeAnimFrame = 1;
+                p1.meleeHasHit = false;
+              } else if (p1.meleeAnimFrame === 1) {
+                // Terminó Frame 2 (puñetazo recto)
+                if (p1.comboBuffered) {
+                  // Si el jugador presionó la tecla de nuevo durante el ataque, encadena Frame 3 y 4 (patada)
+                  p1.meleeComboStep = 1;
+                  p1.comboStep = 1;
+                  p1.meleeAnimFrame = 2; // Frame 3: prep patada
+                  p1.meleeHasHit = false;
+                  p1.comboBuffered = false;
+                  p1.comboWindowTicks = 34;
+                  sounds.playPunch();
+                } else {
+                  // Si no presionó de nuevo, finaliza aquí y vuelve a Idle
+                  p1.isMeleeComboAttacking = false;
+                  p1.meleeAnimFrame = 0;
+                  p1.fsm = PlayerFSMState.Idle;
+                  p1.comboStep = 1; // Permite encadenar si pulsa rápido dentro de la ventana de combo
+                  p1.comboWindowTicks = 22;
+                }
+              } else if (p1.meleeAnimFrame === 2) {
+                // Pasa de Frame 3 (prep patada) a Frame 4 (patada alta)
+                p1.meleeAnimFrame = 3;
+                p1.meleeHasHit = false;
+              } else if (p1.meleeAnimFrame === 3) {
+                // Terminó Frame 4 (patada alta)
+                if (p1.comboBuffered) {
+                  // Si volvió a presionar rápido, remata con Frame 5 y 6 (gancho/recuperación)
+                  p1.meleeComboStep = 2;
+                  p1.comboStep = 2;
+                  p1.meleeAnimFrame = 4; // Frame 5: gancho / rodillazo
+                  p1.meleeHasHit = false;
+                  p1.comboBuffered = false;
+                  p1.comboWindowTicks = 34;
+                  sounds.playPunch();
+                } else {
+                  // Si no presionó de nuevo, finaliza aquí y vuelve a Idle
+                  p1.isMeleeComboAttacking = false;
+                  p1.meleeAnimFrame = 0;
+                  p1.fsm = PlayerFSMState.Idle;
+                  p1.comboStep = 2;
+                  p1.comboWindowTicks = 22;
+                }
+              } else if (p1.meleeAnimFrame === 4) {
+                // Pasa de Frame 5 (gancho/rodillazo) a Frame 6 (recuperación a guardia)
+                p1.meleeAnimFrame = 5;
+                p1.meleeHasHit = false;
+              } else if (p1.meleeAnimFrame >= 5) {
+                // Terminó Frame 6: remate y combo completo
+                p1.isMeleeComboAttacking = false;
+                p1.meleeAnimFrame = 0;
+                p1.meleeComboStep = 0;
+                p1.comboStep = 0;
+                p1.comboBuffered = false;
+                p1.comboWindowTicks = 0;
+                p1.fsm = PlayerFSMState.Idle;
+              }
+            }
+          } else {
+            p1.meleeAnimTimer++;
+            const isSantaP1 = (playerFaction || BotFaction.Ninja) === BotFaction.Santa || p1.name.toUpperCase().includes('SANTA');
+            const p1SheetCfg = getCharacterSpritesheetDef(s.p1Faction || p1.faction || BotFaction.Santa);
+            const totalMeleeFrames = isSantaP1 ? (p1SheetCfg?.meleeTotalFramesPerRow || 3) : 6;
+            const exitMeleeFrame = isSantaP1 ? 2 : 4;
+            const maxComboSteps = isSantaP1 ? 1 : 2;
+
+            // 3 ticks por fotograma (18 ticks = ~300ms a 60 FPS por golpe de 6 frames)
+            if (p1.meleeAnimTimer >= 3) {
+              p1.meleeAnimTimer = 0;
+              p1.meleeAnimFrame++;
+
+              // Si el jugador pulsó 'N' antes de terminar y estamos en frames de salida
+              if (p1.comboBuffered && p1.meleeAnimFrame >= exitMeleeFrame && p1.meleeComboStep < maxComboSteps) {
+                p1.meleeComboStep++;
+                p1.comboStep = p1.meleeComboStep;
+                p1.meleeAnimFrame = 0;
+                p1.meleeAnimTimer = 0;
+                p1.meleeHasHit = false;
+                p1.comboBuffered = false;
+                p1.comboWindowTicks = 34;
+                sounds.playPunch();
+              } else if (p1.meleeAnimFrame >= totalMeleeFrames) {
+                // Fin del último frame (One Shot completado)
+                if (p1.comboBuffered && p1.meleeComboStep < maxComboSteps) {
+                  p1.meleeComboStep++;
+                  p1.comboStep = p1.meleeComboStep;
+                  p1.meleeAnimFrame = 0;
+                  p1.meleeAnimTimer = 0;
+                  p1.meleeHasHit = false;
+                  p1.comboBuffered = false;
+                  p1.comboWindowTicks = 34;
+                  sounds.playPunch();
+                } else {
+                  // Al terminar el último frame, vuelve al estado normal (Idle)
+                  p1.isMeleeComboAttacking = false;
+                  p1.meleeAnimFrame = 0;
+                  p1.fsm = PlayerFSMState.Idle;
+
+                  if (p1.meleeComboStep >= maxComboSteps) {
+                    p1.comboStep = 0;
+                    p1.comboWindowTicks = 0;
+                    p1.meleeComboStep = 0;
+                  } else {
+                    p1.comboStep = p1.meleeComboStep + 1;
+                    p1.comboWindowTicks = 24;
+                  }
+                }
+              }
+            }
+          }
+
+          // Detección de impacto en los fotogramas activos de golpe
+          // Para Gymrat: Frame 2 (idx 1 = puño), Frame 4 (idx 3 = patada), Frame 5 (idx 4 = gancho/remate)
+          // Para Santa: Frame 2 (idx 1) y Frame 3 (idx 2)
+          // Para Ninja: Frames 2 y 3 de su fila actual
+          const isSantaP1 = (playerFaction || BotFaction.Ninja) === BotFaction.Santa || p1.name.toUpperCase().includes('SANTA');
+          const isImpactActive = isGymratP1
+            ? (p1.meleeAnimFrame === 1 || p1.meleeAnimFrame === 3 || p1.meleeAnimFrame === 4)
+            : isSantaP1
+            ? (p1.meleeAnimFrame === 1 || p1.meleeAnimFrame === 2)
+            : (p1.meleeAnimFrame >= 2 && p1.meleeAnimFrame <= 3);
+
+          if (!p1.meleeHasHit && isImpactActive) {
+            p1.meleeHasHit = true;
+            const p1FacingDir = p1.facingRight ? 1 : -1;
+            const hitReach = isGymratP1
+              ? (p1.meleeAnimFrame === 3 ? 65 : 55)
+              : 50;
+
+            for (const bInst of s.bots) {
+              const bot = bInst.state;
+              if (!bot.isAlive || bot.isGrabbed || isSameTeam(p1.id, bot.id)) continue;
+              const isInvuln =
+                bot.id === 2 && (gameMode === 'local1v1' || gameMode === 'coop')
+                  ? s.p2Controller.isInvulnerable
+                  : bot.fsm !== PlayerFSMState.Roll;
+              if (isInvuln) continue;
+
+              const isBotInReach =
+                ((p1FacingDir > 0 && bot.x >= p1.x - 10 && bot.x <= p1.x + hitReach) ||
+                 (p1FacingDir < 0 && bot.x <= p1.x + 10 && bot.x >= p1.x - hitReach)) &&
+                Math.abs(bot.y - p1.y) < 34;
+
+              if (isBotInReach) {
+                const isBluntMelee = isOneHandBluntWeapon(p1.equippedWeapon);
+                const wpn = getWeapon(p1.equippedWeapon);
+                const baseWpnDmg = isBluntMelee ? (wpn.damage || 14) : 12;
+
+                if (p1.equippedWeapon === WeaponType.ShockBaton) {
+                  sounds.playHit();
+                  addSparks(bot.x, bot.y, '#06b6d4', 20);
+                } else if (p1.equippedWeapon === WeaponType.Whip) {
+                  sounds.playSwordSwing();
+                } else {
+                  sounds.playHit();
+                }
+
+                let damage = 12;
+                let shake = 5;
+                let kbX = p1FacingDir * 110;
+                let kbY: number | undefined = undefined;
+                let causedKnockdown = false;
+                let stunTicks = GameConstants.HitstunTicksLight;
+                let text = '¡PUÑETAZO!';
+                let textColor = '#38bdf8';
+
+                if (isGymratP1) {
+                  // Mecánica exclusiva de Gymrat: Fuerza bruta contundente (Frame 2: puño, Frame 4: patada, Frame 5: gancho)
+                  if (p1.meleeAnimFrame === 1) {
+                    damage = (isBluntMelee ? baseWpnDmg * 1.25 : 16) * p1.damageDealtModifier;
+                    shake = 7;
+                    kbX = p1FacingDir * 150;
+                    stunTicks = GameConstants.HitstunTicksLight;
+                    text = isBluntMelee ? `¡${wpn.name.toUpperCase()}! -${Math.round(damage)}` : `¡PUÑETAZO! -${Math.round(damage)}`;
+                    textColor = isBluntMelee ? (wpn.color || '#f97316') : '#f97316';
+                    addSparks(bot.x, bot.y, '#f97316', 16);
+                    addSparks(bot.x, bot.y, '#fde047', 10);
+                  } else if (p1.meleeAnimFrame === 3) {
+                    damage = (isBluntMelee ? baseWpnDmg * 1.6 : 22) * p1.damageDealtModifier;
+                    shake = 10;
+                    kbX = p1FacingDir * 230;
+                    stunTicks = GameConstants.HitstunTicksLight;
+                    text = isBluntMelee ? `¡GOLPE ${wpn.name.toUpperCase()}! -${Math.round(damage)}` : `¡PATADA! -${Math.round(damage)}`;
+                    textColor = isBluntMelee ? (wpn.color || '#ea580c') : '#ea580c';
+                    addSparks(bot.x, bot.y, '#ea580c', 20);
+                    addSparks(bot.x, bot.y, '#ffffff', 14);
+                  } else {
+                    damage = (isBluntMelee ? baseWpnDmg * 2.3 : 32) * p1.damageDealtModifier;
+                    shake = 15;
+                    kbX = p1FacingDir * 260;
+                    kbY = -410;
+                    if (bot.id === 2 && gameMode === 'local1v1') {
+                      s.p2Controller.vy = -410;
+                    }
+                    causedKnockdown = true;
+                    stunTicks = GameConstants.HitstunTicksStrong;
+                    text = isBluntMelee ? `¡REMATE ${wpn.name.toUpperCase()}! -${Math.round(damage)}` : `¡GANCHO! -${Math.round(damage)}`;
+                    textColor = '#ef4444';
+                    sounds.playHeavySmash();
+                    addSparks(bot.x, bot.y - 12, '#ef4444', 28);
+                    addSparks(bot.x, bot.y - 12, '#f97316', 22);
+                    addSparks(bot.x, bot.y - 12, '#fde047', 16);
+                  }
+                } else {
+                  if (p1.meleeComboStep === 0) {
+                    damage = (isBluntMelee ? baseWpnDmg : 12) * p1.damageDealtModifier;
+                    shake = 5;
+                    kbX = p1FacingDir * 110;
+                    stunTicks = GameConstants.HitstunTicksLight;
+                    text = isBluntMelee ? `¡${wpn.name.toUpperCase()}! -${Math.round(damage)}` : `¡PUÑETAZO! -${Math.round(damage)}`;
+                    textColor = isBluntMelee ? (wpn.color || '#38bdf8') : (isSantaP1 ? '#ef4444' : '#38bdf8');
+                    addSparks(bot.x, bot.y, textColor, 14);
+                  } else if (p1.meleeComboStep === 1) {
+                    damage = (isBluntMelee ? baseWpnDmg * 1.45 : 18) * p1.damageDealtModifier;
+                    shake = 8;
+                    kbX = p1FacingDir * 200;
+                    stunTicks = GameConstants.HitstunTicksLight;
+                    text = isBluntMelee ? `¡GOLPE ${wpn.name.toUpperCase()}! -${Math.round(damage)}` : `¡PATADA! -${Math.round(damage)}`;
+                    textColor = isBluntMelee ? (wpn.color || '#f59e0b') : '#f59e0b';
+                    addSparks(bot.x, bot.y, '#f59e0b', 18);
+                    addSparks(bot.x, bot.y, '#ffffff', 12);
+                  } else {
+                    damage = (isBluntMelee ? baseWpnDmg * 2.2 : 28) * p1.damageDealtModifier;
+                    shake = 14;
+                    kbX = p1FacingDir * 240;
+                    kbY = -390;
+                    if (bot.id === 2 && gameMode === 'local1v1') {
+                      s.p2Controller.vy = -390;
+                    }
+                    causedKnockdown = true;
+                    stunTicks = GameConstants.HitstunTicksStrong;
+                    text = isBluntMelee ? `¡REMATE ${wpn.name.toUpperCase()}! -${Math.round(damage)}` : `¡UPPERCUT! -${Math.round(damage)}`;
+                    textColor = '#ef4444';
+                    sounds.playHeavySmash();
+                    addSparks(bot.x, bot.y - 12, '#ef4444', 26);
+                    addSparks(bot.x, bot.y - 12, '#fde047', 20);
+                    addSparks(bot.x, bot.y - 12, '#ffffff', 16);
+                  }
+                }
+
+                const hitRes = CombatSystem.applyHit(bot, {
+                  damage,
+                  kbX,
+                  kbY,
+                  stunTicks,
+                  causedKnockdown,
+                  attacker: p1,
+                  weaponType: p1.equippedWeapon || WeaponType.Fists,
+                  screenShake: shake,
+                });
+                s.screenShake = hitRes.screenShake;
+                s.hitStopTicks = hitRes.hitStop;
+                if (gameMode === 'practice' && tutorialStepRef.current === 3) {
+                  setTutorialStep(4);
+                  tutorialInputProgressRef.current.hasMeleeHit = true;
+                }
+                if (gameMode === 'local1v1') {
+                  s.p2Controller.setPosition(bot.x, bot.y);
+                  s.p2Controller.vx = bot.velocityX;
+                  s.p2Controller.vy = bot.velocityY;
+                }
+                addBloodParticles(bot.x, bot.y, p1FacingDir, hitRes.finalDamage);
+
+                s.floatingTexts.push({
+                  id: s.nextEntityId++,
+                  text,
+                  x: bot.x,
+                  y: bot.y - 32,
+                  color: textColor,
+                  life: 35,
+                });
+              }
+            }
+
+            // Daño e interacción con cajas destructibles
+            s.crates.forEach((c) => {
+              if (Math.hypot(p1.x + p1FacingDir * 26 - (c.x + c.w / 2), p1.y - (c.y + c.h / 2)) < 44) {
+                const cDmg = p1.meleeComboStep === 2 ? 30 : p1.meleeComboStep === 1 ? 20 : 12;
+                c.health -= cDmg;
+                c.vx = p1FacingDir * 280;
+                sounds.playHit();
+                addSparks(c.x + 16, c.y + 16, '#d97706', 10);
+              }
+            });
+
+            // Daño en barriles explosivos
+            s.barrels.forEach((b) => {
+              if (Math.hypot(p1.x + p1FacingDir * 26 - (b.x + b.w / 2), p1.y - (b.y + b.h / 2)) < 44) {
+                const bDmg = p1.meleeComboStep === 2 ? 25 : p1.meleeComboStep === 1 ? 16 : 10;
+                b.health -= bDmg;
+                b.vx = p1FacingDir * 320;
+                sounds.playHit();
+                addSparks(b.x + 12, b.y + 16, '#ef4444', 10);
+              }
+            });
+          }
+        }
+
+        if (p1.isSliding) {
+          p1.slideTicks--;
+          if (p1.slideTicks <= 0) {
+            p1.isSliding = false;
+          }
+        }
+
+        // Firearm / Ranged Fire P1
+        if (
+          firePressed &&
+          p1.attackCooldown <= 0 &&
+          p1.equippedWeapon !== WeaponType.Fists &&
+          p1.ammo > 0 &&
+          p1.fsm !== PlayerFSMState.Roll
+        ) {
+          const wpn = getWeapon(p1.equippedWeapon);
+          if (wpn.category === 'Firearm' && !isPistolWeapon(p1.equippedWeapon) && !isRifleWeapon(p1.equippedWeapon)) {
+            p1.attackCooldown = wpn.cooldownTicks;
+            p1.ammo--;
+            PlayerFSM.tryTransition(p1, PlayerFSMState.RangedFire);
+            sounds.playGunshot(wpn.type.toLowerCase());
+
+            const dir = p1.facingRight ? 1 : -1;
+            const muzzleX = p1.x + dir * 28;
+            const muzzleY = p1.y - 6;
+
+            addSparks(muzzleX, muzzleY, '#fde047', 6);
+            s.screenShake = Math.min(10, (wpn.damage || 20) / 4);
+
+            const count = wpn.pelletCount || 1;
+            for (let i = 0; i < count; i++) {
+              const spreadAngle = ((Math.random() - 0.5) * ((wpn.accuracyDeg || 3) * Math.PI / 180)) / 2;
+              const speed = wpn.projectileSpeed || 900;
+              s.projectiles.push({
+                id: s.nextEntityId++,
+                x: muzzleX,
+                y: muzzleY,
+                vx: dir * speed * Math.cos(spreadAngle),
+                vy: speed * Math.sin(spreadAngle),
+                damage: (wpn.damage / count) * p1.damageDealtModifier,
+                onFireDuration: wpn.onFireDuration || 0,
+                explosionRadius: wpn.explosionRadius || 0,
+                shooterId: p1.id,
+                weaponType: p1.equippedWeapon,
+                pelletCount: count,
+                lifeTicks: 0,
+                maxLifeTicks: 60,
+                color: '#facc15',
+              });
+            }
+          }
+        }
+
+        // Lanzamiento de bombas/granadas P1 está centralizado arriba en la sección 3 con animación 'throw_up' (One Shot de 5 frames, soltando en Frame 3)
+      }
+
+      // ─────────────────────────────────────────────────────────
+      // 2. INPUT JUGADOR 2 (1v1 LOCAL) O IA DE COMBATE (vsBOT)
+      // ─────────────────────────────────────────────────────────
+      for (const inst of s.bots) {
+        const bot = inst.state;
+        if (bot.isAlive && s.roundActive) {
+          if (inst.controller) {
+            const controller = inst.controller || s.p2Controller;
+            const scheme = controlSchemeRef.current;
+            controller.setPlayerId((inst.id === 1 ? 1 : 2) as 1 | 2);
+            const p2RawInput = controller.readInput(keys, s.keysJustPressed, true, scheme);
+            const p2Combat = controller.readCombatInput(keys, s.keysJustPressed, true, scheme);
+
+            const nextIdObj = {
+              get current() {
+                return s.nextEntityId;
+              },
+              set current(v: number) {
+                s.nextEntityId = v;
+              },
+            };
+
+            // Cambio de ranuras de armas P2 (7, 8, 9, 0)
+            if (p2Combat.slot1Just) {
+              switchFighterSlot(bot, 'melee', controller, inst.grenades, s.floatingTexts, nextIdObj);
+            } else if (p2Combat.slot2Just) {
+              switchFighterSlot(bot, 'handgun', controller, inst.grenades, s.floatingTexts, nextIdObj);
+            } else if (p2Combat.slot3Just) {
+              switchFighterSlot(bot, 'primary', controller, inst.grenades, s.floatingTexts, nextIdObj);
+            } else if (p2Combat.slot4Just) {
+              switchFighterSlot(bot, 'throwable', controller, inst.grenades, s.floatingTexts, nextIdObj);
+            }
+
+            const moveDir = p2RawInput.moveDir;
+          const leftKey = moveDir === -1;
+          const rightKey = moveDir === 1;
+          const runHeld = p2RawInput.run;
+          const jumpJustPressed = p2RawInput.jump;
+          const jumpHeld = p2RawInput.jumpHeld;
+          const rollPressed = p2RawInput.roll;
+          const dropThrough = !!p2RawInput.dropThrough;
+          const p2Bindings = scheme === 'wasd_p1' ? CONTROLS.LOCAL_1V1_P2 : CONTROLS.LOCAL_1V1_P1;
+          const crouchHeld = isAnyPressed(keys, p2Bindings.down);
+
+          const isP2ComboLocked = !!bot.isSwordAttacking || !!bot.isMeleeComboAttacking || !!bot.isOneHandAttacking || !!bot.isTwoHandAttacking || !!bot.isThrowing;
+          const isShootingPistol = !!bot.isPistolShooting;
+
+          const p2Input: PlayerInput = {
+            moveDir: isP2ComboLocked ? 0 : moveDir,
+            run: (isP2ComboLocked || isShootingPistol) ? false : runHeld,
+            jump: isP2ComboLocked ? false : jumpJustPressed,
+            jumpHeld: isP2ComboLocked ? false : jumpHeld,
+            roll: isP2ComboLocked ? false : rollPressed,
+            dropThrough: isP2ComboLocked ? false : dropThrough,
+          };
+
+          // Recuperación activa de derribo para P2 (1v1 / Coop) mediante teclas de movimiento (Flechas, salto, rodada, combate)
+          if (bot.fsm === PlayerFSMState.KnockedDown || bot.fsm === PlayerFSMState.GetUp) {
+            const hasDirInput = moveDir !== 0;
+            const hasVerticalInput = jumpJustPressed || rollPressed || crouchHeld;
+            const anyP2Input =
+              hasDirInput ||
+              hasVerticalInput ||
+              isAnyPressed(keys, p2Bindings.melee) ||
+              isAnyPressed(keys, p2Bindings.fire) ||
+              isAnyPressed(keys, p2Bindings.grenade);
+
+            if (anyP2Input && bot.stateTicks >= 4) {
+              if (rollPressed || (crouchHeld && hasDirInput)) {
+                if (hasDirInput) bot.facingRight = moveDir > 0;
+                PlayerFSM.tryTransition(bot, PlayerFSMState.Roll);
+                s.p2Controller.setPosition(bot.x, bot.y);
+                s.p2Controller.isOnFloor = bot.onGround;
+                s.p2Controller.facingRight = bot.facingRight;
+                s.p2Controller.state = ControllerState.Roll;
+                bot.rollTicks = GameConstants.RollDurationTicks;
+                bot.invulnerabilityTicks = 20;
+                sounds.playRoll();
+                s.floatingTexts.push({
+                  id: s.nextEntityId++,
+                  text: '¡RODADA DE RECUPERACIÓN!',
+                  x: bot.x,
+                  y: bot.y - 28,
+                  color: '#f43f5e',
+                  life: 25,
+                });
+              } else if (jumpJustPressed) {
+                PlayerFSM.tryTransition(bot, PlayerFSMState.Jump);
+                s.p2Controller.setPosition(bot.x, bot.y);
+                s.p2Controller.isOnFloor = false;
+                s.p2Controller.vy = -GameConstants.JumpVelocity;
+                bot.velocityY = -GameConstants.JumpVelocity;
+                bot.invulnerabilityTicks = 16;
+                sounds.playJump();
+                s.floatingTexts.push({
+                  id: s.nextEntityId++,
+                  text: '¡SALTO DE RECUPERACIÓN!',
+                  x: bot.x,
+                  y: bot.y - 28,
+                  color: '#fb7185',
+                  life: 25,
+                });
+              } else {
+                if (hasDirInput) {
+                  bot.facingRight = moveDir > 0;
+                  s.p2Controller.facingRight = bot.facingRight;
+                }
+                PlayerFSM.tryTransition(bot, PlayerFSMState.Idle);
+                s.p2Controller.setPosition(bot.x, bot.y);
+                s.p2Controller.isOnFloor = bot.onGround;
+                s.p2Controller.state = ControllerState.Idle;
+                bot.invulnerabilityTicks = 18;
+                addSparks(bot.x, bot.y + 12, '#f43f5e', 8);
+                s.floatingTexts.push({
+                  id: s.nextEntityId++,
+                  text: '¡DE PIE!',
+                  x: bot.x,
+                  y: bot.y - 28,
+                  color: '#e2e8f0',
+                  life: 25,
+                });
+              }
+            }
+          }
+
+          if (
+            bot.fsm !== PlayerFSMState.KnockedDown &&
+            bot.fsm !== PlayerFSMState.GetUp &&
+            bot.fsm !== PlayerFSMState.Hitstun
+          ) {
+            const prevRoll = s.p2Controller.state === ControllerState.Roll;
+            const prevJump = s.p2Controller.state === ControllerState.Jump;
+
+            s.p2Controller.update(1 / 60, p2Input, s.platforms);
+
+            if (bot.isMeleeComboAttacking || bot.isOneHandAttacking || bot.isTwoHandAttacking || bot.isSwordAttacking || bot.isThrowing) {
+              s.p2Controller.vx = 0;
+              bot.velocityX = 0;
+              s.p2Controller.state = ControllerState.Idle;
+              bot.fsm = PlayerFSMState.MeleeAttack;
+            }
+
+            bot.x = s.p2Controller.x;
+            bot.y = s.p2Controller.y;
+            bot.velocityX = (bot.isMeleeComboAttacking || bot.isOneHandAttacking || bot.isTwoHandAttacking || bot.isSwordAttacking || bot.isThrowing) ? 0 : s.p2Controller.vx;
+            bot.velocityY = s.p2Controller.vy;
+            bot.facingRight = s.p2Controller.facingRight;
+            bot.onGround = s.p2Controller.isOnFloor;
+
+          const isGymratP2 = bot.faction === BotFaction.Gymrat || (botFaction || BotFaction.Ninja) === BotFaction.Gymrat || bot.name.toUpperCase().includes('GYMRAT');
+            if (isGymratP2) {
+              if (!bot.gymratPrevOnGround && bot.onGround) {
+                bot.gymratLandingTicks = 6;
+              }
+              bot.gymratPrevOnGround = bot.onGround;
+
+              if (bot.gymratLandingTicks && bot.gymratLandingTicks > 0) {
+                if (Math.abs(bot.velocityX) > 20 || p2Input.moveDir !== 0) {
+                  bot.gymratLandingTicks = 0;
+                } else {
+                  bot.gymratLandingTicks--;
+                }
+              }
+            }
+
+            const isSantaP2 = bot.faction === BotFaction.Santa || (botFaction || BotFaction.Ninja) === BotFaction.Santa || bot.name.toUpperCase().includes('SANTA');
+            if (isSantaP2) {
+              if (!bot.santaPrevOnGround && bot.onGround) {
+                bot.santaLandingTicks = 6;
+              }
+              bot.santaPrevOnGround = bot.onGround;
+
+              if (bot.santaLandingTicks && bot.santaLandingTicks > 0) {
+                if (Math.abs(bot.velocityX) > 20 || p2Input.moveDir !== 0) {
+                  bot.santaLandingTicks = 0;
+                } else {
+                  bot.santaLandingTicks--;
+                }
+              }
+            }
+
+            if (s.p2Controller.state === ControllerState.Roll) {
+              if (!prevRoll) {
+                sounds.playRoll();
+                bot.rollTicks = GameConstants.RollDurationTicks;
+              }
+              bot.fsm = PlayerFSMState.Roll;
+              if (s.p2Controller.isInvulnerable || (isSantaP2 && s.p2Controller.rollProgress >= 0.25 && s.p2Controller.rollProgress <= 0.75)) {
+                bot.invulnerabilityTicks = Math.max(bot.invulnerabilityTicks, 2);
+              }
+              if (Math.random() < 0.65) {
+                const dustDir = bot.facingRight ? -1 : 1;
+                s.particles.push({
+                  x: bot.x + dustDir * 10,
+                  y: bot.y + 16,
+                  vx: dustDir * (25 + Math.random() * 45),
+                  vy: -8 - Math.random() * 15,
+                  life: 14,
+                  maxLife: 20,
+                  color: '#cbd5e1',
+                  size: 3,
+                });
+              }
+            } else if (s.p2Controller.state === ControllerState.Jump) {
+              if (!prevJump) sounds.playJump();
+              bot.fsm = PlayerFSMState.Jump;
+            } else if (s.p2Controller.state === ControllerState.Fall) {
+              bot.fsm = PlayerFSMState.Fall;
+            } else if (s.p2Controller.state === ControllerState.Run || s.p2Controller.state === ControllerState.Walk) {
+              if (bot.fsm !== PlayerFSMState.MeleeAttack && bot.fsm !== PlayerFSMState.RangedFire) {
+                bot.fsm = PlayerFSMState.Run;
+              }
+            } else {
+              if (bot.fsm !== PlayerFSMState.MeleeAttack && bot.fsm !== PlayerFSMState.RangedFire) {
+                bot.fsm = crouchHeld ? PlayerFSMState.Crouch : PlayerFSMState.Idle;
+              }
+            }
+          }
+
+          const isTwoHand = isTwoHandWeapon(bot.equippedWeapon);
+          const isOneHand = isOneHandWeapon(bot.equippedWeapon);
+          const isRifle = isRifleWeapon(bot.equippedWeapon);
+          const isPistol = isPistolWeapon(bot.equippedWeapon);
+          const isThrowable = isThrowableWeapon(bot.equippedWeapon);
+          const isFirearm = isRifle || isPistol;
+
+          if (s.p2Controller) {
+            s.p2Controller.hasHeavyRifleEquipped = isRifle;
+          }
+
+          const meleeJustPressed = p2Combat.meleeJust;
+          const fireJustPressed = p2Combat.fireJust;
+          const firePressed = p2Combat.fire;
+          const throwJustPressed = p2Combat.throwJust;
+          const p2FacingDir = bot.facingRight ? 1 : -1;
+
+          // ── COMBATE JUGADOR 2 (1v1 LOCAL Y COOP) ──
+          if (bot.isGrappling && bot.grabbedTargetId !== null) {
+            const grabbedTarget = bot.grabbedTargetId === p1.id
+              ? p1
+              : s.bots.find((b) => b.id === bot.grabbedTargetId)?.state || null;
+
+            if (grabbedTarget && grabbedTarget.isAlive) {
+              bot.grappleTicks++;
+              grabbedTarget.x = bot.x + p2FacingDir * 24;
+              grabbedTarget.y = bot.y;
+              grabbedTarget.velocityX = 0;
+              grabbedTarget.velocityY = 0;
+              grabbedTarget.isGrabbed = true;
+              if (grabbedTarget.id === p1.id) {
+                s.p1Controller.setPosition(p1.x, p1.y);
+                s.p1Controller.vx = 0;
+                s.p1Controller.vy = 0;
+              }
+
+              if (meleeJustPressed) {
+                sounds.playThrow();
+                const throwDirX = leftKey ? -1 : (rightKey ? 1 : p2FacingDir);
+                const throwUp = jumpHeld || !crouchHeld;
+                const throwHit = CombatSystem.resolveThrow(bot, grabbedTarget, throwDirX, throwUp);
+
+                bot.isGrappling = false;
+                bot.grabbedTargetId = null;
+                grabbedTarget.isGrabbed = false;
+                bot.attackCooldown = 26;
+                s.screenShake = 10;
+                addSparks(grabbedTarget.x, grabbedTarget.y, '#ef4444', 18);
+
+                s.floatingTexts.push({
+                  id: s.nextEntityId++,
+                  text: `¡LANZAMIENTO J2! -${Math.round(throwHit.damageDealt)}`,
+                  x: grabbedTarget.x,
+                  y: grabbedTarget.y - 35,
+                  color: '#ef4444',
+                  life: 38,
+                });
+
+                s.crates.forEach((c) => {
+                  if (Math.hypot(grabbedTarget.x - (c.x + c.w / 2), grabbedTarget.y - (c.y + c.h / 2)) < 52) {
+                    c.health -= 20;
+                    c.vx = throwDirX * 360;
+                    sounds.playCrateBreak();
+                  }
+                });
+                s.barrels.forEach((b) => {
+                  if (Math.hypot(grabbedTarget.x - (b.x + b.w / 2), grabbedTarget.y - (b.y + b.h / 2)) < 52) {
+                    b.health -= 15;
+                    b.vx = throwDirX * 420;
+                    sounds.playHit();
+                  }
+                });
+              } else if (bot.grappleTicks > 50) {
+                bot.isGrappling = false;
+                bot.grabbedTargetId = null;
+                grabbedTarget.isGrabbed = false;
+                bot.attackCooldown = 15;
+              }
+            } else {
+              bot.isGrappling = false;
+              bot.grabbedTargetId = null;
+            }
+          } else if (
+            meleeJustPressed &&
+            bot.attackCooldown <= 0 &&
+            bot.onGround &&
+            (crouchHeld || (bot.facingRight ? rightKey : leftKey)) &&
+            (() => {
+              if (gameMode === 'local1v1') {
+                return (
+                  Math.hypot(p1.x - bot.x, p1.y - bot.y) < 38 &&
+                  Math.abs(p1.y - bot.y) < 26 &&
+                  p1.isAlive &&
+                  !p1.isGrabbed &&
+                  !s.p1Controller.isInvulnerable
+                );
+              } else if (gameMode === 'coop') {
+                return s.bots.some(
+                  (b) =>
+                    b.id >= 3 &&
+                    b.state.isAlive &&
+                    !b.state.isGrabbed &&
+                    Math.hypot(b.state.x - bot.x, b.state.y - bot.y) < 38 &&
+                    Math.abs(b.state.y - bot.y) < 26
+                );
+              }
+              return false;
+            })()
+          ) {
+            const targetToGrab = gameMode === 'local1v1'
+              ? p1
+              : s.bots.find(
+                  (b) =>
+                    b.id >= 3 &&
+                    b.state.isAlive &&
+                    !b.state.isGrabbed &&
+                    Math.hypot(b.state.x - bot.x, b.state.y - bot.y) < 38 &&
+                    Math.abs(b.state.y - bot.y) < 26
+                )?.state;
+
+            if (targetToGrab) {
+              bot.isGrappling = true;
+              bot.grabbedTargetId = targetToGrab.id;
+              bot.grappleTicks = 0;
+              targetToGrab.isGrabbed = true;
+              sounds.playGrapple();
+              s.floatingTexts.push({
+                id: s.nextEntityId++,
+                text: '¡AGARRE J2!',
+                x: bot.x,
+                y: bot.y - 30,
+                color: '#f87171',
+                life: 30,
+              });
+            }
+          } else if (
+            meleeJustPressed &&
+            bot.attackCooldown <= 0 &&
+            (crouchHeld || s.p2Controller.state === ControllerState.Roll || Math.abs(bot.velocityX) > 130) &&
+            bot.onGround
+          ) {
+            const isBladeJ2 = isBladeWeapon(bot.equippedWeapon);
+            bot.isSliding = true;
+            bot.slideTicks = 18;
+            bot.attackCooldown = isBladeJ2 ? 24 : 28;
+            bot.velocityX = p2FacingDir * (isBladeJ2 ? 460 : 430);
+            s.p2Controller.vx = bot.velocityX;
+            if (isBladeJ2) {
+              sounds.playSwordSwing();
+              sounds.playSlide();
+            } else {
+              sounds.playSlide();
+            }
+            PlayerFSM.tryTransition(bot, PlayerFSMState.CrouchSlide);
+            addSparks(bot.x, bot.y + 16, isBladeJ2 ? '#e0f2fe' : '#94a3b8', 14);
+
+            const p2SlideVictims = gameMode === 'coop'
+              ? s.bots.filter((b) => b.id >= 3 && b.state.isAlive).map((b) => b.state)
+              : [p1];
+
+            for (const victim of p2SlideVictims) {
+              if (isBladeJ2) {
+                const slideHit = CombatSystem.resolveBladeDashSlash(bot, victim);
+                if (slideHit.didHit) {
+                  sounds.playBladeHit();
+                  s.screenShake = 9;
+                  addSparks(victim.x, victim.y + 12, '#ef4444', 18);
+                  addSparks(victim.x, victim.y + 12, '#ffffff', 12);
+                  s.floatingTexts.push({
+                    id: s.nextEntityId++,
+                    text: `¡TAJO RASANTE J2! -${Math.round(slideHit.damageDealt)}`,
+                    x: victim.x,
+                    y: victim.y - 25,
+                    color: '#ef4444',
+                    life: 35,
+                  });
+                  if (victim.id === p1.id) {
+                    s.p1Controller.setPosition(p1.x, p1.y);
+                    s.p1Controller.vx = p1.velocityX;
+                    s.p1Controller.vy = p1.velocityY;
+                  }
+                }
+              } else {
+                const slideHit = CombatSystem.resolveSlideTackle(bot, victim);
+                if (slideHit.didHit) {
+                  sounds.playHit();
+                  s.screenShake = 8;
+                  addSparks(victim.x, victim.y + 12, '#ef4444', 16);
+                  s.floatingTexts.push({
+                    id: s.nextEntityId++,
+                    text: `¡BARRIDA J2! -${Math.round(slideHit.damageDealt)}`,
+                    x: victim.x,
+                    y: victim.y - 25,
+                    color: '#ef4444',
+                    life: 35,
+                  });
+                  if (victim.id === p1.id) {
+                    s.p1Controller.setPosition(p1.x, p1.y);
+                    s.p1Controller.vx = p1.velocityX;
+                    s.p1Controller.vy = p1.velocityY;
+                  }
+                }
+              }
+            }
+
+            s.crates.forEach((c) => {
+              if (Math.hypot(bot.x - (c.x + c.w / 2), bot.y - (c.y + c.h / 2)) < 50) {
+                c.health -= isBladeJ2 ? 25 : 15;
+                c.vx = p2FacingDir * 320;
+                sounds.playHit();
+                addSparks(c.x + 16, c.y + 16, '#d97706', 10);
+              }
+            });
+            s.barrels.forEach((b) => {
+              if (Math.hypot(bot.x - (b.x + b.w / 2), bot.y - (b.y + b.h / 2)) < 50) {
+                b.health -= 15;
+                b.vx = p2FacingDir * 380;
+                sounds.playHit();
+                addSparks(b.x + 12, b.y + 16, '#ef4444', 10);
+              }
+            });
+          } else if (
+            meleeJustPressed &&
+            bot.isAlive &&
+            s.roundActive &&
+            bot.fsm !== PlayerFSMState.KnockedDown &&
+            bot.fsm !== PlayerFSMState.GetUp &&
+            bot.fsm !== PlayerFSMState.Hitstun &&
+            bot.fsm !== PlayerFSMState.Roll &&
+            !bot.isGrappling &&
+            !bot.isThrowing
+          ) {
+            // ── FASE 4: SISTEMA DE AGARRE DE ARMAS (P2) ──
+            const botIsNinja = bot.faction === BotFaction.Ninja || bot.name.toUpperCase().includes('NINJA');
+            const hasTwoHandBot = !!(s.botTwoHandSheet && s.botTwoHandSheet.complete && s.botTwoHandSheet.naturalWidth > 0) || !!s.botSheetConfig?.hasTwoHandAttackSheet;
+            const hasOneHandBot = !!(s.botOneHandSheet && s.botOneHandSheet.complete && s.botOneHandSheet.naturalWidth > 0) || !!s.botSheetConfig?.hasOneHandAttackSheet;
+
+            if (isTwoHandWeapon(bot.equippedWeapon) && hasTwoHandBot) {
+              if (!bot.isTwoHandAttacking) {
+                bot.isTwoHandAttacking = true;
+                bot.twoHandAnimFrame = 0;
+                bot.twoHandAnimTimer = 0;
+                bot.twoHandHasHit = false;
+
+                bot.velocityX = 0;
+                s.p2Controller.vx = 0;
+                s.p2Controller.state = ControllerState.Idle;
+                PlayerFSM.tryTransition(bot, PlayerFSMState.MeleeAttack);
+
+                if (isBladeWeapon(bot.equippedWeapon)) {
+                  sounds.playSwordSwing();
+                } else {
+                  sounds.playPunch();
+                }
+              }
+            } else if (botIsNinja && isSwordWeapon(bot.equippedWeapon)) {
+              if (bot.isSwordAttacking) {
+                if ((bot.swordComboStep || 0) < 2) {
+                  bot.swordComboBuffered = true;
+                  bot.swordComboWindowTicks = 32;
+
+                  if ((bot.swordAnimFrame || 0) >= 3) {
+                    bot.swordComboStep = (bot.swordComboStep || 0) + 1;
+                    bot.swordAnimFrame = 0;
+                    bot.swordAnimTimer = 0;
+                    bot.swordHasHit = false;
+                    bot.swordComboBuffered = false;
+                    bot.swordComboWindowTicks = 32;
+                    sounds.playSwordSwing();
+                  }
+                }
+              } else {
+                let nextStep = 0;
+                if ((bot.swordComboWindowTicks || 0) > 0 && (bot.swordComboStep || 0) > 0 && (bot.swordComboStep || 0) <= 2) {
+                  nextStep = bot.swordComboStep || 0;
+                } else {
+                  nextStep = 0;
+                }
+
+                bot.isSwordAttacking = true;
+                bot.swordComboStep = nextStep;
+                bot.swordAnimFrame = 0;
+                bot.swordAnimTimer = 0;
+                bot.swordHasHit = false;
+                bot.swordComboBuffered = false;
+                bot.swordComboWindowTicks = 32;
+
+                bot.velocityX = 0;
+                s.p2Controller.vx = 0;
+                s.p2Controller.state = ControllerState.Idle;
+                PlayerFSM.tryTransition(bot, PlayerFSMState.MeleeAttack);
+
+                sounds.playSwordSwing();
+              }
+            } else if (isOneHandWeapon(bot.equippedWeapon) && bot.equippedWeapon !== WeaponType.Fists && hasOneHandBot) {
+              if (!bot.isOneHandAttacking) {
+                bot.isOneHandAttacking = true;
+                bot.oneHandAnimFrame = 0;
+                bot.oneHandAnimTimer = 0;
+                bot.oneHandHasHit = false;
+
+                bot.velocityX = 0;
+                s.p2Controller.vx = 0;
+                s.p2Controller.state = ControllerState.Idle;
+                PlayerFSM.tryTransition(bot, PlayerFSMState.MeleeAttack);
+
+                if (isBladeWeapon(bot.equippedWeapon)) {
+                  sounds.playSwordSwing();
+                } else {
+                  sounds.playPunch();
+                }
+              }
+            } else {
+              // Combo Melee desarmado J2 (3 golpes idénticos al protagonista)
+              if (bot.isMeleeComboAttacking) {
+                if (bot.meleeComboStep < 2) {
+                  bot.comboBuffered = true;
+                  bot.comboWindowTicks = 34;
+
+                  if (bot.meleeAnimFrame >= 3) {
+                    bot.meleeComboStep++;
+                    bot.comboStep = bot.meleeComboStep;
+                    bot.meleeAnimFrame = 0;
+                    bot.meleeAnimTimer = 0;
+                    bot.meleeHasHit = false;
+                    bot.comboBuffered = false;
+                    bot.comboWindowTicks = 34;
+                    sounds.playPunch();
+                  }
+                }
+              } else {
+                let nextStep = 0;
+                if (bot.comboWindowTicks > 0 && bot.comboStep > 0 && bot.comboStep <= 2) {
+                  nextStep = bot.comboStep;
+                } else {
+                  nextStep = 0;
+                }
+
+                bot.isMeleeComboAttacking = true;
+                bot.meleeComboStep = nextStep;
+                bot.comboStep = nextStep;
+                bot.meleeAnimFrame = 0;
+                bot.meleeAnimTimer = 0;
+                bot.meleeHasHit = false;
+                bot.comboBuffered = false;
+                bot.comboWindowTicks = 34;
+
+                bot.velocityX = 0;
+                s.p2Controller.vx = 0;
+                s.p2Controller.state = ControllerState.Idle;
+                PlayerFSM.tryTransition(bot, PlayerFSMState.MeleeAttack);
+
+                sounds.playPunch();
+              }
+            }
+          }
+
+          // ── DISPARO DE ARMAS DE FUEGO JUGADOR 2 (Tecla K) ──
+          if (
+            (fireJustPressed || (firePressed && (bot.isRifleShooting || bot.isPistolShooting))) &&
+            isFirearm &&
+            bot.isAlive &&
+            s.roundActive &&
+            bot.fsm !== PlayerFSMState.KnockedDown &&
+            bot.fsm !== PlayerFSMState.GetUp &&
+            bot.fsm !== PlayerFSMState.Hitstun &&
+            bot.fsm !== PlayerFSMState.Roll &&
+            !bot.isGrappling &&
+            !bot.isThrowing
+          ) {
+            if (isRifle) {
+              if (bot.attackCooldown <= 0 && !bot.isRifleShooting) {
+                if (bot.ammo > 0) {
+                  const wpn = getWeapon(bot.equippedWeapon);
+                  bot.isRifleShooting = true;
+                  bot.rifleAnimFrame = 0;
+                  bot.rifleAnimTimer = 0;
+                  bot.rifleHasRecoilApplied = false;
+                  s.p2Controller.isShootingRifle = true;
+
+                  if (s.botFaction === BotFaction.Gymrat || s.botFaction === BotFaction.Santa) {
+                    bot.rifleHasFired = false;
+                    bot.attackCooldown = Math.max(wpn.cooldownTicks, 12);
+                    bot.ammo--;
+                    PlayerFSM.tryTransition(bot, PlayerFSMState.RangedFire);
+                  } else {
+                    bot.rifleHasFired = true;
+                    bot.attackCooldown = Math.max(wpn.cooldownTicks, 10);
+                    bot.ammo--;
+                    PlayerFSM.tryTransition(bot, PlayerFSMState.RangedFire);
+                    sounds.playGunshot(wpn.soundType || wpn.type.toLowerCase());
+
+                    const dir = bot.facingRight ? 1 : -1;
+                    const muzzleX = bot.x + dir * 32;
+                    const muzzleY = bot.y - 7;
+
+                    addSparks(muzzleX, muzzleY, '#fde047', 12);
+                    addSparks(muzzleX, muzzleY, '#ffffff', 6);
+                    s.screenShake = Math.min(14, Math.max(5, (wpn.damage || 25) / 3));
+
+                    const count = wpn.pelletCount || 1;
+                    for (let i = 0; i < count; i++) {
+                      const spreadAngle = ((Math.random() - 0.5) * ((wpn.accuracyDeg || 4) * Math.PI / 180)) / 2;
+                      const speed = wpn.projectileSpeed || 950;
+                      s.projectiles.push({
+                        id: s.nextEntityId++,
+                        x: muzzleX,
+                        y: muzzleY,
+                        vx: dir * speed * Math.cos(spreadAngle),
+                        vy: speed * Math.sin(spreadAngle),
+                        damage: (wpn.damage / count) * bot.damageDealtModifier,
+                        onFireDuration: wpn.onFireDuration || 0,
+                        explosionRadius: wpn.explosionRadius || 0,
+                        shooterId: bot.id,
+                        weaponType: bot.equippedWeapon,
+                        pelletCount: count,
+                        lifeTicks: 0,
+                        maxLifeTicks: 60,
+                        color: wpn.color || '#facc15',
+                      });
+                    }
+                  }
+                } else {
+                  bot.attackCooldown = 15;
+                  sounds.playDryFire();
+                }
+              }
+            } else if (isPistol) {
+              if (bot.attackCooldown <= 0 && !bot.isPistolShooting) {
+                if (bot.ammo > 0) {
+                  const wpn = getWeapon(bot.equippedWeapon);
+                  bot.isPistolShooting = true;
+                  bot.pistolAnimFrame = 0;
+                  bot.pistolAnimTimer = 0;
+                  bot.pistolHasRecoilApplied = false;
+                  s.p2Controller.isShootingPistol = true;
+
+                  bot.attackCooldown = Math.max(wpn.cooldownTicks, 14);
+                  bot.ammo--;
+                  PlayerFSM.tryTransition(bot, PlayerFSMState.RangedFire);
+
+                  const isDelayedFirePistolBot = bot.faction === BotFaction.Gymrat || bot.faction === BotFaction.Santa || bot.name.toUpperCase().includes('SANTA');
+                  if (!isDelayedFirePistolBot) {
+                    bot.pistolHasFired = true;
+                    sounds.playGunshot(wpn.type.toLowerCase());
+
+                    const dir = bot.facingRight ? 1 : -1;
+                    const muzzleX = bot.x + dir * 28;
+                    const muzzleY = bot.y - 6;
+
+                    addSparks(muzzleX, muzzleY, '#fde047', 8);
+                    s.screenShake = Math.min(10, Math.max(3, (wpn.damage || 20) / 4));
+
+                    const count = wpn.pelletCount || 1;
+                    for (let i = 0; i < count; i++) {
+                      const spreadAngle = ((Math.random() - 0.5) * ((wpn.accuracyDeg || 3) * Math.PI / 180)) / 2;
+                      const speed = wpn.projectileSpeed || 900;
+                      s.projectiles.push({
+                        id: s.nextEntityId++,
+                        x: muzzleX,
+                        y: muzzleY,
+                        vx: dir * speed * Math.cos(spreadAngle),
+                        vy: speed * Math.sin(spreadAngle),
+                        damage: (wpn.damage / count) * bot.damageDealtModifier,
+                        onFireDuration: wpn.onFireDuration || 0,
+                        explosionRadius: wpn.explosionRadius || 0,
+                        shooterId: bot.id,
+                        weaponType: bot.equippedWeapon,
+                        pelletCount: count,
+                        lifeTicks: 0,
+                        maxLifeTicks: 60,
+                        color: '#facc15',
+                      });
+                    }
+                  } else {
+                    bot.pistolHasFired = false;
+                  }
+                } else {
+                  bot.attackCooldown = 15;
+                  sounds.playDryFire();
+                }
+              }
+            }
+          }
+
+          // ── LANZAMIENTO DE BOMBAS / GRANADAS JUGADOR 2 (Tecla L) ──
+          if (
+            throwJustPressed &&
+            bot.isAlive &&
+            s.roundActive &&
+            bot.fsm !== PlayerFSMState.KnockedDown &&
+            bot.fsm !== PlayerFSMState.GetUp &&
+            bot.fsm !== PlayerFSMState.Hitstun &&
+            bot.fsm !== PlayerFSMState.Roll &&
+            !bot.isGrappling &&
+            !bot.isThrowing
+          ) {
+            const hasGrenadesInInventory = getTotalGrenades(inst.grenades) > 0;
+            if (bot.attackCooldown <= 0) {
+              if (isThrowable && bot.ammo > 0) {
+                bot.isThrowing = true;
+                bot.throwAnimFrame = 0;
+                bot.throwAnimTimer = 0;
+                bot.throwHasReleased = false;
+                bot.throwInitialInertia = bot.velocityX * 0.45;
+                bot.velocityX = 0;
+                s.p2Controller.vx = 0;
+                s.p2Controller.state = ControllerState.Idle;
+                s.p2Controller.isThrowing = true;
+                bot.attackCooldown = 25;
+                PlayerFSM.tryTransition(bot, PlayerFSMState.MeleeAttack);
+                sounds.playSwordSwing();
+              } else if (hasGrenadesInInventory) {
+                bot.isThrowing = true;
+                bot.throwAnimFrame = 0;
+                bot.throwAnimTimer = 0;
+                bot.throwHasReleased = false;
+                bot.throwInitialInertia = bot.velocityX * 0.45;
+                bot.velocityX = 0;
+                s.p2Controller.vx = 0;
+                s.p2Controller.state = ControllerState.Idle;
+                s.p2Controller.isThrowing = true;
+                bot.attackCooldown = 25;
+                PlayerFSM.tryTransition(bot, PlayerFSMState.MeleeAttack);
+                sounds.playSwordSwing();
+              } else {
+                bot.attackCooldown = 15;
+                sounds.playDryFire();
+                s.floatingTexts.push({
+                  id: s.nextEntityId++,
+                  text: '¡SIN BOMBAS / GRANADAS!',
+                  x: bot.x,
+                  y: bot.y - 30,
+                  color: '#ef4444',
+                  life: 25,
+                });
+              }
+            }
+          }
+
+          // ── BUCLES DE ANIMACIÓN Y FOTOGRAMAS JUGADOR 2 ──
+          // Ataque a Dos Manos (two_hand_attack - 6 frames)
+          if (bot.isTwoHandAttacking) {
+            bot.velocityX = 0;
+            s.p2Controller.vx = 0;
+            s.p2Controller.state = ControllerState.Idle;
+            bot.fsm = PlayerFSMState.MeleeAttack;
+
+            const botIsSanta =
+              (s.botFaction === BotFaction.Santa) ||
+              bot.name.toUpperCase().includes('SANTA');
+            const botCharPrefix = botIsSanta ? 'santaclo_' : (s.botFaction === BotFaction.Gymrat ? 'gymrat_' : 'ninja_');
+            const totalBotTwoHandFrames = botIsSanta ? 5 : (s.botSheetConfig?.twoHandTotalFrames || 6);
+
+            bot.twoHandAnimTimer = (bot.twoHandAnimTimer || 0) + 1;
+            const botTicksPerFrame = getFrameDuration(`${botCharPrefix}two_hand_attack`, bot.twoHandAnimFrame || 0, botIsSanta ? 5 : 4);
+            if (bot.twoHandAnimTimer >= botTicksPerFrame) {
+              bot.twoHandAnimTimer = 0;
+              bot.twoHandAnimFrame = (bot.twoHandAnimFrame || 0) + 1;
+
+              if (bot.twoHandAnimFrame >= totalBotTwoHandFrames) {
+                bot.isTwoHandAttacking = false;
+                bot.twoHandAnimFrame = 0;
+                bot.twoHandAnimTimer = 0;
+                bot.twoHandHasHit = false;
+                bot.fsm = PlayerFSMState.Idle;
+              }
+            }
+
+            const targetBotHitFrame = getWeaponHitFrame(bot.equippedWeapon, botIsSanta ? 3 : 3);
+            if (!bot.twoHandHasHit && (bot.twoHandAnimFrame || 0) === targetBotHitFrame) {
+              bot.twoHandHasHit = true;
+              const hitReach = botIsSanta ? 114 : 98;
+              const hitHeight = botIsSanta ? 78 : 62;
+              const wpn = getWeapon(bot.equippedWeapon);
+              const isBlade = isBladeWeapon(bot.equippedWeapon);
+              const baseDmg = (wpn.damage || 25) * (botIsSanta ? 2.2 : 1.6);
+
+              resolveMeleeHits(s, bot, {
+                reachX: hitReach,
+                reachY: hitHeight,
+                baseDamage: baseDmg,
+                kbX: botIsSanta ? 380 : 340,
+                kbY: botIsSanta ? 210 : 150,
+                causedKnockdown: true,
+                stunTicks: botIsSanta ? 40 : 32,
+                hitStop: botIsSanta ? 8 : 6,
+                screenShake: botIsSanta ? 24 : 16,
+                isBlade,
+                floatingTextPrefix: `¡GOLPE PESADO (${wpn.name.toUpperCase()})! `,
+              });
+              sounds.playPunch();
+              addSparks(
+                bot.x + (bot.facingRight ? 45 : -45),
+                bot.y + 18,
+                botIsSanta ? '#ef4444' : '#f97316',
+                botIsSanta ? 24 : 18
+              );
+
+              s.crates.forEach((c) => {
+                if (Math.hypot(bot.x + p2FacingDir * 32 - (c.x + c.w / 2), bot.y - (c.y + c.h / 2)) < 52) {
+                  c.health -= baseDmg * 1.5;
+                  c.vx = p2FacingDir * 380;
+                  sounds.playCrateBreak();
+                  addSparks(c.x + 16, c.y + 16, '#d97706', 14);
+                }
+              });
+
+              s.barrels.forEach((b) => {
+                if (Math.hypot(bot.x + p2FacingDir * 32 - (b.x + b.w / 2), bot.y - (b.y + b.h / 2)) < 52) {
+                  b.health -= baseDmg * 1.2;
+                  b.vx = p2FacingDir * 420;
+                  sounds.playHit();
+                  addSparks(b.x + 12, b.y + 16, '#ef4444', 14);
+                }
+              });
+            }
+          }
+
+          // ── COMBATE CON ESPADA EXCLUSIVO DEL NINJA (J2) ──
+          if (bot.isSwordAttacking) {
+            bot.velocityX = 0;
+            s.p2Controller.vx = 0;
+            s.p2Controller.state = ControllerState.Idle;
+            bot.fsm = PlayerFSMState.MeleeAttack;
+
+            bot.swordAnimTimer = (bot.swordAnimTimer || 0) + 1;
+            if (bot.swordAnimTimer >= 2) {
+              bot.swordAnimTimer = 0;
+              bot.swordAnimFrame = (bot.swordAnimFrame || 0) + 1;
+
+              if (bot.swordComboBuffered && (bot.swordAnimFrame || 0) >= 3 && (bot.swordComboStep || 0) < 2) {
+                bot.swordComboStep = (bot.swordComboStep || 0) + 1;
+                bot.swordAnimFrame = 0;
+                bot.swordAnimTimer = 0;
+                bot.swordHasHit = false;
+                bot.swordComboBuffered = false;
+                bot.swordComboWindowTicks = 32;
+                sounds.playSwordSwing();
+              } else if ((bot.swordAnimFrame || 0) >= 5) {
+                if (bot.swordComboBuffered && (bot.swordComboStep || 0) < 2) {
+                  bot.swordComboStep = (bot.swordComboStep || 0) + 1;
+                  bot.swordAnimFrame = 0;
+                  bot.swordAnimTimer = 0;
+                  bot.swordHasHit = false;
+                  bot.swordComboBuffered = false;
+                  bot.swordComboWindowTicks = 32;
+                  sounds.playSwordSwing();
+                } else {
+                  bot.isSwordAttacking = false;
+                  bot.swordAnimFrame = 0;
+                  bot.swordAnimTimer = 0;
+                  bot.swordHasHit = false;
+                  bot.fsm = PlayerFSMState.Idle;
+
+                  if ((bot.swordComboStep || 0) >= 2) {
+                    bot.swordComboStep = 0;
+                    bot.swordComboWindowTicks = 0;
+                  } else {
+                    bot.swordComboStep = (bot.swordComboStep || 0) + 1;
+                    bot.swordComboWindowTicks = 26;
+                  }
+                }
+              }
+            }
+
+            if (!bot.swordHasHit && (bot.swordAnimFrame || 0) >= 2) {
+              bot.swordHasHit = true;
+              const currentStep = bot.swordComboStep || 0;
+              const hitReach = currentStep === 0 ? 68 : currentStep === 1 ? 74 : 84;
+              const wpn = getWeapon(bot.equippedWeapon);
+              const wpnName = wpn.name || 'ESPADA';
+
+              if (currentStep === 0) {
+                resolveMeleeHits(s, bot, {
+                  reachX: hitReach,
+                  reachY: 42,
+                  baseDamage: 22,
+                  kbX: 190,
+                  stunTicks: 16,
+                  hitStop: 3,
+                  screenShake: 6,
+                  isBlade: true,
+                  floatingTextPrefix: `¡TAJO I (${wpnName.toUpperCase()})! `,
+                });
+              } else if (currentStep === 1) {
+                resolveMeleeHits(s, bot, {
+                  reachX: hitReach,
+                  reachY: 42,
+                  baseDamage: 30,
+                  kbX: 270,
+                  stunTicks: 20,
+                  hitStop: 4,
+                  screenShake: 9,
+                  isBlade: true,
+                  floatingTextPrefix: `¡TAJO II (${wpnName.toUpperCase()})! `,
+                });
+              } else {
+                resolveMeleeHits(s, bot, {
+                  reachX: hitReach,
+                  reachY: 42,
+                  baseDamage: 44,
+                  kbX: 390,
+                  kbY: -270,
+                  causedKnockdown: true,
+                  stunTicks: 28,
+                  hitStop: 6,
+                  screenShake: 14,
+                  isBlade: true,
+                  floatingTextPrefix: `¡REMATE NINJA (${wpnName.toUpperCase()})! `,
+                });
+                sounds.playHeavyBladeSlash();
+              }
+            }
+          }
+
+          if ((bot.swordComboWindowTicks || 0) > 0) {
+            bot.swordComboWindowTicks = (bot.swordComboWindowTicks || 0) - 1;
+            if (bot.swordComboWindowTicks <= 0 && !bot.isSwordAttacking) {
+              bot.swordComboStep = 0;
+            }
+          }
+
+          // Ataque a Una Mano (one_hand_attack - 5 frames)
+          if (bot.isOneHandAttacking) {
+            bot.velocityX = 0;
+            s.p2Controller.vx = 0;
+            s.p2Controller.state = ControllerState.Idle;
+            bot.fsm = PlayerFSMState.MeleeAttack;
+
+            const botIsSanta = (s.botFaction === BotFaction.Santa) || bot.name.toUpperCase().includes('SANTA');
+            const botIsGymrat = (s.botFaction === BotFaction.Gymrat) || bot.name.toUpperCase().includes('GYMRAT');
+            const botCharPrefix = botIsSanta ? 'santaclo_' : (botIsGymrat ? 'gymrat_' : 'ninja_');
+            const totalBotOneHandFrames = s.botSheetConfig?.oneHandTotalFrames || 5;
+
+            bot.oneHandAnimTimer = (bot.oneHandAnimTimer || 0) + 1;
+            const ticksPerFrame = getFrameDuration(`${botCharPrefix}one_hand_attack`, bot.oneHandAnimFrame || 0, botIsGymrat ? 3 : 2);
+            if (bot.oneHandAnimTimer >= ticksPerFrame) {
+              bot.oneHandAnimTimer = 0;
+              bot.oneHandAnimFrame = (bot.oneHandAnimFrame || 0) + 1;
+
+              if (bot.oneHandAnimFrame >= totalBotOneHandFrames) {
+                bot.isOneHandAttacking = false;
+                bot.oneHandAnimFrame = 0;
+                bot.oneHandAnimTimer = 0;
+                bot.oneHandHasHit = false;
+                bot.fsm = PlayerFSMState.Idle;
+              }
+            }
+
+            const targetBotOneHandHitFrame = getWeaponHitFrame(bot.equippedWeapon, 2);
+            if (!bot.oneHandHasHit && (bot.oneHandAnimFrame || 0) === targetBotOneHandHitFrame) {
+              bot.oneHandHasHit = true;
+              const hitReach = 58;
+              const wpn = getWeapon(bot.equippedWeapon);
+              const isBlade = isBladeWeapon(bot.equippedWeapon);
+              const baseDmg = wpn.damage || 16;
+
+              resolveMeleeHits(s, bot, {
+                reachX: hitReach,
+                reachY: 34,
+                baseDamage: baseDmg,
+                kbX: 170,
+                stunTicks: GameConstants.HitstunTicksLight,
+                screenShake: 7,
+                isBlade,
+                floatingTextPrefix: `¡${wpn.name.toUpperCase()}! `,
+              });
+
+              s.crates.forEach((c) => {
+                if (Math.hypot(bot.x + p2FacingDir * 30 - (c.x + c.w / 2), bot.y - (c.y + c.h / 2)) < 48) {
+                  c.health -= baseDmg * 1.2;
+                  c.vx = p2FacingDir * 290;
+                  sounds.playHit();
+                  addSparks(c.x + 16, c.y + 16, '#d97706', 12);
+                }
+              });
+
+              s.barrels.forEach((b) => {
+                if (Math.hypot(bot.x + p2FacingDir * 30 - (b.x + b.w / 2), bot.y - (b.y + b.h / 2)) < 48) {
+                  b.health -= baseDmg;
+                  b.vx = p2FacingDir * 330;
+                  sounds.playHit();
+                  addSparks(b.x + 12, b.y + 16, '#ef4444', 12);
+                }
+              });
+            }
+          }
+
+          // Disparo de Pistolas (pistol_shoot - 4 frames)
+          if (bot.isPistolShooting) {
+            if (bot.fsm === PlayerFSMState.KnockedDown || bot.fsm === PlayerFSMState.Hitstun || !bot.isAlive) {
+              bot.isPistolShooting = false;
+              bot.pistolAnimFrame = 0;
+              bot.pistolAnimTimer = 0;
+              bot.pistolHasFired = false;
+              bot.pistolHasRecoilApplied = false;
+              s.p2Controller.isShootingPistol = false;
+            } else {
+              s.p2Controller.isShootingPistol = true;
+              if (moveDir !== 0) {
+                bot.facingRight = moveDir > 0;
+                s.p2Controller.facingRight = bot.facingRight;
+              }
+
+              const isDelayedFirePistolBot = bot.faction === BotFaction.Gymrat || bot.faction === BotFaction.Santa || bot.name.toUpperCase().includes('SANTA');
+              const isSantaBot = bot.faction === BotFaction.Santa || bot.name.toUpperCase().includes('SANTA');
+              const botCharPrefix = isSantaBot ? 'santaclo_' : (bot.faction === BotFaction.Gymrat ? 'gymrat_' : 'ninja_');
+
+              // CREACIÓN DE BALA EN FRAME 2 (index 1) para Gymrat y Santa
+              if (isDelayedFirePistolBot && bot.pistolAnimFrame === 1 && !bot.pistolHasFired) {
+                bot.pistolHasFired = true;
+                const wpn = getWeapon(bot.equippedWeapon);
+                sounds.playGunshot(wpn.type.toLowerCase());
+
+                const dir = bot.facingRight ? 1 : -1;
+                const muzzleX = bot.x + dir * (isSantaBot ? 36 : 32);
+                const muzzleY = bot.y - (isSantaBot ? 8 : 6);
+
+                addSparks(muzzleX, muzzleY, '#fde047', 10);
+                s.screenShake = Math.min(10, Math.max(3, (wpn.damage || 20) / 4));
+
+                const count = wpn.pelletCount || 1;
+                for (let i = 0; i < count; i++) {
+                  const spreadAngle = ((Math.random() - 0.5) * ((wpn.accuracyDeg || 3) * Math.PI / 180)) / 2;
+                  const speed = wpn.projectileSpeed || 900;
+                  s.projectiles.push({
+                    id: s.nextEntityId++,
+                    x: muzzleX,
+                    y: muzzleY,
+                    vx: dir * speed * Math.cos(spreadAngle),
+                    vy: speed * Math.sin(spreadAngle),
+                    damage: (wpn.damage / count) * bot.damageDealtModifier,
+                    onFireDuration: wpn.onFireDuration || 0,
+                    explosionRadius: wpn.explosionRadius || 0,
+                    shooterId: bot.id,
+                    weaponType: bot.equippedWeapon,
+                    pelletCount: count,
+                    lifeTicks: 0,
+                    maxLifeTicks: 60,
+                    color: '#facc15',
+                  });
+                }
+              }
+
+              // RETROCESO (KICK) EN FRAME 3 (index 2) para Gymrat y Santa
+              if (isDelayedFirePistolBot && bot.pistolAnimFrame === 2 && !bot.pistolHasRecoilApplied) {
+                bot.pistolHasRecoilApplied = true;
+                const kickDir = bot.facingRight ? -1 : 1;
+                const kickForce = isSantaBot ? 85 : 65;
+                bot.x += kickDir * (isSantaBot ? 3 : 2);
+                bot.velocityX += kickDir * kickForce;
+                s.p2Controller.vx += kickDir * kickForce;
+                s.p2Controller.setPosition(bot.x, bot.y);
+              }
+
+              bot.pistolAnimTimer = (bot.pistolAnimTimer || 0) + 1;
+              const ticksForBotFrame = getFrameDuration(`${botCharPrefix}pistol_shoot`, bot.pistolAnimFrame || 0, isSantaBot ? 3 : 4);
+              if (bot.pistolAnimTimer >= ticksForBotFrame) {
+                bot.pistolAnimTimer = 0;
+                bot.pistolAnimFrame = (bot.pistolAnimFrame || 0) + 1;
+
+                // Comprobar creación de bala al avanzar al Frame 2
+                if (isDelayedFirePistolBot && bot.pistolAnimFrame === 1 && !bot.pistolHasFired) {
+                  bot.pistolHasFired = true;
+                  const wpn = getWeapon(bot.equippedWeapon);
+                  sounds.playGunshot(wpn.type.toLowerCase());
+
+                  const dir = bot.facingRight ? 1 : -1;
+                  const muzzleX = bot.x + dir * (isSantaBot ? 36 : 32);
+                  const muzzleY = bot.y - (isSantaBot ? 8 : 6);
+
+                  addSparks(muzzleX, muzzleY, '#fde047', 10);
+                  s.screenShake = Math.min(10, Math.max(3, (wpn.damage || 20) / 4));
+
+                  const count = wpn.pelletCount || 1;
+                  for (let i = 0; i < count; i++) {
+                    const spreadAngle = ((Math.random() - 0.5) * ((wpn.accuracyDeg || 3) * Math.PI / 180)) / 2;
+                    const speed = wpn.projectileSpeed || 900;
+                    s.projectiles.push({
+                      id: s.nextEntityId++,
+                      x: muzzleX,
+                      y: muzzleY,
+                      vx: dir * speed * Math.cos(spreadAngle),
+                      vy: speed * Math.sin(spreadAngle),
+                      damage: (wpn.damage / count) * bot.damageDealtModifier,
+                      onFireDuration: wpn.onFireDuration || 0,
+                      explosionRadius: wpn.explosionRadius || 0,
+                      shooterId: bot.id,
+                      weaponType: bot.equippedWeapon,
+                      pelletCount: count,
+                      lifeTicks: 0,
+                      maxLifeTicks: 60,
+                      color: '#facc15',
+                    });
+                  }
+                }
+
+                // Comprobar retroceso al avanzar al Frame 3
+                if (isDelayedFirePistolBot && bot.pistolAnimFrame === 2 && !bot.pistolHasRecoilApplied) {
+                  bot.pistolHasRecoilApplied = true;
+                  const kickDir = bot.facingRight ? -1 : 1;
+                  const kickForce = isSantaBot ? 85 : 65;
+                  bot.x += kickDir * (isSantaBot ? 3 : 2);
+                  bot.velocityX += kickDir * kickForce;
+                  s.p2Controller.vx += kickDir * kickForce;
+                  s.p2Controller.setPosition(bot.x, bot.y);
+                }
+
+                if (bot.pistolAnimFrame >= 4) {
+                  const isAuto =
+                    bot.equippedWeapon === WeaponType.Uzi ||
+                    bot.equippedWeapon === WeaponType.SilencedUzi ||
+                    bot.equippedWeapon === WeaponType.MachinePistol;
+                  const kHeld = isAnyPressed(keys, CONTROLS.LOCAL_1V1_P2.fire);
+
+                  if (isAuto && kHeld && bot.ammo > 0 && bot.attackCooldown <= 0) {
+                    bot.pistolAnimFrame = 0;
+                    bot.pistolHasFired = false;
+                    bot.pistolHasRecoilApplied = false;
+                    bot.ammo--;
+                    const wpn = getWeapon(bot.equippedWeapon);
+                    bot.attackCooldown = Math.max(wpn.cooldownTicks, 10);
+                    if (!isDelayedFirePistolBot) {
+                      bot.pistolHasFired = true;
+                      sounds.playGunshot(wpn.type.toLowerCase());
+
+                      const dir = bot.facingRight ? 1 : -1;
+                      const muzzleX = bot.x + dir * 28;
+                      const muzzleY = bot.y - 6;
+
+                      addSparks(muzzleX, muzzleY, '#fde047', 8);
+                      s.screenShake = 3;
+
+                      const speed = wpn.projectileSpeed || 900;
+                      const spreadAngle = ((Math.random() - 0.5) * ((wpn.accuracyDeg || 4) * Math.PI / 180)) / 2;
+                      s.projectiles.push({
+                        id: s.nextEntityId++,
+                        x: muzzleX,
+                        y: muzzleY,
+                        vx: dir * speed * Math.cos(spreadAngle),
+                        vy: speed * Math.sin(spreadAngle),
+                        damage: wpn.damage * bot.damageDealtModifier,
+                        onFireDuration: 0,
+                        explosionRadius: 0,
+                        shooterId: bot.id,
+                        weaponType: bot.equippedWeapon,
+                        pelletCount: 1,
+                        lifeTicks: 0,
+                        maxLifeTicks: 60,
+                        color: '#facc15',
+                      });
+                    }
+                  } else {
+                    bot.isPistolShooting = false;
+                    bot.pistolAnimFrame = 0;
+                    bot.pistolAnimTimer = 0;
+                    bot.pistolHasFired = false;
+                    bot.pistolHasRecoilApplied = false;
+                    s.p2Controller.isShootingPistol = false;
+                    if (bot.fsm === PlayerFSMState.RangedFire) {
+                      bot.fsm = PlayerFSMState.Idle;
+                    }
+                  }
+                }
+              }
+            }
+          } else if (s.p2Controller) {
+            s.p2Controller.isShootingPistol = false;
+          }
+
+          // Disparo de Rifles/Escopetas (rifle_shoot - 4 frames con retroceso en frame 3)
+          if (bot.isRifleShooting) {
+            if (bot.fsm === PlayerFSMState.KnockedDown || bot.fsm === PlayerFSMState.Hitstun || !bot.isAlive) {
+              bot.isRifleShooting = false;
+              bot.rifleAnimFrame = 0;
+              bot.rifleAnimTimer = 0;
+              s.p2Controller.isShootingRifle = false;
+            } else {
+              s.p2Controller.isShootingRifle = true;
+              if (moveDir !== 0) {
+                bot.facingRight = moveDir > 0;
+                s.p2Controller.facingRight = bot.facingRight;
+              }
+
+              bot.rifleAnimTimer = (bot.rifleAnimTimer || 0) + 1;
+              if (bot.rifleAnimTimer >= 4) {
+                bot.rifleAnimTimer = 0;
+                bot.rifleAnimFrame = (bot.rifleAnimFrame || 0) + 1;
+              }
+
+              // Para Gymrat y Santa P2: bala en Frame 2 (idx 1), retroceso en Frame 3 (idx 2)
+              if (s.botFaction === BotFaction.Gymrat || s.botFaction === BotFaction.Santa) {
+                if (bot.rifleAnimFrame === 1 && !bot.rifleHasFired) {
+                  bot.rifleHasFired = true;
+                  const wpn = getWeapon(bot.equippedWeapon);
+                  sounds.playGunshot(wpn.soundType || wpn.type.toLowerCase());
+
+                  const dir = bot.facingRight ? 1 : -1;
+                  const muzzleX = bot.x + dir * 36;
+                  const muzzleY = bot.y - 7;
+
+                  addSparks(muzzleX, muzzleY, '#fde047', 14);
+                  addSparks(muzzleX, muzzleY, '#ffffff', 8);
+                  s.screenShake = Math.min(14, Math.max(5, (wpn.damage || 25) / 3));
+
+                  const count = wpn.pelletCount || 1;
+                  for (let i = 0; i < count; i++) {
+                    const spreadAngle = ((Math.random() - 0.5) * ((wpn.accuracyDeg || 4) * Math.PI / 180)) / 2;
+                    const speed = wpn.projectileSpeed || 950;
+                    s.projectiles.push({
+                      id: s.nextEntityId++,
+                      x: muzzleX,
+                      y: muzzleY,
+                      vx: dir * speed * Math.cos(spreadAngle),
+                      vy: speed * Math.sin(spreadAngle),
+                      damage: (wpn.damage / count) * bot.damageDealtModifier,
+                      onFireDuration: wpn.onFireDuration || 0,
+                      explosionRadius: wpn.explosionRadius || 0,
+                      shooterId: bot.id,
+                      weaponType: bot.equippedWeapon,
+                      pelletCount: count,
+                      lifeTicks: 0,
+                      maxLifeTicks: 60,
+                      color: wpn.color || '#facc15',
+                    });
+                  }
+                } else if (bot.rifleAnimFrame === 2 && !bot.rifleHasRecoilApplied) {
+                  bot.rifleHasRecoilApplied = true;
+                  const kickDir = bot.facingRight ? -1 : 1;
+                  bot.x += kickDir * 5;
+                  bot.velocityX += kickDir * 120;
+                  if (s.p2Controller) {
+                    s.p2Controller.vx += kickDir * 120;
+                    s.p2Controller.setPosition(bot.x, bot.y);
+                  }
+                }
+              }
+
+              if ((bot.rifleAnimFrame ?? 0) >= 4) {
+                const isAuto =
+                  bot.equippedWeapon === WeaponType.M60 ||
+                  bot.equippedWeapon === WeaponType.Assault ||
+                  bot.equippedWeapon === WeaponType.Rifle ||
+                  bot.equippedWeapon === WeaponType.TommyGun ||
+                  bot.equippedWeapon === WeaponType.SMG ||
+                  bot.equippedWeapon === WeaponType.Carbine ||
+                  bot.equippedWeapon === WeaponType.MP50;
+                const kHeld = isAnyPressed(keys, p2Bindings.fire);
+
+                if (isAuto && kHeld && bot.ammo > 0 && bot.attackCooldown <= 0) {
+                  bot.rifleAnimFrame = 0;
+                  bot.rifleAnimTimer = 0;
+                  bot.rifleHasRecoilApplied = false;
+
+                  if (s.botFaction === BotFaction.Gymrat || s.botFaction === BotFaction.Santa) {
+                    bot.rifleHasFired = false;
+                    bot.ammo--;
+                    const wpn = getWeapon(bot.equippedWeapon);
+                    bot.attackCooldown = Math.max(wpn.cooldownTicks, 8);
+                  } else {
+                    bot.ammo--;
+                    const wpn = getWeapon(bot.equippedWeapon);
+                    bot.attackCooldown = Math.max(wpn.cooldownTicks, 8);
+                    sounds.playGunshot(wpn.soundType || wpn.type.toLowerCase());
+
+                    const dir = bot.facingRight ? 1 : -1;
+                    const muzzleX = bot.x + dir * 32;
+                    const muzzleY = bot.y - 7;
+
+                    addSparks(muzzleX, muzzleY, '#fde047', 10);
+                    addSparks(muzzleX, muzzleY, '#ffffff', 5);
+                    s.screenShake = 4;
+
+                    const speed = wpn.projectileSpeed || 950;
+                    const spreadAngle = ((Math.random() - 0.5) * ((wpn.accuracyDeg || 4) * Math.PI / 180)) / 2;
+                    s.projectiles.push({
+                      id: s.nextEntityId++,
+                      x: muzzleX,
+                      y: muzzleY,
+                      vx: dir * speed * Math.cos(spreadAngle),
+                      vy: speed * Math.sin(spreadAngle),
+                      damage: wpn.damage * bot.damageDealtModifier,
+                      onFireDuration: wpn.onFireDuration || 0,
+                      explosionRadius: wpn.explosionRadius || 0,
+                      shooterId: bot.id,
+                      weaponType: bot.equippedWeapon,
+                      pelletCount: 1,
+                      lifeTicks: 0,
+                      maxLifeTicks: 60,
+                      color: wpn.color || '#facc15',
+                    });
+                  }
+                } else {
+                  bot.isRifleShooting = false;
+                  bot.rifleAnimFrame = 0;
+                  bot.rifleAnimTimer = 0;
+                  bot.rifleHasFired = false;
+                  bot.rifleHasRecoilApplied = false;
+                  s.p2Controller.isShootingRifle = false;
+                  if (bot.fsm === PlayerFSMState.RangedFire) {
+                    bot.fsm = PlayerFSMState.Idle;
+                  }
+                }
+              }
+            }
+          } else if (s.p2Controller) {
+            s.p2Controller.isShootingRifle = false;
+          }
+
+          // Lanzamiento (throw_up - 5 frames, liberación en frame 2)
+          if (bot.isThrowing) {
+            if (bot.fsm === PlayerFSMState.KnockedDown || bot.fsm === PlayerFSMState.Hitstun || !bot.isAlive) {
+              bot.isThrowing = false;
+              bot.throwAnimFrame = 0;
+              bot.throwAnimTimer = 0;
+              bot.throwHasReleased = false;
+              s.p2Controller.isThrowing = false;
+            } else {
+              s.p2Controller.isThrowing = true;
+              bot.velocityX = 0;
+              s.p2Controller.vx = 0;
+              s.p2Controller.state = ControllerState.Idle;
+
+              if (moveDir !== 0) {
+                bot.facingRight = moveDir > 0;
+                s.p2Controller.facingRight = bot.facingRight;
+              }
+
+              const botIsSanta = bot.faction === BotFaction.Santa || bot.name.toUpperCase().includes('SANTA');
+              const botReleaseFrame = s.botSheetConfig?.throwUpReleaseFrame ?? (botIsSanta ? 3 : 2);
+              if (bot.throwAnimFrame === botReleaseFrame && !bot.throwHasReleased) {
+                bot.throwHasReleased = true;
+
+                const dir = bot.facingRight ? 1 : -1;
+                const launchX = bot.x + dir * (botIsSanta ? 30 : 26);
+                const launchY = bot.y - (botIsSanta ? 24 : 14);
+                const inheritedInertia = bot.throwInitialInertia || 0;
+                const wType = bot.equippedWeapon;
+                const isThrowableNow = isThrowableWeapon(wType);
+
+                if (isThrowableNow) {
+                  bot.ammo--;
+                  const wpn = getWeapon(wType);
+
+                  if (wType === WeaponType.Grenade) {
+                    const gCfg = GRENADE_DATABASE[GrenadeType.Frag];
+                    sounds.playGunshot('grenade');
+                    s.projectiles.push({
+                      id: s.nextEntityId++,
+                      x: launchX,
+                      y: launchY,
+                      vx: dir * 440 + inheritedInertia,
+                      vy: -300,
+                      damage: gCfg.damage * bot.damageDealtModifier,
+                      onFireDuration: 0,
+                      explosionRadius: gCfg.explosionRadius,
+                      shooterId: bot.id,
+                      weaponType: WeaponType.Grenade,
+                      pelletCount: 1,
+                      lifeTicks: 0,
+                      maxLifeTicks: gCfg.fuseTicks || 85,
+                      isGrenade: true,
+                      isThrowable: true,
+                      grenadeType: GrenadeType.Frag,
+                      rotation: 0,
+                      rotationSpeed: dir * 0.25,
+                      color: gCfg.color,
+                    });
+                  } else if (wType === WeaponType.Molotov) {
+                    const gCfg = GRENADE_DATABASE[GrenadeType.Molotov];
+                    sounds.playGunshot('grenade');
+                    s.projectiles.push({
+                      id: s.nextEntityId++,
+                      x: launchX,
+                      y: launchY,
+                      vx: dir * 390 + inheritedInertia,
+                      vy: -270,
+                      damage: gCfg.damage * bot.damageDealtModifier,
+                      onFireDuration: gCfg.burnDurationTicks || 240,
+                      explosionRadius: gCfg.explosionRadius,
+                      shooterId: bot.id,
+                      weaponType: WeaponType.Molotov,
+                      pelletCount: 1,
+                      lifeTicks: 0,
+                      maxLifeTicks: 70,
+                      isGrenade: true,
+                      isMolotov: true,
+                      isThrowable: true,
+                      grenadeType: GrenadeType.Molotov,
+                      rotation: 0,
+                      rotationSpeed: dir * 0.28,
+                      color: gCfg.color,
+                    });
+                  } else if (wType === WeaponType.C4) {
+                    sounds.playGunshot('grenade');
+                    s.projectiles.push({
+                      id: s.nextEntityId++,
+                      x: launchX,
+                      y: launchY,
+                      vx: dir * 350 + inheritedInertia,
+                      vy: -240,
+                      damage: (wpn.damage || 60) * bot.damageDealtModifier,
+                      onFireDuration: 0,
+                      explosionRadius: wpn.explosionRadius || 85,
+                      shooterId: bot.id,
+                      weaponType: WeaponType.C4,
+                      pelletCount: 1,
+                      lifeTicks: 0,
+                      maxLifeTicks: 80,
+                      isGrenade: true,
+                      isThrowable: true,
+                      rotation: 0,
+                      rotationSpeed: dir * 0.18,
+                      color: '#ef4444',
+                    });
+                  } else if (wType === WeaponType.Mine) {
+                    sounds.playPickup();
+                    s.projectiles.push({
+                      id: s.nextEntityId++,
+                      x: launchX,
+                      y: launchY,
+                      vx: dir * 280 + inheritedInertia,
+                      vy: -180,
+                      damage: (wpn.damage || 45) * bot.damageDealtModifier,
+                      onFireDuration: 0,
+                      explosionRadius: wpn.explosionRadius || 60,
+                      shooterId: bot.id,
+                      weaponType: WeaponType.Mine,
+                      pelletCount: 1,
+                      lifeTicks: 0,
+                      maxLifeTicks: 250,
+                      isGrenade: true,
+                      isThrowable: true,
+                      rotation: 0,
+                      rotationSpeed: dir * 0.12,
+                      color: '#f59e0b',
+                    });
+                  } else if (wType === WeaponType.Baseball) {
+                    sounds.playPunch();
+                    s.projectiles.push({
+                      id: s.nextEntityId++,
+                      x: launchX,
+                      y: launchY,
+                      vx: dir * 650 + inheritedInertia,
+                      vy: -140,
+                      damage: (wpn.damage || 14) * bot.damageDealtModifier,
+                      onFireDuration: 0,
+                      explosionRadius: 0,
+                      shooterId: bot.id,
+                      weaponType: WeaponType.Baseball,
+                      pelletCount: 1,
+                      lifeTicks: 0,
+                      maxLifeTicks: 90,
+                      isGrenade: true,
+                      isThrowable: true,
+                      rotation: 0,
+                      rotationSpeed: dir * 0.45,
+                      color: '#f8fafc',
+                    });
+                  }
+
+                  s.floatingTexts.push({
+                    id: s.nextEntityId++,
+                    text: `¡${wpn.name}! (${bot.ammo} rest.)`,
+                    x: bot.x,
+                    y: bot.y - 32,
+                    color: wpn.color || '#38bdf8',
+                    life: 30,
+                  });
+                } else {
+                  const thrownType = consumeGrenade(inst.grenades);
+                  if (thrownType) {
+                    sounds.playGunshot('grenade');
+                    const gCfg = GRENADE_DATABASE[thrownType];
+                    s.projectiles.push({
+                      id: s.nextEntityId++,
+                      x: launchX,
+                      y: launchY,
+                      vx: dir * 420 + inheritedInertia,
+                      vy: -310,
+                      damage: gCfg.damage * bot.damageDealtModifier,
+                      onFireDuration: gCfg.burnDurationTicks || 0,
+                      explosionRadius: gCfg.explosionRadius,
+                      shooterId: bot.id,
+                      weaponType: WeaponType.Grenade,
+                      pelletCount: 1,
+                      lifeTicks: 0,
+                      maxLifeTicks: gCfg.fuseTicks || 85,
+                      isGrenade: true,
+                      isMolotov: thrownType === GrenadeType.Molotov,
+                      isThrowable: true,
+                      grenadeType: thrownType,
+                      rotation: 0,
+                      rotationSpeed: dir * 0.24,
+                      color: gCfg.color,
+                    });
+
+                    s.floatingTexts.push({
+                      id: s.nextEntityId++,
+                      text: `¡${gCfg.shortName}! (${inst.grenades.ammo[thrownType]} rest.)`,
+                      x: bot.x,
+                      y: bot.y - 32,
+                      color: gCfg.color,
+                      life: 30,
+                    });
+                  }
+                }
+              }
+
+              bot.throwAnimTimer = (bot.throwAnimTimer || 0) + 1;
+              if (bot.throwAnimTimer >= 4) {
+                bot.throwAnimTimer = 0;
+                bot.throwAnimFrame = (bot.throwAnimFrame || 0) + 1;
+
+                if (bot.throwAnimFrame >= 5) {
+                  bot.isThrowing = false;
+                  bot.throwAnimFrame = 0;
+                  bot.throwAnimTimer = 0;
+                  bot.throwHasReleased = false;
+                  s.p2Controller.isThrowing = false;
+
+                  if (isThrowableWeapon(bot.equippedWeapon) && bot.ammo <= 0) {
+                    bot.equippedWeapon = WeaponType.Fists;
+                    bot.characterState = 'desarmado';
+                    bot.weaponState = 'desarmado';
+                  }
+
+                  if (bot.fsm === PlayerFSMState.MeleeAttack) {
+                    bot.fsm = PlayerFSMState.Idle;
+                  }
+                }
+              }
+            }
+          } else if (s.p2Controller) {
+            s.p2Controller.isThrowing = false;
+          }
+
+          // Combo melee desarmado (Puños / Patada / Uppercut)
+          if (bot.comboWindowTicks > 0) {
+            bot.comboWindowTicks--;
+            if (bot.comboWindowTicks <= 0 && !bot.isMeleeComboAttacking) {
+              bot.comboStep = 0;
+              bot.meleeComboStep = 0;
+            }
+          }
+
+          if (bot.isMeleeComboAttacking) {
+            bot.velocityX = 0;
+            s.p2Controller.vx = 0;
+            s.p2Controller.state = ControllerState.Idle;
+            bot.fsm = PlayerFSMState.MeleeAttack;
+
+            bot.meleeAnimTimer++;
+            if (bot.meleeAnimTimer >= 3) {
+              bot.meleeAnimTimer = 0;
+              bot.meleeAnimFrame++;
+
+              if (bot.comboBuffered && bot.meleeAnimFrame >= 4 && bot.meleeComboStep < 2) {
+                bot.meleeComboStep++;
+                bot.comboStep = bot.meleeComboStep;
+                bot.meleeAnimFrame = 0;
+                bot.meleeAnimTimer = 0;
+                bot.meleeHasHit = false;
+                bot.comboBuffered = false;
+                bot.comboWindowTicks = 34;
+                sounds.playPunch();
+              } else if (bot.meleeAnimFrame >= 6) {
+                if (bot.comboBuffered && bot.meleeComboStep < 2) {
+                  bot.meleeComboStep++;
+                  bot.comboStep = bot.meleeComboStep;
+                  bot.meleeAnimFrame = 0;
+                  bot.meleeAnimTimer = 0;
+                  bot.meleeHasHit = false;
+                  bot.comboBuffered = false;
+                  bot.comboWindowTicks = 34;
+                  sounds.playPunch();
+                } else {
+                  bot.isMeleeComboAttacking = false;
+                  bot.meleeAnimFrame = 0;
+                  bot.fsm = PlayerFSMState.Idle;
+
+                  if (bot.meleeComboStep >= 2) {
+                    bot.comboStep = 0;
+                    bot.comboWindowTicks = 0;
+                    bot.meleeComboStep = 0;
+                  } else {
+                    bot.comboStep = bot.meleeComboStep + 1;
+                    bot.comboWindowTicks = 24;
+                  }
+                }
+              }
+            }
+
+            if (!bot.meleeHasHit && bot.meleeAnimFrame >= 2 && bot.meleeAnimFrame <= 3) {
+              bot.meleeHasHit = true;
+              const hitReach = 50;
+
+              if (bot.meleeComboStep === 0) {
+                resolveMeleeHits(s, bot, {
+                  reachX: hitReach,
+                  reachY: 32,
+                  baseDamage: 12,
+                  kbX: 110,
+                  stunTicks: GameConstants.HitstunTicksLight,
+                  screenShake: 5,
+                  floatingTextPrefix: '¡PUÑETAZO J2! ',
+                });
+              } else if (bot.meleeComboStep === 1) {
+                resolveMeleeHits(s, bot, {
+                  reachX: hitReach,
+                  reachY: 32,
+                  baseDamage: 18,
+                  kbX: 200,
+                  stunTicks: GameConstants.HitstunTicksLight,
+                  screenShake: 8,
+                  floatingTextPrefix: '¡PATADA J2! ',
+                });
+              } else {
+                resolveMeleeHits(s, bot, {
+                  reachX: hitReach,
+                  reachY: 32,
+                  baseDamage: 28,
+                  kbX: 240,
+                  kbY: -390,
+                  causedKnockdown: true,
+                  stunTicks: GameConstants.HitstunTicksStrong,
+                  screenShake: 14,
+                  floatingTextPrefix: '¡UPPERCUT J2! ',
+                });
+                sounds.playHeavySmash();
+              }
+
+              s.crates.forEach((c) => {
+                if (Math.hypot(bot.x + p2FacingDir * 26 - (c.x + c.w / 2), bot.y - (c.y + c.h / 2)) < 44) {
+                  const cDmg = bot.meleeComboStep === 2 ? 30 : bot.meleeComboStep === 1 ? 20 : 12;
+                  c.health -= cDmg;
+                  c.vx = p2FacingDir * 280;
+                  sounds.playHit();
+                  addSparks(c.x + 16, c.y + 16, '#d97706', 10);
+                }
+              });
+
+              s.barrels.forEach((b) => {
+                if (Math.hypot(bot.x + p2FacingDir * 26 - (b.x + b.w / 2), bot.y - (b.y + b.h / 2)) < 44) {
+                  const bDmg = bot.meleeComboStep === 2 ? 25 : bot.meleeComboStep === 1 ? 16 : 10;
+                  b.health -= bDmg;
+                  b.vx = p2FacingDir * 320;
+                  sounds.playHit();
+                  addSparks(b.x + 12, b.y + 16, '#ef4444', 10);
+                }
+              });
+            }
+          }
+
+          if (bot.isSliding) {
+            bot.slideTicks--;
+            if (bot.slideTicks <= 0) {
+              bot.isSliding = false;
+            }
+          }
+
+          // Armas de fuego pesadas no rifle/pistola (ej. Bazooka, Shotgun, Flamethrower)
+          if (
+            firePressed &&
+            bot.attackCooldown <= 0 &&
+            bot.equippedWeapon !== WeaponType.Fists &&
+            bot.ammo > 0 &&
+            bot.fsm !== PlayerFSMState.Roll
+          ) {
+            const wpn = getWeapon(bot.equippedWeapon);
+            if (wpn.category === 'Firearm' && !isPistol && !isRifle) {
+              bot.attackCooldown = wpn.cooldownTicks;
+              bot.ammo--;
+              PlayerFSM.tryTransition(bot, PlayerFSMState.RangedFire);
+              sounds.playGunshot(wpn.type.toLowerCase());
+
+              const dir = bot.facingRight ? 1 : -1;
+              const muzzleX = bot.x + dir * 28;
+              const muzzleY = bot.y - 6;
+
+              addSparks(muzzleX, muzzleY, '#fde047', 6);
+              s.screenShake = Math.min(10, (wpn.damage || 20) / 4);
+
+              const count = wpn.pelletCount || 1;
+              for (let i = 0; i < count; i++) {
+                const spreadAngle = ((Math.random() - 0.5) * ((wpn.accuracyDeg || 3) * Math.PI / 180)) / 2;
+                const speed = wpn.projectileSpeed || 900;
+                s.projectiles.push({
+                  id: s.nextEntityId++,
+                  x: muzzleX,
+                  y: muzzleY,
+                  vx: dir * speed * Math.cos(spreadAngle),
+                  vy: speed * Math.sin(spreadAngle),
+                  damage: (wpn.damage / count) * bot.damageDealtModifier,
+                  onFireDuration: wpn.onFireDuration || 0,
+                  explosionRadius: wpn.explosionRadius || 0,
+                  shooterId: bot.id,
+                  weaponType: bot.equippedWeapon,
+                  pelletCount: count,
+                  lifeTicks: 0,
+                  maxLifeTicks: 60,
+                  color: '#f87171',
+                });
+              }
+            }
+          }
+        } else {
+          // IA DE COMBATE (BOT RIVAL vsBOT / MULTI-BOT)
+          // P-D1: Selección y fijación de objetivo dinámico por bot (reevalúa cada 30 ticks)
+          const target = pickTarget(inst, allFighters) || p1;
+
+          let nearestWpnDist = 9999;
+          let nearestWpnPos: { x: number; y: number } | null = null;
+          for (const w of s.worldWeapons) {
+            const dy = w.y - bot.y;
+            const dx = Math.abs(w.x - bot.x);
+            // Si el arma está a más de 170px por encima directamente en la vertical,
+            // no es alcanzable de un solo salto directo sin plataforma previa
+            if (dy < -170 && dx < 60) {
+              continue;
+            }
+            const d = Math.hypot(w.x - bot.x, w.y - bot.y);
+            if (d < nearestWpnDist) {
+              nearestWpnDist = d;
+              nearestWpnPos = { x: w.x, y: w.y };
+            }
+          }
+
+          // P-D1: Esquivar proyectiles cuenta los de cualquier luchador distinto del bot
+          let projIncoming = false;
+          for (const pr of s.projectiles) {
+            if (pr.shooterId !== bot.id && Math.hypot(pr.x - bot.x, pr.y - bot.y) < 160) {
+              projIncoming = true;
+              break;
+            }
+          }
+
+          const aiState = BotAI.evaluate(bot, inst.ai, target, projIncoming, nearestWpnDist);
+          let botInput = inst.quiet
+            ? { moveX: 0, jump: false, crouch: false, melee: false, fire: false }
+            : BotAI.computeInput(bot, inst.ai, target, aiState, nearestWpnPos);
+
+          // Control y FSM Adaptativa del Dummy en MODO PRÁCTICA (Gimnasio)
+          if (gameMode === 'practice') {
+            const pMode = practiceBotModeRef.current;
+            if (pMode === 'quiet') {
+              // Bot Quieto: inmóvil, orientado al jugador para medir daño
+              botInput = { moveX: 0, jump: false, crouch: false, melee: false, fire: false };
+              bot.facingRight = p1.x >= bot.x;
+            } else if (pMode === 'adaptive') {
+              // FSM de Entrenamiento Adaptativo de 3 fases:
+              trainingBotFsmTicksRef.current = (trainingBotFsmTicksRef.current + 1) % 660;
+              const fTick = trainingBotFsmTicksRef.current;
+
+              if (fTick < 200) {
+                // Fase 1: Muestra cómo moverse (camina ida y vuelta entre 520 y 720)
+                const moveDir = bot.x > 700 ? -0.7 : bot.x < 520 ? 0.7 : (bot.facingRight ? 0.7 : -0.7);
+                botInput = { moveX: moveDir, jump: false, crouch: false, melee: false, fire: false };
+                bot.facingRight = moveDir > 0;
+              } else if (fTick < 400) {
+                // Fase 2: Se deja golpear (quieto frente al jugador recibiendo daño sin morir)
+                botInput = { moveX: 0, jump: false, crouch: false, melee: false, fire: false };
+                bot.facingRight = p1.x >= bot.x;
+              } else {
+                // Fase 3: Combos lentos telegrafiados para aprender a rodar y esquivar
+                const distToP1 = Math.abs(p1.x - bot.x);
+                bot.facingRight = p1.x >= bot.x;
+                if (distToP1 > 48) {
+                  botInput = { moveX: bot.facingRight ? 0.6 : -0.6, jump: false, crouch: false, melee: false, fire: false };
+                } else {
+                  const shouldMelee = (fTick % 85 === 0) && bot.attackCooldown <= 0;
+                  botInput = { moveX: 0, jump: false, crouch: false, melee: shouldMelee, fire: false };
+                  if (shouldMelee) {
+                    bot.attackCooldown = 60;
+                    s.floatingTexts.push({
+                      id: s.nextEntityId++,
+                      text: '¡GOLPE DE PRÁCTICA! (ESQUIVA)',
+                      x: bot.x,
+                      y: bot.y - 35,
+                      color: '#facc15',
+                      life: 35,
+                    });
+                  }
+                }
+              }
+            }
+          }
+
+          inst.lastInput = {
+            melee: !!botInput.melee,
+            fire: !!botInput.fire,
+            distToTarget: target ? Math.round(Math.hypot(target.x - bot.x, target.y - bot.y)) : undefined,
+          };
+
+          if ((inst.quiet || (gameMode === 'practice' && practiceBotModeRef.current === 'quiet')) && bot.onGround && bot.fsm !== PlayerFSMState.KnockedDown && bot.fsm !== PlayerFSMState.GetUp && bot.fsm !== PlayerFSMState.Hitstun) {
+            bot.velocityX = 0;
+            if (bot.fsm === PlayerFSMState.Run || bot.fsm === PlayerFSMState.Walk) {
+              PlayerFSM.tryTransition(bot, PlayerFSMState.Idle);
+            }
+          }
+
+          // Salto de ayuda si el bot choca contra un escalón del terreno mientras corre
+          if (
+            bot.onGround &&
+            inst.ai.jumpCooldown <= 0 &&
+            Math.abs(botInput.moveX) > 0.4 &&
+            Math.abs(bot.velocityX) < 25 &&
+            (aiState === BotAIState.Chase || aiState === BotAIState.Pickup)
+          ) {
+            botInput.jump = true;
+            inst.ai.jumpCooldown = 40;
+          }
+
+          // Recuperación activa de derribo para bot IA
+          if (bot.fsm === PlayerFSMState.KnockedDown && bot.stateTicks >= 8) {
+            if (botInput.crouch && bot.onGround) {
+              PlayerFSM.tryTransition(bot, PlayerFSMState.Roll);
+              bot.rollTicks = GameConstants.RollDurationTicks;
+              bot.invulnerabilityTicks = 20;
+              sounds.playRoll();
+            } else if (botInput.jump && bot.onGround) {
+              PlayerFSM.tryTransition(bot, PlayerFSMState.Jump);
+              bot.velocityY = GameConstants.JumpVelocity;
+              bot.invulnerabilityTicks = 16;
+              sounds.playJump();
+            } else if (Math.abs(botInput.moveX) > 0.2 || bot.stateTicks >= 18) {
+              PlayerFSM.tryTransition(bot, PlayerFSMState.Idle);
+              bot.invulnerabilityTicks = 18;
+              addSparks(bot.x, bot.y + 12, '#ef4444', 8);
+            }
+          }
+
+          const botSpeed = GameConstants.RunSpeed * bot.speedModifier;
+          if (
+            Math.abs(botInput.moveX) > 0.05 &&
+            bot.fsm !== PlayerFSMState.Roll &&
+            bot.fsm !== PlayerFSMState.KnockedDown &&
+            bot.fsm !== PlayerFSMState.GetUp &&
+            bot.fsm !== PlayerFSMState.Hitstun
+          ) {
+            bot.velocityX = botInput.moveX * botSpeed;
+            bot.facingRight = botInput.moveX > 0;
+            if (bot.onGround) PlayerFSM.tryTransition(bot, PlayerFSMState.Run);
+          } else if (bot.fsm !== PlayerFSMState.Roll) {
+            bot.velocityX *= GameConstants.GroundFriction;
+            if (bot.onGround && Math.abs(bot.velocityX) < 5) {
+              bot.velocityX = 0;
+              if (bot.fsm === PlayerFSMState.Run) PlayerFSM.tryTransition(bot, PlayerFSMState.Idle);
+            }
+          }
+
+          // Lote 10 - Parte 3: En Attack y Strafe, orientar al bot hacia su target (|dx| >= 2)
+          if (target && (aiState === BotAIState.Attack || aiState === BotAIState.Strafe)) {
+            const dx = target.x - bot.x;
+            if (Math.abs(dx) >= 2) {
+              bot.facingRight = dx >= 0;
+            }
+          }
+
+          // Bot Jump (Arcade: sin restricción de estamina, igual que P1)
+          if (
+            botInput.jump &&
+            (bot.onGround || bot.coyoteTicks > 0) &&
+            bot.fsm !== PlayerFSMState.Roll &&
+            bot.fsm !== PlayerFSMState.KnockedDown
+          ) {
+            bot.velocityY = GameConstants.JumpVelocity;
+            bot.coyoteTicks = 0;
+            PlayerFSM.tryTransition(bot, PlayerFSMState.Jump);
+            sounds.playJump();
+          }
+
+          // ── COMBATE MELEE AVANZADO IA (vsBot) DIRIGIDO AL OBJETIVO ──
+          const botFacingDir = bot.facingRight ? 1 : -1;
+          const targetDist = Math.hypot(target.x - bot.x, target.y - bot.y);
+
+          if (bot.isGrappling && bot.grabbedTargetId === target.id) {
+            bot.grappleTicks++;
+            target.x = bot.x + botFacingDir * 24;
+            target.y = bot.y;
+            target.velocityX = 0;
+            target.velocityY = 0;
+            target.isGrabbed = true;
+            if (target.id === s.p1.id) {
+              s.p1Controller.setPosition(target.x, target.y);
+              s.p1Controller.vx = 0;
+              s.p1Controller.vy = 0;
+            } else {
+              const tInst = s.bots.find((b) => b.id === target.id);
+              if (tInst?.controller) {
+                tInst.controller.setPosition(target.x, target.y);
+                tInst.controller.vx = 0;
+                tInst.controller.vy = 0;
+              }
+            }
+
+            if (bot.grappleTicks >= 25) {
+              sounds.playThrow();
+              const throwDirX = target.x > 480 ? -1 : 1;
+              const throwHit = CombatSystem.resolveThrow(bot, target, throwDirX, true);
+
+              bot.isGrappling = false;
+              bot.grabbedTargetId = null;
+              target.isGrabbed = false;
+              bot.attackCooldown = 30;
+              s.screenShake = 10;
+              addSparks(target.x, target.y, '#ef4444', 18);
+
+              s.floatingTexts.push({
+                id: s.nextEntityId++,
+                text: `¡LANZAMIENTO BOT! -${Math.round(throwHit.damageDealt)}`,
+                x: target.x,
+                y: target.y - 35,
+                color: '#ef4444',
+                life: 38,
+              });
+            }
+          } else if (
+            botInput.melee &&
+            bot.attackCooldown <= 0 &&
+            (bot.fsm === PlayerFSMState.Idle ||
+              bot.fsm === PlayerFSMState.Run ||
+              bot.fsm === PlayerFSMState.Crouch)
+          ) {
+            const isTargetInvuln =
+              target.invulnerabilityTicks > 0 ||
+              (target.id === s.p1.id && s.p1Controller.isInvulnerable);
+            const canGrapple = targetDist < 38 && target.isAlive && !target.isGrabbed && !isTargetInvuln && bot.onGround;
+            const canSlide = targetDist > 35 && targetDist < 75 && Math.abs(bot.velocityX) > 90 && bot.onGround;
+            const canHeavySmash = target.fsm === PlayerFSMState.KnockedDown || target.fsm === PlayerFSMState.Hitstun;
+
+            if (canGrapple && Math.random() < 0.28) {
+              bot.isGrappling = true;
+              bot.grabbedTargetId = target.id;
+              bot.grappleTicks = 0;
+              target.isGrabbed = true;
+              sounds.playGrapple();
+              s.floatingTexts.push({
+                id: s.nextEntityId++,
+                text: '¡AGARRE BOT!',
+                x: bot.x,
+                y: bot.y - 30,
+                color: '#f87171',
+                life: 30,
+              });
+            } else if (canSlide && Math.random() < 0.35) {
+              const isBladeBot = isBladeWeapon(bot.equippedWeapon);
+              bot.isSliding = true;
+              bot.slideTicks = 18;
+              bot.attackCooldown = isBladeBot ? 25 : 30;
+              bot.velocityX = botFacingDir * (isBladeBot ? 460 : 430);
+              if ((inst as any).controller) {
+                (inst as any).controller.vx = bot.velocityX;
+              }
+              if (isBladeBot) {
+                sounds.playSwordSwing();
+                sounds.playSlide();
+              } else {
+                sounds.playSlide();
+              }
+              PlayerFSM.tryTransition(bot, PlayerFSMState.CrouchSlide);
+              addSparks(bot.x, bot.y + 16, isBladeBot ? '#e0f2fe' : '#94a3b8', 14);
+
+              if (isBladeBot) {
+                const slideHit = CombatSystem.resolveBladeDashSlash(bot, target);
+                if (slideHit.didHit) {
+                  sounds.playBladeHit();
+                  s.screenShake = 9;
+                  addSparks(target.x, target.y + 12, '#ef4444', 18);
+                  addSparks(target.x, target.y + 12, '#ffffff', 12);
+                  s.floatingTexts.push({
+                    id: s.nextEntityId++,
+                    text: `¡TAJO RASANTE BOT! -${Math.round(slideHit.damageDealt)}`,
+                    x: target.x,
+                    y: target.y - 25,
+                    color: '#ef4444',
+                    life: 35,
+                  });
+                }
+              } else {
+                const slideHit = CombatSystem.resolveSlideTackle(bot, target);
+                if (slideHit.didHit) {
+                  sounds.playHit();
+                  s.screenShake = 8;
+                  addSparks(target.x, target.y + 12, '#ef4444', 16);
+                  s.floatingTexts.push({
+                    id: s.nextEntityId++,
+                    text: `¡BARRIDA BOT! -${Math.round(slideHit.damageDealt)}`,
+                    x: target.x,
+                    y: target.y - 25,
+                    color: '#ef4444',
+                    life: 35,
+                  });
+                }
+              }
+            } else if (canHeavySmash && Math.random() < 0.5) {
+              const isBladeBot = isBladeWeapon(bot.equippedWeapon);
+              const chargeRatio = 0.85;
+              if (isBladeBot) {
+                sounds.playHeavyBladeSlash();
+                bot.attackCooldown = 32;
+              } else {
+                sounds.playHeavySmash();
+                bot.attackCooldown = 36;
+              }
+              PlayerFSM.tryTransition(bot, PlayerFSMState.MeleeAttack);
+
+              bot.velocityX = botFacingDir * (isBladeBot ? 280 : 240);
+              if ((inst as any).controller) {
+                (inst as any).controller.vx = bot.velocityX;
+              }
+              s.screenShake = 14;
+
+              if (isBladeBot) {
+                const smashHit = CombatSystem.resolveBladeHeavySlash(bot, target, chargeRatio);
+                inst.ai.currentComboPause = inst.ai.comboPauseTicks;
+                if (smashHit.didHit) {
+                  sounds.playBladeHit();
+                  addSparks(target.x, target.y, '#e0f2fe', 26);
+                  addSparks(target.x, target.y, '#ef4444', 18);
+                  s.floatingTexts.push({
+                    id: s.nextEntityId++,
+                    text: `¡TAJO DEMOLEDOR BOT! -${Math.round(smashHit.damageDealt)}`,
+                    x: target.x,
+                    y: target.y - 35,
+                    color: '#ef4444',
+                    life: 45,
+                  });
+                }
+              } else {
+                const smashHit = CombatSystem.resolveHeavySmash(bot, target, chargeRatio);
+                inst.ai.currentComboPause = inst.ai.comboPauseTicks;
+                if (smashHit.didHit) {
+                  sounds.playHit();
+                  addSparks(target.x, target.y, '#f59e0b', 24);
+                  addSparks(target.x, target.y, '#ef4444', 16);
+                  s.floatingTexts.push({
+                    id: s.nextEntityId++,
+                    text: `¡HEAVY SMASH BOT! -${Math.round(smashHit.damageDealt)}`,
+                    x: target.x,
+                    y: target.y - 35,
+                    color: '#f59e0b',
+                    life: 45,
+                  });
+                }
+              }
+            } else {
+              const isBladeBot = isBladeWeapon(bot.equippedWeapon);
+              bot.comboStep = (bot.comboStep + 1) % 3;
+              if (bot.comboStep === 2) {
+                inst.ai.currentComboPause = inst.ai.comboPauseTicks;
+              }
+              bot.comboWindowTicks = isBladeBot ? 34 : GameConstants.FistsComboWindowTicks;
+              bot.attackCooldown = isBladeBot ? 14 : GameConstants.FistsCooldownTicks;
+              PlayerFSM.tryTransition(bot, PlayerFSMState.MeleeAttack);
+
+              if (isBladeBot) {
+                sounds.playSwordSwing();
+                if (isTargetInvuln) {
+                  s.floatingTexts.push({
+                    id: s.nextEntityId++,
+                    text: '¡ESQUIVADO!',
+                    x: target.x,
+                    y: target.y - 25,
+                    color: '#38bdf8',
+                    life: 25,
+                  });
+                } else {
+                  const hit = CombatSystem.resolveBladeMelee(bot, target);
+                  if (hit.didHit) {
+                    sounds.playBladeHit();
+                    addSparks(target.x, target.y, '#e0f2fe', 18);
+                    addSparks(target.x, target.y, '#ef4444', 14);
+                    s.screenShake = bot.comboStep === 2 ? 9 : 5;
+                    const bladeComboNames = ['¡TAJO HORIZONTAL!', '¡CLEAVE DESCENDENTE!', '¡CORTE FINAL!'];
+                    s.floatingTexts.push({
+                      id: s.nextEntityId++,
+                      text: `${bladeComboNames[bot.comboStep]} BOT -${Math.round(hit.damageDealt)}`,
+                      x: target.x,
+                      y: target.y - 25,
+                      color: '#ef4444',
+                      life: 35,
+                    });
+                  }
+                }
+              } else {
+                sounds.playPunch();
+                if (isTargetInvuln) {
+                  s.floatingTexts.push({
+                    id: s.nextEntityId++,
+                    text: '¡ESQUIVADO!',
+                    x: target.x,
+                    y: target.y - 25,
+                    color: '#38bdf8',
+                    life: 25,
+                  });
+                } else {
+                  const hit = CombatSystem.resolveMelee(bot, target);
+                  if (hit.didHit) {
+                    sounds.playHit();
+                    addSparks(target.x, target.y, '#ef4444', 12);
+                    s.screenShake = bot.comboStep === 2 ? 8 : 5;
+                    const comboNames = ['¡JAB!', '¡CROSS!', '¡PATADA!'];
+                    s.floatingTexts.push({
+                      id: s.nextEntityId++,
+                      text: `${comboNames[bot.comboStep]} -${Math.round(hit.damageDealt)}`,
+                      x: target.x,
+                      y: target.y - 25,
+                      color: '#ef4444',
+                      life: 35,
+                    });
+                  }
+                }
+              }
+            }
+
+            s.crates.forEach((crate) => {
+              if (Math.hypot(bot.x - (crate.x + crate.w / 2), bot.y - (crate.y + crate.h / 2)) < 45) {
+                crate.health -= 15;
+                crate.vx = botFacingDir * 200;
+                sounds.playHit();
+                addSparks(crate.x + 16, crate.y + 16, '#d97706', 8);
+              }
+            });
+
+            s.barrels.forEach((barrel) => {
+              if (Math.hypot(bot.x - (barrel.x + barrel.w / 2), bot.y - (barrel.y + barrel.h / 2)) < 45) {
+                barrel.health -= 15;
+                barrel.lastHitterId = bot.id;
+                barrel.vx = botFacingDir * 240;
+                sounds.playHit();
+                addSparks(barrel.x + 12, barrel.y + 16, '#ef4444', 8);
+              }
+            });
+          }
+
+          if (bot.isSliding) {
+            bot.slideTicks--;
+            if (bot.slideTicks <= 0) {
+              bot.isSliding = false;
+            }
+          }
+
+          // Bot Disparo
+          if (
+            botInput.fire &&
+            bot.attackCooldown <= 0 &&
+            bot.equippedWeapon !== WeaponType.Fists &&
+            bot.ammo > 0 &&
+            bot.fsm !== PlayerFSMState.Roll
+          ) {
+            const wpn = getWeapon(bot.equippedWeapon);
+            if (wpn.category === 'Firearm') {
+              bot.attackCooldown = wpn.cooldownTicks;
+              bot.ammo--;
+              PlayerFSM.tryTransition(bot, PlayerFSMState.RangedFire);
+              sounds.playGunshot(wpn.type.toLowerCase());
+
+              // Lote 10 - Parte 3: En Strafe y disparo, proyectiles salen hacia el objetivo
+              let dir = bot.facingRight ? 1 : -1;
+              if (target && Math.abs(target.x - bot.x) >= 2) {
+                dir = target.x >= bot.x ? 1 : -1;
+                bot.facingRight = dir > 0;
+              }
+              const muzzleX = bot.x + dir * 28;
+              const muzzleY = bot.y - 6;
+
+              addSparks(muzzleX, muzzleY, '#fde047', 6);
+
+              const count = wpn.pelletCount || 1;
+              for (let i = 0; i < count; i++) {
+                const aimOffset = (Math.random() - 0.5) * (inst.ai?.aimError ?? 0.12);
+                const spreadAngle = ((Math.random() - 0.5) * ((wpn.accuracyDeg || 3) * Math.PI / 180)) / 2 + aimOffset;
+                const speed = wpn.projectileSpeed || 900;
+                s.projectiles.push({
+                  id: s.nextEntityId++,
+                  x: muzzleX,
+                  y: muzzleY,
+                  vx: dir * speed * Math.cos(spreadAngle),
+                  vy: speed * Math.sin(spreadAngle),
+                  damage: (wpn.damage / count) * bot.damageDealtModifier,
+                  onFireDuration: wpn.onFireDuration || 0,
+                  explosionRadius: wpn.explosionRadius || 0,
+                  shooterId: bot.id,
+                  weaponType: bot.equippedWeapon,
+                  pelletCount: count,
+                  lifeTicks: 0,
+                  maxLifeTicks: 60,
+                  color: '#f87171',
+                });
+              }
+            }
+          }
+
+          // Uso táctico de granadas por parte de la IA rival
+          if (
+            bot.attackCooldown <= 0 &&
+            targetDist >= 130 &&
+            targetDist <= 380 &&
+            bot.fsm !== PlayerFSMState.Roll &&
+            bot.fsm !== PlayerFSMState.KnockedDown &&
+            Math.random() < 0.03
+          ) {
+            const thrownType = consumeGrenade(inst.grenades);
+            if (thrownType) {
+              bot.attackCooldown = 55;
+              sounds.playGunshot('grenade');
+              const dir = bot.facingRight ? 1 : -1;
+              const gCfg = GRENADE_DATABASE[thrownType];
+              s.projectiles.push({
+                id: s.nextEntityId++,
+                x: bot.x + dir * 18,
+                y: bot.y - 12,
+                vx: dir * (360 + Math.random() * 80) + bot.velocityX * 0.3,
+                vy: -300 - Math.random() * 60,
+                damage: gCfg.damage * bot.damageDealtModifier,
+                onFireDuration: gCfg.burnDurationTicks || 0,
+                explosionRadius: gCfg.explosionRadius,
+                shooterId: bot.id,
+                weaponType: WeaponType.Grenade,
+                pelletCount: 1,
+                lifeTicks: 0,
+                maxLifeTicks: gCfg.fuseTicks || 85,
+                isGrenade: true,
+                isMolotov: thrownType === GrenadeType.Molotov,
+                grenadeType: thrownType,
+                rotation: 0,
+                rotationSpeed: dir * 0.22,
+                color: gCfg.color,
+              });
+
+              s.floatingTexts.push({
+                id: s.nextEntityId++,
+                text: `¡${gCfg.shortName} BOT! (${inst.grenades.ammo[thrownType]} rest.)`,
+                x: bot.x,
+                y: bot.y - 32,
+                color: gCfg.color,
+                life: 30,
+              });
+            }
+          }
+        }
+      }
+    }
+
+      // ─────────────────────────────────────────────────────────
+      // 3. FÍSICAS DE JUGADORES Y ESTADOS
+      // ─────────────────────────────────────────────────────────
+      const prevP1Fsm = p1.fsm;
+
+      if (
+        !p1.isAlive ||
+        p1.fsm === PlayerFSMState.KnockedDown ||
+        p1.fsm === PlayerFSMState.GetUp ||
+        p1.fsm === PlayerFSMState.Hitstun
+      ) {
+        const p1Vel = s.p1Controller.getVelocity();
+        if (p1.fsm !== PlayerFSMState.Hitstun && p1.fsm !== PlayerFSMState.KnockedDown) {
+          p1.velocityX = p1Vel.vx;
+          p1.velocityY = p1Vel.vy;
+        }
+        PhysicsStep.tick(p1, s.platforms, ARENA_WIDTH);
+        s.p1Controller.x = p1.x;
+        s.p1Controller.y = p1.y;
+        s.p1Controller.setVelocity(p1.velocityX, p1.velocityY);
+        s.p1Controller.isOnFloor = p1.onGround;
+        s.p1Controller.facingRight = p1.facingRight;
+      }
+      PlayerFSM.tick(p1);
+
+      // Sincronización inmediata al levantarse automáticamente hacia Idle
+      if (p1.fsm === PlayerFSMState.Idle && (prevP1Fsm === PlayerFSMState.KnockedDown || prevP1Fsm === PlayerFSMState.GetUp)) {
+        s.p1Controller.x = p1.x;
+        s.p1Controller.y = p1.y;
+        s.p1Controller.setVelocity(p1.velocityX, p1.velocityY);
+        s.p1Controller.isOnFloor = p1.onGround;
+        s.p1Controller.facingRight = p1.facingRight;
+        s.p1Controller.state = ControllerState.Idle;
+      }
+
+      // Decrementar cooldown de cambio de ranura y mantener munición activa en sincronía
+      if (p1.slotCooldownTicks && p1.slotCooldownTicks > 0) p1.slotCooldownTicks--;
+      if (p1.inventory) {
+        if (p1.inventory.activeSlot === 'handgun' && p1.inventory.handgun) {
+          p1.inventory.handgun.ammo = p1.ammo;
+        } else if (p1.inventory.activeSlot === 'primary' && p1.inventory.primary) {
+          p1.inventory.primary.ammo = p1.ammo;
+        }
+      }
+      CombatSystem.tickFireDamage(p1);
+
+      // Físicas, FSM y estado de inventario para cada bot
+      for (const inst of s.bots) {
+        const b = inst.state;
+        const prevBotFsm = b.fsm;
+
+        if (inst.controller && gameMode === 'local1v1') {
+          if (
+            !b.isAlive ||
+            b.fsm === PlayerFSMState.KnockedDown ||
+            b.fsm === PlayerFSMState.GetUp ||
+            b.fsm === PlayerFSMState.Hitstun
+          ) {
+            const p2Vel = inst.controller.getVelocity();
+            if (b.fsm !== PlayerFSMState.Hitstun && b.fsm !== PlayerFSMState.KnockedDown) {
+              b.velocityX = p2Vel.vx;
+              b.velocityY = p2Vel.vy;
+            }
+            PhysicsStep.tick(b, s.platforms, ARENA_WIDTH);
+            inst.controller.x = b.x;
+            inst.controller.y = b.y;
+            inst.controller.setVelocity(b.velocityX, b.velocityY);
+            inst.controller.isOnFloor = b.onGround;
+            inst.controller.facingRight = b.facingRight;
+          }
+        } else {
+          PhysicsStep.tick(b, s.platforms, ARENA_WIDTH);
+        }
+        PlayerFSM.tick(b);
+
+        if (b.fsm === PlayerFSMState.Idle && (prevBotFsm === PlayerFSMState.KnockedDown || prevBotFsm === PlayerFSMState.GetUp)) {
+          if (inst.controller && (gameMode === 'local1v1' || gameMode === 'coop')) {
+            inst.controller.x = b.x;
+            inst.controller.y = b.y;
+            inst.controller.setVelocity(b.velocityX, b.velocityY);
+            inst.controller.isOnFloor = b.onGround;
+            inst.controller.facingRight = b.facingRight;
+            inst.controller.state = ControllerState.Idle;
+          }
+        }
+
+        if (b.slotCooldownTicks && b.slotCooldownTicks > 0) b.slotCooldownTicks--;
+        if (b.inventory) {
+          if (b.inventory.activeSlot === 'handgun' && b.inventory.handgun) {
+            b.inventory.handgun.ammo = b.ammo;
+          } else if (b.inventory.activeSlot === 'primary' && b.inventory.primary) {
+            b.inventory.primary.ammo = b.ammo;
+          }
+        }
+
+        CombatSystem.tickFireDamage(b);
+      }
+
+      // ─────────────────────────────────────────────────────────
+      // GESTIÓN DE ESTADOS Y ANIMACIÓN SINCRONIZADA CON SPRITESHEET
+      // ─────────────────────────────────────────────────────────
+      // 1. P1: Animación fluida de movimiento con inercia (Walk / Run)
+      const is1v1Mode = gameMode === 'local1v1';
+      const p1Speed = Math.abs(p1.velocityX);
+      const p1IsMovingState =
+        p1.isAlive &&
+        p1.onGround &&
+        p1Speed > 8 &&
+        p1.fsm !== PlayerFSMState.Roll &&
+        p1.fsm !== PlayerFSMState.KnockedDown &&
+        p1.fsm !== PlayerFSMState.GetUp &&
+        p1.fsm !== PlayerFSMState.Hitstun &&
+        p1.fsm !== PlayerFSMState.Dead;
+
+      p1.isMovingHorizontally = p1IsMovingState;
+
+      if (p1IsMovingState) {
+        // Al sobrepasar el umbral de velocidad (200 px/s), activar carrera
+        const isRunning = p1Speed >= PLAYER_CONFIG.RUN_THRESHOLD;
+        const totalFrames = isRunning
+          ? (s.p1SheetConfig?.runTotalFrames || 6)
+          : (s.p1SheetConfig?.totalFrames || 6);
+
+        // Distancia de zancada adaptada (más amplia en carrera rápida)
+        const isGymratP1 = (playerFaction || BotFaction.Ninja) === BotFaction.Gymrat;
+        const isSantaP1 = (playerFaction || BotFaction.Ninja) === BotFaction.Santa;
+        const strideDistancePx = isRunning ? 64 : (isGymratP1 ? 80 : (isSantaP1 ? 75 : 46));
+        const distanceThisFrame = p1Speed * (1 / 60);
+        // Para Santa Claus:
+        // - Carrera (run_santa): 12 a 14 FPS (~13.0 FPS) - zancada enérgica y pesada
+        // - Caminar (walk_santa): 8 a 10 FPS (~8.5 FPS)
+        // Para Gymrat:
+        // - Carrera (isRunning): 12 a 15 FPS (~13.5 FPS)
+        // - Caminar (!isRunning): 8 a 10 FPS (~9 FPS)
+        const framesToAdvance = isSantaP1
+          ? (isRunning
+              ? (13.0 / 60) * Math.min(1.25, Math.max(0.85, p1Speed / PLAYER_CONFIG.RUN_THRESHOLD))
+              : (8.5 / 60) * Math.min(1.2, Math.max(0.75, p1Speed / 110)))
+          : isGymratP1
+          ? (isRunning
+              ? (13.5 / 60) * Math.min(1.25, Math.max(0.85, p1Speed / PLAYER_CONFIG.RUN_THRESHOLD))
+              : (9.0 / 60) * Math.min(1.2, Math.max(0.75, p1Speed / 110)))
+          : (distanceThisFrame / strideDistancePx) * totalFrames;
+
+        p1.animFrameTimer += framesToAdvance;
+        if (p1.animFrameTimer >= 1) {
+          const step = Math.floor(p1.animFrameTimer);
+          p1.animFrame = (p1.animFrame + step) % totalFrames;
+          p1.animFrameTimer -= step;
+        }
+
+        // Mantener orientación según el vector de movimiento (inercia)
+        if (Math.abs(p1.velocityX) > 2) {
+          p1.facingRight = p1.velocityX > 0;
+        }
+      } else {
+        // Al frenar por completo, volver a frame 0 (idle)
+        p1.animFrame = 0;
+        p1.animFrameTimer = 0;
+        p1.animSpeed = 1.0;
+      }
+
+      // 2. BOTS / J2: Detección de movimiento horizontal y animación sincronizada
+      for (const inst of s.bots) {
+        const b = inst.state;
+        const bSpeed = Math.abs(b.velocityX);
+        const bIsMovingState =
+          b.isAlive &&
+          b.onGround &&
+          bSpeed > 8 &&
+          b.fsm !== PlayerFSMState.Roll &&
+          b.fsm !== PlayerFSMState.KnockedDown &&
+          b.fsm !== PlayerFSMState.GetUp &&
+          b.fsm !== PlayerFSMState.Hitstun &&
+          b.fsm !== PlayerFSMState.Dead;
+
+        b.isMovingHorizontally = bIsMovingState;
+
+        if (bIsMovingState) {
+          const isRunning = bSpeed >= PLAYER_CONFIG.RUN_THRESHOLD && !!s.botSheetConfig?.hasRunSheet;
+          const totalFrames = isRunning
+            ? (s.botSheetConfig?.runTotalFrames || 6)
+            : (s.botSheetConfig?.totalFrames || 14);
+
+          const isGymratBot = inst.faction === BotFaction.Gymrat;
+          const isSantaBot = inst.faction === BotFaction.Santa;
+          const strideDistancePx = isRunning ? 64 : (isGymratBot ? 80 : (isSantaBot ? 75 : 54));
+          const distanceThisFrame = bSpeed * (1 / 60);
+          const framesToAdvance = isSantaBot
+            ? (isRunning
+                ? (13.0 / 60) * Math.min(1.25, Math.max(0.85, bSpeed / PLAYER_CONFIG.RUN_THRESHOLD))
+                : (8.5 / 60) * Math.min(1.2, Math.max(0.75, bSpeed / 110)))
+            : isGymratBot
+            ? (isRunning
+                ? (13.5 / 60) * Math.min(1.25, Math.max(0.85, bSpeed / PLAYER_CONFIG.RUN_THRESHOLD))
+                : (9.0 / 60) * Math.min(1.2, Math.max(0.75, bSpeed / 110)))
+            : (distanceThisFrame / strideDistancePx) * totalFrames;
+
+          b.animFrameTimer += framesToAdvance;
+          if (b.animFrameTimer >= 1) {
+            const step = Math.floor(b.animFrameTimer);
+            b.animFrame = (b.animFrame + step) % totalFrames;
+            b.animFrameTimer -= step;
+          }
+
+          if (inst.controller && Math.abs(b.velocityX) > 2) {
+            b.facingRight = b.velocityX > 0;
+          }
+        } else {
+          b.animFrame = 0;
+          b.animFrameTimer = 0;
+          b.animSpeed = 1.0;
+        }
+      }
+
+      // ─────────────────────────────────────────────────────────
+      // 4. MECÁNICAS DE MUNDO INTERACTIVAS
+      // ─────────────────────────────────────────────────────────
+
+      // 4.1. CINTA TRANSPORTADORA (ZONA INDUSTRIAL)
+      s.conveyors.forEach((conv) => {
+        const dirMult = conv.direction === 'left' ? -1 : 1;
+        const pushAmount = conv.speed * dirMult;
+
+        // Empujar P1 si está sobre la cinta
+        if (
+          p1.isAlive &&
+          p1.x >= conv.x - 10 &&
+          p1.x <= conv.x + conv.w + 10 &&
+          p1.y >= conv.y - 12 &&
+          p1.y <= conv.y + conv.h + 8
+        ) {
+          s.p1Controller.x += pushAmount;
+          p1.x += pushAmount;
+        }
+
+        // Empujar bots si están sobre la cinta
+        for (const inst of s.bots) {
+          const b = inst.state;
+          if (
+            b.isAlive &&
+            b.x >= conv.x - 10 &&
+            b.x <= conv.x + conv.w + 10 &&
+            b.y >= conv.y - 12 &&
+            b.y <= conv.y + conv.h + 8
+          ) {
+            b.x += pushAmount;
+            if (inst.controller && gameMode === 'local1v1') {
+              inst.controller.x += pushAmount;
+            }
+          }
+        }
+
+        // Empujar armas y medkits que caigan sobre la cinta
+        s.worldWeapons.forEach((w) => {
+          if (w.x >= conv.x && w.x <= conv.x + conv.w && Math.abs(w.baseY - (conv.y - 10)) < 20) {
+            w.x += pushAmount;
+          }
+        });
+
+        s.medkits.forEach((m) => {
+          if (m.x >= conv.x && m.x <= conv.x + conv.w && Math.abs(m.baseY - (conv.y - 10)) < 20) {
+            m.x += pushAmount;
+          }
+        });
+      });
+
+      // 4.2. PRENSA HIDRÁULICA (ZONA INDUSTRIAL)
+      s.presses.forEach((press) => {
+        press.tick = (press.tick + 1) % press.cycle;
+
+        // Fase de ciclo:
+        // 0 - 110: Arriba (Retraída)
+        // 110 - 125: Descenso veloz (Slam)
+        // 125 - 155: Aplastando en el suelo
+        // 155 - 180: Retorno gradual hacia arriba
+        if (press.tick < 110) {
+          press.currentY = press.baseY;
+          press.hasSlammedThisCycle = false;
+        } else if (press.tick >= 110 && press.tick <= 125) {
+          const progress = (press.tick - 110) / 15;
+          press.currentY = press.baseY + progress * press.maxDrop;
+          if (press.tick >= 122 && !press.hasSlammedThisCycle) {
+            press.hasSlammedThisCycle = true;
+            sounds.playHydraulicSlam();
+            s.screenShake = 10;
+            addSparks(press.x + press.w / 2, press.currentY + press.h, '#f97316', 16);
+
+            // P-D2: Daño por prensa a todos los combatientes mediante CombatSystem.applyHit
+            allFighters.forEach((target) => {
+              if (
+                target.isAlive &&
+                Math.abs(target.x - (press.x + press.w / 2)) < press.w / 2 + 10 &&
+                target.y >= press.currentY &&
+                target.y <= press.currentY + press.h + 30
+              ) {
+                CombatSystem.applyHit(target, {
+                  damage: press.crushDamage,
+                  kbX: 0,
+                  kbY: 40,
+                  stunTicks: GameConstants.HitstunTicksStrong,
+                  hitStop: 5,
+                  causedKnockdown: true,
+                  screenShake: 12,
+                });
+                if (target.id === s.p1.id) {
+                  s.p1Controller.setPosition(target.x, target.y);
+                  s.p1Controller.vx = target.velocityX;
+                  s.p1Controller.vy = target.velocityY;
+                } else {
+                  const tInst = s.bots.find((b) => b.id === target.id);
+                  if (tInst?.controller) {
+                    tInst.controller.setPosition(target.x, target.y);
+                    tInst.controller.vx = target.velocityX;
+                    tInst.controller.vy = target.velocityY;
+                  }
+                }
+                s.floatingTexts.push({
+                  id: s.nextEntityId++,
+                  text: '¡APLASTADO!',
+                  x: target.x,
+                  y: target.y - 30,
+                  color: '#ef4444',
+                  life: 45,
+                });
+              }
+            });
+          }
+        } else if (press.tick > 125 && press.tick <= 155) {
+          press.currentY = press.baseY + press.maxDrop;
+        } else {
+          const retProg = (press.tick - 155) / 25;
+          press.currentY = press.baseY + (1 - retProg) * press.maxDrop;
+        }
+      });
+
+      // ── FÍSICA DE INERCIA Y COLISIÓN PARA CAJAS Y BARRILES (Superfighters) ──
+      s.crates.forEach((crate) => {
+        if (crate.vx && Math.abs(crate.vx) > 3) {
+          crate.x += crate.vx * (1 / 60);
+          crate.vx *= 0.91; // Fricción
+          if (crate.x < 15) { crate.x = 15; crate.vx = -crate.vx * 0.4; }
+          if (crate.x + crate.w > ARENA_WIDTH - 15) { crate.x = ARENA_WIDTH - 15 - crate.w; crate.vx = -crate.vx * 0.4; }
+        }
+      });
+
+      s.barrels.forEach((barrel) => {
+        if (barrel.vx && Math.abs(barrel.vx) > 3) {
+          barrel.x += barrel.vx * (1 / 60);
+          barrel.vx *= 0.93; // Fricción en suelo
+          if (barrel.x < 15) { barrel.x = 15; barrel.vx = -barrel.vx * 0.4; }
+          if (barrel.x + barrel.w > ARENA_WIDTH - 15) { barrel.x = ARENA_WIDTH - 15 - barrel.w; barrel.vx = -barrel.vx * 0.4; }
+
+          // P-D2: Barriles en movimiento a gran velocidad impactando a combatientes (CombatSystem.applyHit)
+          const currentVx = barrel.vx;
+          if (Math.abs(currentVx) > 85) {
+            allFighters.forEach((target) => {
+              if (!target.isAlive) return;
+              if (Math.hypot((barrel.x + barrel.w / 2) - target.x, (barrel.y + barrel.h / 2) - target.y) < 32) {
+                barrel.health -= 15;
+                const barrelAttacker = barrel.lastHitterId !== undefined ? allFighters.find((f) => f.id === barrel.lastHitterId) : undefined;
+                CombatSystem.applyHit(target, {
+                  damage: 16,
+                  kbX: currentVx * 0.75,
+                  kbY: -150,
+                  stunTicks: GameConstants.HitstunTicksStrong,
+                  hitStop: 4,
+                  causedKnockdown: true,
+                  attacker: barrelAttacker,
+                  screenShake: 8,
+                });
+                if (target.id === s.p1.id) {
+                  s.p1Controller.setPosition(target.x, target.y);
+                  s.p1Controller.vx = target.velocityX;
+                  s.p1Controller.vy = target.velocityY;
+                } else {
+                  const tInst = s.bots.find((b) => b.id === target.id);
+                  if (tInst?.controller) {
+                    tInst.controller.setPosition(target.x, target.y);
+                    tInst.controller.vx = target.velocityX;
+                    tInst.controller.vy = target.velocityY;
+                  }
+                }
+                sounds.playHit();
+                addSparks(target.x, target.y, '#f97316', 15);
+                s.floatingTexts.push({
+                  id: s.nextEntityId++,
+                  text: '¡IMPACTO DE BARRIL! -16',
+                  x: target.x,
+                  y: target.y - 30,
+                  color: '#f97316',
+                  life: 35,
+                });
+              }
+            });
+          }
+        }
+      });
+
+      // 4.3. COMPROBAR DESTRUCCIÓN DE CAJAS
+      for (let i = s.crates.length - 1; i >= 0; i--) {
+        const crate = s.crates[i];
+        if (crate.health <= 0) {
+          sounds.playCrateBreak();
+          addSparks(crate.x + crate.w / 2, crate.y + crate.h / 2, '#d97706', 20);
+          addSparks(crate.x + crate.w / 2, crate.y + crate.h / 2, '#78350f', 15);
+
+          // Soltar arma, paquete de granadas tácticas o botiquín
+          const dropRoll = Math.random();
+          if (dropRoll < 0.38) {
+            // Suelta arma
+            const wpn = SpawnableWeaponsList[Math.floor(Math.random() * SpawnableWeaponsList.length)];
+            s.worldWeapons.push({
+              id: s.nextEntityId++,
+              weaponType: wpn,
+              x: crate.x + crate.w / 2,
+              y: crate.y,
+              baseY: crate.y,
+              bobTicks: 0,
+            });
+            s.floatingTexts.push({
+              id: s.nextEntityId++,
+              text: '¡ARMA ENCONTRADA!',
+              x: crate.x + crate.w / 2,
+              y: crate.y - 20,
+              color: '#38bdf8',
+              life: 40,
+            });
+          } else if (dropRoll < 0.72) {
+            // Suelta paquete de granadas tácticas (aporta +2 al inventario limitado)
+            const gTypes = ALL_GRENADE_TYPES;
+            const pickedType = gTypes[Math.floor(Math.random() * gTypes.length)];
+            s.grenadePickups.push({
+              id: s.nextEntityId++,
+              type: pickedType,
+              amount: 2,
+              x: crate.x + crate.w / 2,
+              y: crate.y,
+              baseY: crate.y,
+              bobTicks: 0,
+            });
+            s.floatingTexts.push({
+              id: s.nextEntityId++,
+              text: `¡${GRENADE_DATABASE[pickedType].shortName} x2!`,
+              x: crate.x + crate.w / 2,
+              y: crate.y - 20,
+              color: GRENADE_DATABASE[pickedType].color,
+              life: 40,
+            });
+          } else {
+            // Suelta botiquín
+            s.medkits.push({
+              id: s.nextEntityId++,
+              x: crate.x + crate.w / 2,
+              y: crate.y,
+              baseY: crate.y,
+              bobTicks: 0,
+            });
+            s.floatingTexts.push({
+              id: s.nextEntityId++,
+              text: '¡BOTIQUÍN!',
+              x: crate.x + crate.w / 2,
+              y: crate.y - 20,
+              color: '#22c55e',
+              life: 40,
+            });
+          }
+
+          s.crates.splice(i, 1);
+        }
+      }
+
+      // 4.4. COMPROBAR EXPLOSIÓN DE BARRILES
+      for (let i = s.barrels.length - 1; i >= 0; i--) {
+        const barrel = s.barrels[i];
+        if (barrel.health <= 0) {
+          createExplosion(barrel.x + barrel.w / 2, barrel.y + barrel.h / 2, 95, 55, true, barrel.lastHitterId);
+          s.floatingTexts.push({
+            id: s.nextEntityId++,
+            text: '¡BARRIL EXPLOSIVO!',
+            x: barrel.x + barrel.w / 2,
+            y: barrel.y - 25,
+            color: '#f97316',
+            life: 45,
+          });
+          s.barrels.splice(i, 1);
+        }
+      }
+
+      // 4.5. RECOLECCIÓN DE BOTIQUINES (+35 HP)
+      for (let i = s.medkits.length - 1; i >= 0; i--) {
+        const med = s.medkits[i];
+        med.bobTicks++;
+        med.y = med.baseY + Math.sin(med.bobTicks * 0.1) * 4;
+
+        // P1 recoge
+        if (p1.isAlive && Math.hypot(med.x - p1.x, med.y - p1.y) < 32) {
+          p1.health = Math.min(p1.maxHealth, p1.health + 35);
+          sounds.playMedkit();
+          addSparks(med.x, med.y, '#22c55e', 14);
+          s.floatingTexts.push({
+            id: s.nextEntityId++,
+            text: '+35 HP',
+            x: p1.x,
+            y: p1.y - 30,
+            color: '#22c55e',
+            life: 45,
+          });
+          s.medkits.splice(i, 1);
+          continue;
+        }
+
+        // Bots recogen
+        for (const inst of s.bots) {
+          const b = inst.state;
+          if (b.isAlive && Math.hypot(med.x - b.x, med.y - b.y) < 32) {
+            b.health = Math.min(b.maxHealth, b.health + 35);
+            sounds.playMedkit();
+            addSparks(med.x, med.y, '#22c55e', 14);
+            s.floatingTexts.push({
+              id: s.nextEntityId++,
+              text: '+35 HP',
+              x: b.x,
+              y: b.y - 30,
+              color: '#22c55e',
+              life: 45,
+            });
+            s.medkits.splice(i, 1);
+            break;
+          }
+        }
+      }
+
+      // 4.6. RECOLECCIÓN DE GRANADAS EN EL MAPA (LÍMITE ESTRICTO DE 8 EN INVENTARIO)
+      for (let i = s.grenadePickups.length - 1; i >= 0; i--) {
+        const gp = s.grenadePickups[i];
+        gp.bobTicks++;
+        gp.y = gp.baseY + Math.sin(gp.bobTicks * 0.09) * 4;
+        const gCfg = GRENADE_DATABASE[gp.type];
+
+        // P1 pickup
+        if (p1.isAlive && Math.hypot(gp.x - p1.x, gp.y - p1.y) < 32) {
+          if (canAddGrenade(s.p1Grenades)) {
+            const added = addGrenades(s.p1Grenades, gp.type, gp.amount);
+            sounds.playPickup();
+            addSparks(gp.x, gp.y, gCfg.color, 12);
+            s.floatingTexts.push({
+              id: s.nextEntityId++,
+              text: `+${added} ${gCfg.shortName} (${s.p1Grenades.ammo[gp.type]}/${GRENADE_MAX_CAPACITY})`,
+              x: p1.x,
+              y: p1.y - 30,
+              color: gCfg.color,
+              life: 45,
+            });
+            s.grenadePickups.splice(i, 1);
+            continue;
+          } else if (s.worldTick % 35 === 0) {
+            s.floatingTexts.push({
+              id: s.nextEntityId++,
+              text: `¡BOLSA LLENA (${GRENADE_MAX_CAPACITY}/${GRENADE_MAX_CAPACITY})!`,
+              x: p1.x,
+              y: p1.y - 30,
+              color: '#f59e0b',
+              life: 25,
+            });
+          }
+        }
+
+        // Bots / J2 pickup
+        for (const inst of s.bots) {
+          const b = inst.state;
+          if (b.isAlive && Math.hypot(gp.x - b.x, gp.y - b.y) < 32) {
+            if (canAddGrenade(inst.grenades)) {
+              const added = addGrenades(inst.grenades, gp.type, gp.amount);
+              sounds.playPickup();
+              addSparks(gp.x, gp.y, gCfg.color, 12);
+              s.floatingTexts.push({
+                id: s.nextEntityId++,
+                text: `+${added} ${gCfg.shortName} (${inst.grenades.ammo[gp.type]}/${GRENADE_MAX_CAPACITY})`,
+                x: b.x,
+                y: b.y - 30,
+                color: gCfg.color,
+                life: 45,
+              });
+              s.grenadePickups.splice(i, 1);
+              break;
+            }
+          }
+        }
+      }
+
+      // Recolección de armas
+      for (let i = s.worldWeapons.length - 1; i >= 0; i--) {
+        const w = s.worldWeapons[i];
+        w.bobTicks++;
+        w.y = w.baseY + Math.sin(w.bobTicks * 0.08) * 5;
+
+        const wData = getWeapon(w.weaponType);
+        const wSlot = slotForWeapon(w.weaponType);
+
+        // P1 pickup
+        const d1 = Math.hypot(w.x - p1.x, w.y - p1.y);
+        const p1Controls = gameMode === 'local1v1' ? CONTROLS.LOCAL_1V1_P1 : CONTROLS.SOLO;
+
+        let isP1SlotEmpty = false;
+        if (p1.inventory) {
+          if (wSlot === 'melee') {
+            isP1SlotEmpty = p1.inventory.melee === WeaponType.Fists;
+          } else if (wSlot === 'handgun') {
+            isP1SlotEmpty = p1.inventory.handgun === null;
+          } else if (wSlot === 'primary') {
+            isP1SlotEmpty = p1.inventory.primary === null;
+          } else if (wSlot === 'throwable') {
+            isP1SlotEmpty = canAddGrenade(s.p1Grenades);
+          }
+        }
+
+        const canP1Pickup =
+          p1.fsm === PlayerFSMState.Crouch ||
+          p1.equippedWeapon === WeaponType.Fists ||
+          isAnyPressed(keys, p1Controls.down) ||
+          isP1SlotEmpty;
+
+        if (d1 < 32 && canP1Pickup) {
+          if (wSlot === 'throwable') {
+            const gType = w.weaponType === WeaponType.Molotov ? GrenadeType.Molotov : GrenadeType.Frag;
+            if (canAddGrenade(s.p1Grenades)) {
+              const added = addGrenades(s.p1Grenades, gType, 2);
+              sounds.playPickup();
+              addSparks(w.x, w.y, '#38bdf8', 12);
+              s.floatingTexts.push({
+                id: s.nextEntityId++,
+                text: `+${added} ${wData.name} (${s.p1Grenades.ammo[gType]}/${GRENADE_MAX_CAPACITY})`,
+                x: p1.x,
+                y: p1.y - 35,
+                color: '#38bdf8',
+                life: 45,
+              });
+              if (w.spawnSlotIndex !== undefined && s.weaponSlots && s.weaponSlots[w.spawnSlotIndex]) {
+                if (s.weaponSlots[w.spawnSlotIndex].currentWeaponId === w.id) {
+                  s.weaponSlots[w.spawnSlotIndex].currentWeaponId = null;
+                }
+              }
+              s.worldWeapons.splice(i, 1);
+              continue;
+            }
+          } else if (p1.inventory) {
+            // Guardar munición del arma previa si dejamos una ranura de fuego
+            if (p1.inventory.activeSlot === 'handgun' && p1.inventory.handgun) {
+              p1.inventory.handgun.ammo = p1.ammo;
+            } else if (p1.inventory.activeSlot === 'primary' && p1.inventory.primary) {
+              p1.inventory.primary.ammo = p1.ammo;
+            }
+
+            if (wSlot === 'melee') {
+              if (p1.inventory.melee !== WeaponType.Fists) {
+                // Suelta el arma cuerpo a cuerpo anterior en los pies
+                s.worldWeapons.push({
+                  id: s.nextEntityId++,
+                  weaponType: p1.inventory.melee,
+                  x: p1.x,
+                  y: p1.y,
+                  baseY: p1.y,
+                  bobTicks: 0,
+                });
+              }
+              p1.inventory.melee = w.weaponType;
+              p1.inventory.activeSlot = 'melee';
+              p1.ammo = 0;
+              equipWeaponState(p1, w.weaponType, s.p1Controller);
+            } else if (wSlot === 'handgun') {
+              if (p1.inventory.handgun !== null) {
+                // Suelta la pistola anterior en los pies
+                s.worldWeapons.push({
+                  id: s.nextEntityId++,
+                  weaponType: p1.inventory.handgun.type,
+                  x: p1.x,
+                  y: p1.y,
+                  baseY: p1.y,
+                  bobTicks: 0,
+                });
+              }
+              p1.inventory.handgun = { type: w.weaponType, ammo: wData.magSize };
+              p1.inventory.activeSlot = 'handgun';
+              p1.ammo = wData.magSize;
+              equipWeaponState(p1, w.weaponType, s.p1Controller);
+            } else if (wSlot === 'primary') {
+              if (p1.inventory.primary !== null) {
+                // Suelta el arma primaria anterior en los pies
+                s.worldWeapons.push({
+                  id: s.nextEntityId++,
+                  weaponType: p1.inventory.primary.type,
+                  x: p1.x,
+                  y: p1.y,
+                  baseY: p1.y,
+                  bobTicks: 0,
+                });
+              }
+              p1.inventory.primary = { type: w.weaponType, ammo: wData.magSize };
+              p1.inventory.activeSlot = 'primary';
+              p1.ammo = wData.magSize;
+              equipWeaponState(p1, w.weaponType, s.p1Controller);
+            }
+
+            sounds.playPickup();
+            s.floatingTexts.push({
+              id: s.nextEntityId++,
+              text: `¡${wData.name}!`,
+              x: p1.x,
+              y: p1.y - 35,
+              color: wSlot === 'primary' ? '#eab308' : wSlot === 'handgun' ? '#38bdf8' : '#f97316',
+              life: 45,
+            });
+
+            if (w.spawnSlotIndex !== undefined && s.weaponSlots && s.weaponSlots[w.spawnSlotIndex]) {
+              if (s.weaponSlots[w.spawnSlotIndex].currentWeaponId === w.id) {
+                s.weaponSlots[w.spawnSlotIndex].currentWeaponId = null;
+              }
+            }
+
+            s.worldWeapons.splice(i, 1);
+            continue;
+          } else {
+            p1.equippedWeapon = w.weaponType;
+            p1.ammo = wData.magSize;
+            sounds.playPickup();
+            equipWeaponState(p1, w.weaponType, s.p1Controller);
+
+            s.floatingTexts.push({
+              id: s.nextEntityId++,
+              text: `¡${wData.name}!`,
+              x: p1.x,
+              y: p1.y - 35,
+              color: '#38bdf8',
+              life: 45,
+            });
+
+            if (w.spawnSlotIndex !== undefined && s.weaponSlots && s.weaponSlots[w.spawnSlotIndex]) {
+              if (s.weaponSlots[w.spawnSlotIndex].currentWeaponId === w.id) {
+                s.weaponSlots[w.spawnSlotIndex].currentWeaponId = null;
+              }
+            }
+
+            s.worldWeapons.splice(i, 1);
+            continue;
+          }
+        }
+
+        // Bot / J2 pickup: soporte multi-bot para que cualquier bot pueda recoger armas
+        let weaponPickedByBot = false;
+        for (const inst of s.bots) {
+          const bState = inst.state;
+          if (!bState.isAlive) continue;
+
+          const d2 = Math.hypot(w.x - bState.x, w.y - bState.y);
+          let isP2SlotEmpty = false;
+          if (bState.inventory) {
+            if (wSlot === 'melee') {
+              isP2SlotEmpty = bState.inventory.melee === WeaponType.Fists;
+            } else if (wSlot === 'handgun') {
+              isP2SlotEmpty = bState.inventory.handgun === null;
+            } else if (wSlot === 'primary') {
+              isP2SlotEmpty = bState.inventory.primary === null;
+            } else if (wSlot === 'throwable') {
+              isP2SlotEmpty = canAddGrenade(inst.grenades);
+            }
+          }
+
+          const canBotPickup =
+            bState.fsm === PlayerFSMState.Crouch ||
+            bState.equippedWeapon === WeaponType.Fists ||
+            (gameMode === 'local1v1' && (isAnyPressed(keys, CONTROLS.LOCAL_1V1_P2.down) || isP2SlotEmpty));
+
+          if (d2 < 32 && canBotPickup) {
+            if (wSlot === 'throwable') {
+              const gType = w.weaponType === WeaponType.Molotov ? GrenadeType.Molotov : GrenadeType.Frag;
+              if (canAddGrenade(inst.grenades)) {
+                const added = addGrenades(inst.grenades, gType, 2);
+                sounds.playPickup();
+                addSparks(w.x, w.y, inst.color, 12);
+                s.floatingTexts.push({
+                  id: s.nextEntityId++,
+                  text: `+${added} ${wData.name} (${inst.grenades.ammo[gType]}/${GRENADE_MAX_CAPACITY})`,
+                  x: bState.x,
+                  y: bState.y - 35,
+                  color: inst.color,
+                  life: 45,
+                });
+                if (w.spawnSlotIndex !== undefined && s.weaponSlots && s.weaponSlots[w.spawnSlotIndex]) {
+                  if (s.weaponSlots[w.spawnSlotIndex].currentWeaponId === w.id) {
+                    s.weaponSlots[w.spawnSlotIndex].currentWeaponId = null;
+                  }
+                }
+                s.worldWeapons.splice(i, 1);
+                weaponPickedByBot = true;
+                break;
+              }
+            } else if (bState.inventory) {
+              // J2 en local1v1 con inventario por ranuras
+              if (bState.inventory.activeSlot === 'handgun' && bState.inventory.handgun) {
+                bState.inventory.handgun.ammo = bState.ammo;
+              } else if (bState.inventory.activeSlot === 'primary' && bState.inventory.primary) {
+                bState.inventory.primary.ammo = bState.ammo;
+              }
+
+              if (wSlot === 'melee') {
+                if (bState.inventory.melee !== WeaponType.Fists) {
+                  s.worldWeapons.push({
+                    id: s.nextEntityId++,
+                    weaponType: bState.inventory.melee,
+                    x: bState.x,
+                    y: bState.y,
+                    baseY: bState.y,
+                    bobTicks: 0,
+                  });
+                }
+                bState.inventory.melee = w.weaponType;
+                bState.inventory.activeSlot = 'melee';
+                bState.ammo = 0;
+                equipWeaponState(bState, w.weaponType, inst.controller || s.p2Controller);
+              } else if (wSlot === 'handgun') {
+                if (bState.inventory.handgun !== null) {
+                  s.worldWeapons.push({
+                    id: s.nextEntityId++,
+                    weaponType: bState.inventory.handgun.type,
+                    x: bState.x,
+                    y: bState.y,
+                    baseY: bState.y,
+                    bobTicks: 0,
+                  });
+                }
+                bState.inventory.handgun = { type: w.weaponType, ammo: wData.magSize };
+                bState.inventory.activeSlot = 'handgun';
+                bState.ammo = wData.magSize;
+                equipWeaponState(bState, w.weaponType, inst.controller || s.p2Controller);
+              } else if (wSlot === 'primary') {
+                if (bState.inventory.primary !== null) {
+                  s.worldWeapons.push({
+                    id: s.nextEntityId++,
+                    weaponType: bState.inventory.primary.type,
+                    x: bState.x,
+                    y: bState.y,
+                    baseY: bState.y,
+                    bobTicks: 0,
+                  });
+                }
+                bState.inventory.primary = { type: w.weaponType, ammo: wData.magSize };
+                bState.inventory.activeSlot = 'primary';
+                bState.ammo = wData.magSize;
+                equipWeaponState(bState, w.weaponType, inst.controller || s.p2Controller);
+              }
+
+              sounds.playPickup();
+              s.floatingTexts.push({
+                id: s.nextEntityId++,
+                text: `¡${wData.name}!`,
+                x: bState.x,
+                y: bState.y - 35,
+                color: wSlot === 'primary' ? '#eab308' : wSlot === 'handgun' ? '#38bdf8' : '#f97316',
+                life: 45,
+              });
+
+              if (w.spawnSlotIndex !== undefined && s.weaponSlots && s.weaponSlots[w.spawnSlotIndex]) {
+                if (s.weaponSlots[w.spawnSlotIndex].currentWeaponId === w.id) {
+                  s.weaponSlots[w.spawnSlotIndex].currentWeaponId = null;
+                }
+              }
+
+              s.worldWeapons.splice(i, 1);
+              weaponPickedByBot = true;
+              break;
+            } else {
+              // Bot IA convencional (vsBot): un solo equippedWeapon
+              bState.equippedWeapon = w.weaponType;
+              bState.ammo = wData.magSize;
+              sounds.playPickup();
+              equipWeaponState(bState, w.weaponType, undefined);
+
+              s.floatingTexts.push({
+                id: s.nextEntityId++,
+                text: `¡${wData.name}!`,
+                x: bState.x,
+                y: bState.y - 35,
+                color: inst.color || '#f87171',
+                life: 45,
+              });
+
+              if (w.spawnSlotIndex !== undefined && s.weaponSlots && s.weaponSlots[w.spawnSlotIndex]) {
+                if (s.weaponSlots[w.spawnSlotIndex].currentWeaponId === w.id) {
+                  s.weaponSlots[w.spawnSlotIndex].currentWeaponId = null;
+                }
+              }
+
+              s.worldWeapons.splice(i, 1);
+              weaponPickedByBot = true;
+              break;
+            }
+          }
+        }
+        if (weaponPickedByBot) continue;
+      }
+
+      // 4.4. CICLOS DE REEMPLAZO DE ARMAS EN PUNTOS DE SPAWN DESIGNADOS
+      // Regla estricta: Cada arma permanece indefinidamente en su punto exacto
+      // hasta que el ciclo de spawn genere una nueva arma en esa misma ubicación,
+      // momento en el cual el arma anterior se destruye automáticamente antes de crear la nueva.
+      updateWeaponSpawns(s);
+
+      // ─────────────────────────────────────────────────────────
+      // 5. PROYECTILES Y COLISIONES
+      // ─────────────────────────────────────────────────────────
+      for (let i = s.projectiles.length - 1; i >= 0; i--) {
+        const pr = s.projectiles[i];
+        pr.lifeTicks++;
+
+        if (pr.isGrenade) {
+          // 1. Proyectil pegado a una superficie (C4 / Mina)
+          if (pr.isStuck) {
+            pr.vx = 0;
+            pr.vy = 0;
+            pr.rotationSpeed = 0;
+
+            // Mina de proximidad: detona si cualquier combatiente enemigo se acerca
+            if (pr.weaponType === WeaponType.Mine) {
+              if (pr.lifeTicks > 12) {
+                const triggered = allFighters.some(
+                  (target) => target.isAlive && Math.hypot(pr.x - target.x, pr.y - target.y) < 32
+                );
+                if (triggered) {
+                  triggerGrenadeDetonation(s, pr);
+                  s.projectiles.splice(i, 1);
+                  continue;
+                }
+              }
+            }
+
+            // C4: Parpadeo de LED rojo en la superficie
+            if (pr.weaponType === WeaponType.C4 && pr.lifeTicks % 15 === 0) {
+              addSparks(pr.x, pr.y - 4, '#ef4444', 1);
+            }
+
+            // Temporizador de detonación de C4 / Mina pegados
+            const maxFuse = pr.maxLifeTicks || (pr.weaponType === WeaponType.C4 ? 80 : 360);
+            if (pr.lifeTicks >= maxFuse) {
+              triggerGrenadeDetonation(s, pr);
+              s.projectiles.splice(i, 1);
+              continue;
+            }
+
+            continue;
+          }
+
+          // 2. Proyectil en vuelo: Estela de partículas
+          if (Math.random() < 0.45) {
+            const gType = pr.grenadeType || GrenadeType.Frag;
+            const trailColor =
+              gType === GrenadeType.Flashbang
+                ? '#e0f2fe'
+                : gType === GrenadeType.Smoke
+                ? '#94a3b8'
+                : gType === GrenadeType.Molotov
+                ? '#f97316'
+                : pr.weaponType === WeaponType.C4
+                ? '#ef4444'
+                : pr.weaponType === WeaponType.Mine
+                ? '#f59e0b'
+                : '#64748b';
+            s.particles.push({
+              x: pr.x,
+              y: pr.y,
+              vx: (Math.random() - 0.5) * 12,
+              vy: (Math.random() - 0.5) * 12,
+              life: 10,
+              maxLife: 14,
+              color: trailColor,
+              size: gType === GrenadeType.Smoke ? 4 : 2.5,
+            });
+          }
+
+          // 3. Impacto directo en el aire de Molotov contra combatientes
+          const isMolotov = pr.grenadeType === GrenadeType.Molotov || pr.isMolotov;
+          if (isMolotov) {
+            let hitTarget: PlayerState | null = null;
+            for (const target of allFighters) {
+              if (target.isAlive && target.id !== pr.shooterId && Math.hypot(pr.x - target.x, pr.y - (target.y - 10)) < 24) {
+                hitTarget = target;
+                break;
+              }
+            }
+            if (hitTarget) {
+              triggerGrenadeDetonation(s, pr);
+              s.projectiles.splice(i, 1);
+              continue;
+            }
+          }
+
+          // 4. Impacto directo de Béisbol contra combatientes
+          if (pr.weaponType === WeaponType.Baseball) {
+            let hitTarget: PlayerState | null = null;
+            for (const target of allFighters) {
+              if (target.isAlive && target.id !== pr.shooterId && Math.hypot(pr.x - target.x, pr.y - (target.y - 10)) < 24) {
+                hitTarget = target;
+                break;
+              }
+            }
+            if (hitTarget) {
+              const attacker = allFighters.find((f) => f.id === pr.shooterId);
+              const hitRes = CombatSystem.applyHit(hitTarget, {
+                damage: pr.damage,
+                kbX: (pr.vx > 0 ? 1 : -1) * 90,
+                stunTicks: 16,
+                attacker,
+                weaponType: WeaponType.Baseball,
+              });
+              hitTarget.velocityX += pr.vx * 0.45;
+              sounds.playPunch();
+              addSparks(pr.x, pr.y, '#f8fafc', 10);
+              s.floatingTexts.push({
+                id: s.nextEntityId++,
+                text: `¡BÉISBOL! -${Math.round(hitRes.finalDamage)}`,
+                x: hitTarget.x,
+                y: hitTarget.y - 30,
+                color: '#f8fafc',
+                life: 30,
+              });
+              s.projectiles.splice(i, 1);
+              continue;
+            }
+          }
+
+          // 5. Simulación de física y colisiones multi-superficie en sub-pasos (sin tunneling)
+          const subSteps = 2;
+          const subDt = (1 / 60) / subSteps;
+          const R = 5; // Hitbox compacta de radio 5px (evita colisiones con aire o atascos)
+          const isStickable = pr.weaponType === WeaponType.C4 || pr.weaponType === WeaponType.Mine;
+          let detonated = false;
+
+          for (let step = 0; step < subSteps; step++) {
+            if (pr.isStuck) break;
+
+            // Gravedad
+            pr.vy += GameConstants.Gravity * subDt;
+            if (pr.vy > 950) pr.vy = 950;
+
+            const prevX = pr.x;
+            const prevY = pr.y;
+            let curX = prevX + pr.vx * subDt;
+            let curY = prevY + pr.vy * subDt;
+
+            // A) PLATAFORMAS ATRAVESABLES (One-Way)
+            // Solo colisionan desde arriba cuando el proyectil desciende (vy >= 0)
+            if (pr.vy >= 0) {
+              for (const plat of s.platforms) {
+                const isOneWay = plat.isOneWay || plat.h <= 14;
+                if (!isOneWay) continue;
+                if (
+                  prevY + R <= plat.y + 6 &&
+                  curY + R >= plat.y &&
+                  curX >= plat.x - R &&
+                  curX <= plat.x + plat.w + R
+                ) {
+                  curY = plat.y - R;
+                  if (isMolotov) {
+                    pr.x = curX;
+                    pr.y = curY;
+                    triggerGrenadeDetonation(s, pr);
+                    s.projectiles.splice(i, 1);
+                    detonated = true;
+                    break;
+                  }
+                  if (isStickable) {
+                    pr.x = curX;
+                    pr.y = curY;
+                    pr.isStuck = true;
+                    pr.stuckSurface = 'floor';
+                    pr.vx = 0;
+                    pr.vy = 0;
+                    pr.rotationSpeed = 0;
+                    sounds.playPickup();
+                    addSparks(curX, curY + R, pr.color, 4);
+                    break;
+                  }
+                  // Rebote físico elástico en la plataforma
+                  pr.vy = -pr.vy * (pr.weaponType === WeaponType.Baseball ? 0.72 : 0.58);
+                  pr.vx *= 0.82;
+                  pr.rotationSpeed = (pr.rotationSpeed || 0.1) * 0.7;
+                  if (Math.abs(pr.vy) < 32) {
+                    pr.vy = 0;
+                    pr.vx *= 0.88;
+                    pr.rotationSpeed *= 0.82;
+                  }
+                  sounds.playGrenadeBounce();
+                  addSparks(curX, curY + R, '#e2e8f0', 2);
+                  break;
+                }
+              }
+              if (detonated || pr.isStuck) break;
+            }
+
+            // B) PLATAFORMAS SÓLIDAS, PAREDES, TECHOS, CAJAS Y BARRILES
+            const solidBoxes: { x: number; y: number; w: number; h: number }[] = [];
+            for (const plat of s.platforms) {
+              const isOneWay = plat.isOneWay || plat.h <= 14;
+              if (!isOneWay) {
+                solidBoxes.push(plat);
+              }
+            }
+            for (const crate of s.crates) {
+              if (crate.health > 0) {
+                solidBoxes.push(crate);
+              }
+            }
+            for (const barrel of s.barrels) {
+              if (barrel.health > 0) {
+                solidBoxes.push(barrel);
+              }
+            }
+
+            for (const box of solidBoxes) {
+              const closestX = Math.max(box.x, Math.min(curX, box.x + box.w));
+              const closestY = Math.max(box.y, Math.min(curY, box.y + box.h));
+              const distX = curX - closestX;
+              const distY = curY - closestY;
+              const distSq = distX * distX + distY * distY;
+              const inside = curX >= box.x && curX <= box.x + box.w && curY >= box.y && curY <= box.y + box.h;
+
+              if (distSq < R * R || inside) {
+                if (isMolotov) {
+                  pr.x = curX;
+                  pr.y = curY;
+                  triggerGrenadeDetonation(s, pr);
+                  s.projectiles.splice(i, 1);
+                  detonated = true;
+                  break;
+                }
+
+                // Identificar cara de colisión
+                const hitTop = prevY + R <= box.y + 4 && pr.vy >= 0;
+                const hitBottom = prevY - R >= box.y + box.h - 4 && pr.vy <= 0;
+                const hitLeft = prevX + R <= box.x + 4 && pr.vx >= 0;
+                const hitRight = prevX - R >= box.x + box.w - 4 && pr.vx <= 0;
+
+                if (hitTop) {
+                  curY = box.y - R;
+                  if (isStickable) {
+                    pr.x = curX;
+                    pr.y = curY;
+                    pr.isStuck = true;
+                    pr.stuckSurface = 'floor';
+                    pr.vx = 0;
+                    pr.vy = 0;
+                    pr.rotationSpeed = 0;
+                    sounds.playPickup();
+                    addSparks(curX, curY + R, pr.color, 4);
+                    break;
+                  }
+                  pr.vy = -pr.vy * (pr.weaponType === WeaponType.Baseball ? 0.72 : 0.58);
+                  pr.vx *= 0.82;
+                  pr.rotationSpeed = (pr.rotationSpeed || 0.1) * 0.7;
+                  if (Math.abs(pr.vy) < 32) {
+                    pr.vy = 0;
+                    pr.vx *= 0.88;
+                    pr.rotationSpeed *= 0.82;
+                  }
+                  sounds.playGrenadeBounce();
+                  addSparks(curX, curY + R, '#e2e8f0', 2);
+                  break;
+                } else if (hitBottom) {
+                  curY = box.y + box.h + R;
+                  if (isStickable) {
+                    pr.x = curX;
+                    pr.y = curY;
+                    pr.isStuck = true;
+                    pr.stuckSurface = 'ceiling';
+                    pr.vx = 0;
+                    pr.vy = 0;
+                    pr.rotationSpeed = 0;
+                    sounds.playPickup();
+                    addSparks(curX, curY - R, pr.color, 4);
+                    break;
+                  }
+                  pr.vy = -pr.vy * (pr.weaponType === WeaponType.Baseball ? 0.72 : 0.58);
+                  pr.vx *= 0.82;
+                  sounds.playGrenadeBounce();
+                  addSparks(curX, curY - R, '#e2e8f0', 2);
+                  break;
+                } else if (hitLeft) {
+                  curX = box.x - R;
+                  if (isStickable) {
+                    pr.x = curX;
+                    pr.y = curY;
+                    pr.isStuck = true;
+                    pr.stuckSurface = 'wall';
+                    pr.vx = 0;
+                    pr.vy = 0;
+                    pr.rotationSpeed = 0;
+                    sounds.playPickup();
+                    addSparks(curX + R, curY, pr.color, 4);
+                    break;
+                  }
+                  pr.vx = -pr.vx * (pr.weaponType === WeaponType.Baseball ? 0.75 : 0.65);
+                  pr.rotationSpeed = -(pr.rotationSpeed || 0.15) * 0.75;
+                  sounds.playGrenadeBounce();
+                  addSparks(curX + R, curY, '#e2e8f0', 2);
+                  break;
+                } else if (hitRight) {
+                  curX = box.x + box.w + R;
+                  if (isStickable) {
+                    pr.x = curX;
+                    pr.y = curY;
+                    pr.isStuck = true;
+                    pr.stuckSurface = 'wall';
+                    pr.vx = 0;
+                    pr.vy = 0;
+                    pr.rotationSpeed = 0;
+                    sounds.playPickup();
+                    addSparks(curX - R, curY, pr.color, 4);
+                    break;
+                  }
+                  pr.vx = -pr.vx * (pr.weaponType === WeaponType.Baseball ? 0.75 : 0.65);
+                  pr.rotationSpeed = -(pr.rotationSpeed || 0.15) * 0.75;
+                  sounds.playGrenadeBounce();
+                  addSparks(curX - R, curY, '#e2e8f0', 2);
+                  break;
+                } else {
+                  // Fallback: resolver por menor penetración
+                  const penTop = (curY + R) - box.y;
+                  const penBottom = (box.y + box.h) - (curY - R);
+                  const penLeft = (curX + R) - box.x;
+                  const penRight = (box.x + box.w) - (curX - R);
+                  const minPen = Math.min(penTop, penBottom, penLeft, penRight);
+
+                  if (minPen === penTop) {
+                    curY = box.y - R;
+                    if (isStickable) {
+                      pr.x = curX;
+                      pr.y = curY;
+                      pr.isStuck = true;
+                      pr.stuckSurface = 'floor';
+                      pr.vx = 0;
+                      pr.vy = 0;
+                      pr.rotationSpeed = 0;
+                      sounds.playPickup();
+                      break;
+                    }
+                    pr.vy = -pr.vy * 0.58;
+                    pr.vx *= 0.82;
+                  } else if (minPen === penBottom) {
+                    curY = box.y + box.h + R;
+                    if (isStickable) {
+                      pr.x = curX;
+                      pr.y = curY;
+                      pr.isStuck = true;
+                      pr.stuckSurface = 'ceiling';
+                      pr.vx = 0;
+                      pr.vy = 0;
+                      pr.rotationSpeed = 0;
+                      sounds.playPickup();
+                      break;
+                    }
+                    pr.vy = -pr.vy * 0.58;
+                  } else if (minPen === penLeft) {
+                    curX = box.x - R;
+                    if (isStickable) {
+                      pr.x = curX;
+                      pr.y = curY;
+                      pr.isStuck = true;
+                      pr.stuckSurface = 'wall';
+                      pr.vx = 0;
+                      pr.vy = 0;
+                      pr.rotationSpeed = 0;
+                      sounds.playPickup();
+                      break;
+                    }
+                    pr.vx = -pr.vx * 0.65;
+                  } else {
+                    curX = box.x + box.w + R;
+                    if (isStickable) {
+                      pr.x = curX;
+                      pr.y = curY;
+                      pr.isStuck = true;
+                      pr.stuckSurface = 'wall';
+                      pr.vx = 0;
+                      pr.vy = 0;
+                      pr.rotationSpeed = 0;
+                      sounds.playPickup();
+                      break;
+                    }
+                    pr.vx = -pr.vx * 0.65;
+                  }
+                  sounds.playGrenadeBounce();
+                  break;
+                }
+              }
+            }
+            if (detonated || pr.isStuck) break;
+
+            // C) LÍMITES GLOBALES DEL ESCENARIO (Suelo, muros y techo)
+            if (curY >= 505 - R) {
+              curY = 505 - R;
+              if (isMolotov) {
+                pr.x = curX;
+                pr.y = curY;
+                triggerGrenadeDetonation(s, pr);
+                s.projectiles.splice(i, 1);
+                detonated = true;
+                break;
+              }
+              if (isStickable) {
+                pr.x = curX;
+                pr.y = curY;
+                pr.isStuck = true;
+                pr.stuckSurface = 'floor';
+                pr.vx = 0;
+                pr.vy = 0;
+                pr.rotationSpeed = 0;
+                sounds.playPickup();
+                break;
+              }
+              pr.vy = -pr.vy * (pr.weaponType === WeaponType.Baseball ? 0.72 : 0.58);
+              pr.vx *= 0.82;
+              pr.rotationSpeed = (pr.rotationSpeed || 0.1) * 0.7;
+              if (Math.abs(pr.vy) < 32) {
+                pr.vy = 0;
+                pr.vx *= 0.88;
+                pr.rotationSpeed *= 0.82;
+              }
+              sounds.playGrenadeBounce();
+            }
+
+            if (curX <= 20 + R) {
+              curX = 20 + R;
+              if (isMolotov) {
+                pr.x = curX;
+                pr.y = curY;
+                triggerGrenadeDetonation(s, pr);
+                s.projectiles.splice(i, 1);
+                detonated = true;
+                break;
+              }
+              if (isStickable) {
+                pr.x = curX;
+                pr.y = curY;
+                pr.isStuck = true;
+                pr.stuckSurface = 'wall';
+                pr.vx = 0;
+                pr.vy = 0;
+                pr.rotationSpeed = 0;
+                sounds.playPickup();
+                break;
+              }
+              pr.vx = -pr.vx * (pr.weaponType === WeaponType.Baseball ? 0.75 : 0.65);
+              pr.rotationSpeed = -(pr.rotationSpeed || 0.15) * 0.75;
+              sounds.playGrenadeBounce();
+            } else if (curX >= 940 - R) {
+              curX = 940 - R;
+              if (isMolotov) {
+                pr.x = curX;
+                pr.y = curY;
+                triggerGrenadeDetonation(s, pr);
+                s.projectiles.splice(i, 1);
+                detonated = true;
+                break;
+              }
+              if (isStickable) {
+                pr.x = curX;
+                pr.y = curY;
+                pr.isStuck = true;
+                pr.stuckSurface = 'wall';
+                pr.vx = 0;
+                pr.vy = 0;
+                pr.rotationSpeed = 0;
+                sounds.playPickup();
+                break;
+              }
+              pr.vx = -pr.vx * (pr.weaponType === WeaponType.Baseball ? 0.75 : 0.65);
+              pr.rotationSpeed = -(pr.rotationSpeed || 0.15) * 0.75;
+              sounds.playGrenadeBounce();
+            }
+
+            if (curY <= 10 + R) {
+              curY = 10 + R;
+              if (isMolotov) {
+                pr.x = curX;
+                pr.y = curY;
+                triggerGrenadeDetonation(s, pr);
+                s.projectiles.splice(i, 1);
+                detonated = true;
+                break;
+              }
+              if (isStickable) {
+                pr.x = curX;
+                pr.y = curY;
+                pr.isStuck = true;
+                pr.stuckSurface = 'ceiling';
+                pr.vx = 0;
+                pr.vy = 0;
+                pr.rotationSpeed = 0;
+                sounds.playPickup();
+                break;
+              }
+              pr.vy = -pr.vy * 0.58;
+              sounds.playGrenadeBounce();
+            }
+
+            pr.x = curX;
+            pr.y = curY;
+          }
+
+          if (detonated) continue;
+
+          // Rotación visual
+          if (!pr.isStuck) {
+            if (pr.vy === 0) {
+              pr.rotation = (pr.rotation || 0) + (pr.vx / 16);
+            } else {
+              pr.rotation = (pr.rotation || 0) + (pr.rotationSpeed || 0.15);
+            }
+          }
+
+          // 6. Temporizador de mecha / detonación por tiempo o caída al abismo
+          const maxFuse = pr.maxLifeTicks || (pr.isMolotov ? 70 : 85);
+          if (pr.lifeTicks >= maxFuse || pr.y > 620) {
+            if (pr.weaponType !== WeaponType.Baseball) {
+              triggerGrenadeDetonation(s, pr);
+            }
+            s.projectiles.splice(i, 1);
+            continue;
+          }
+        } else {
+          // Balas de armas de fuego
+          pr.x += pr.vx * (1 / 60);
+          pr.y += pr.vy * (1 / 60);
+
+          // Impacto en cajas de madera
+          let crateHit = false;
+          for (const crate of s.crates) {
+            if (
+              pr.x >= crate.x &&
+              pr.x <= crate.x + crate.w &&
+              pr.y >= crate.y &&
+              pr.y <= crate.y + crate.h
+            ) {
+              crate.health -= pr.damage;
+              sounds.playHit();
+              addSparks(pr.x, pr.y, '#d97706', 6);
+              crateHit = true;
+              break;
+            }
+          }
+          if (crateHit) {
+            s.projectiles.splice(i, 1);
+            continue;
+          }
+
+          // Impacto en barriles explosivos
+          let barrelHit = false;
+          for (const barrel of s.barrels) {
+            if (
+              pr.x >= barrel.x &&
+              pr.x <= barrel.x + barrel.w &&
+              pr.y >= barrel.y &&
+              pr.y <= barrel.y + barrel.h
+            ) {
+              barrel.health -= pr.damage;
+              sounds.playHit();
+              addSparks(pr.x, pr.y, '#ef4444', 8);
+              barrelHit = true;
+              break;
+            }
+          }
+          if (barrelHit) {
+            s.projectiles.splice(i, 1);
+            continue;
+          }
+
+          // Impacto en Combatientes (todos contra todos)
+          let hitTarget: PlayerState | null = null;
+          for (const target of allFighters) {
+            if (!target.isAlive || target.id === pr.shooterId || isSameTeam(pr.shooterId, target.id)) continue;
+            const isTargetRolling =
+              target.id === p1.id
+                ? s.p1Controller.isInvulnerable
+                : target.id === 2 && (gameMode === 'local1v1' || gameMode === 'coop')
+                ? s.p2Controller.isInvulnerable
+                : target.fsm === PlayerFSMState.Roll;
+
+            if (
+              !isTargetRolling &&
+              Math.abs(pr.x - target.x) < 18 &&
+              pr.y >= target.y - 25 &&
+              pr.y <= target.y + 25
+            ) {
+              hitTarget = target;
+              break;
+            }
+          }
+
+          if (hitTarget) {
+            const dir = pr.vx > 0 ? 1 : -1;
+            const attacker = allFighters.find((f) => f.id === pr.shooterId);
+            const hitRes = CombatSystem.applyHit(hitTarget, {
+              damage: pr.damage,
+              kbX: dir * 65,
+              stunTicks: GameConstants.HitstunTicksLight,
+              attacker,
+              screenShake: 5,
+              weaponType: pr.weaponType,
+            });
+            hitTarget.fireTicks = Math.max(hitTarget.fireTicks, pr.onFireDuration);
+            hitTarget.isOnFire = hitTarget.fireTicks > 0;
+
+            sounds.playHit();
+            addSparks(pr.x, pr.y, '#ef4444', 10);
+            s.screenShake = hitRes.screenShake;
+            s.hitStopTicks = hitRes.hitStop;
+            addBloodParticles(hitTarget.x, hitTarget.y, dir, hitRes.finalDamage);
+
+            if (hitTarget.id === p1.id) {
+              s.p1Controller.setPosition(p1.x, p1.y);
+              s.p1Controller.vx = p1.velocityX;
+              s.p1Controller.vy = p1.velocityY;
+              s.p1Controller.isShootingPistol = false;
+              s.p1Controller.isShootingRifle = false;
+              s.p1Controller.isThrowing = false;
+            } else if (hitTarget.id === 2 && (gameMode === 'local1v1' || gameMode === 'coop')) {
+              s.p2Controller.setPosition(hitTarget.x, hitTarget.y);
+              s.p2Controller.vx = hitTarget.velocityX;
+              s.p2Controller.vy = hitTarget.velocityY;
+              s.p2Controller.isShootingPistol = false;
+              s.p2Controller.isShootingRifle = false;
+              s.p2Controller.isThrowing = false;
+            }
+
+            hitTarget.isMeleeComboAttacking = false;
+            hitTarget.comboStep = 0;
+            hitTarget.meleeComboStep = 0;
+            hitTarget.comboBuffered = false;
+            hitTarget.comboWindowTicks = 0;
+            hitTarget.isOneHandAttacking = false;
+            hitTarget.oneHandAnimFrame = 0;
+            hitTarget.oneHandAnimTimer = 0;
+            hitTarget.oneHandHasHit = false;
+            hitTarget.isTwoHandAttacking = false;
+            hitTarget.twoHandAnimFrame = 0;
+            hitTarget.twoHandAnimTimer = 0;
+            hitTarget.twoHandHasHit = false;
+            hitTarget.isSwordAttacking = false;
+            hitTarget.isPistolShooting = false;
+            hitTarget.pistolAnimFrame = 0;
+            hitTarget.pistolAnimTimer = 0;
+            hitTarget.isRifleShooting = false;
+            hitTarget.rifleAnimFrame = 0;
+            hitTarget.rifleAnimTimer = 0;
+            hitTarget.isThrowing = false;
+            hitTarget.throwAnimFrame = 0;
+            hitTarget.throwAnimTimer = 0;
+            hitTarget.throwHasReleased = false;
+
+            s.floatingTexts.push({
+              id: s.nextEntityId++,
+              text: `-${Math.round(hitRes.finalDamage)}`,
+              x: hitTarget.x,
+              y: hitTarget.y - 25,
+              color: '#ef4444',
+              life: 30,
+            });
+
+            if (pr.explosionRadius > 0) {
+              createExplosion(pr.x, pr.y, pr.explosionRadius, pr.damage * 0.7, false, pr.shooterId);
+            }
+
+            s.projectiles.splice(i, 1);
+            continue;
+          }
+
+          // Fuera de límites
+          if (pr.x < -20 || pr.x > 980 || pr.y < -20 || pr.y > 550 || pr.lifeTicks > pr.maxLifeTicks) {
+            s.projectiles.splice(i, 1);
+          }
+        }
+      }
+
+      // ─────────────────────────────────────────────────────────
+      // 6. ZONAS DE FUEGO Y PARTÍCULAS
+      // ─────────────────────────────────────────────────────────
+      for (let i = s.fireZones.length - 1; i >= 0; i--) {
+        const fz = s.fireZones[i];
+        fz.remainingTicks--;
+
+        if (Math.random() < 0.3) {
+          s.particles.push({
+            x: fz.x + (Math.random() - 0.5) * fz.radius * 1.5,
+            y: fz.y + (Math.random() - 0.5) * 8,
+            vx: (Math.random() - 0.5) * 20,
+            vy: -40 - Math.random() * 40,
+            life: 15,
+            maxLife: 20,
+            color: '#f97316',
+            size: 3 + Math.random() * 3,
+          });
+        }
+
+        allFighters.forEach((fighter) => {
+          if (fighter.isAlive && Math.hypot(fighter.x - fz.x, fighter.y - fz.y) < fz.radius) {
+            fighter.fireTicks = Math.max(fighter.fireTicks, 90);
+            fighter.isOnFire = true;
+          }
+        });
+
+        if (fz.remainingTicks <= 0) {
+          s.fireZones.splice(i, 1);
+        }
+      }
+
+      // 6.2. NUBES DE HUMO TÁCTICO
+      for (let i = s.smokeClouds.length - 1; i >= 0; i--) {
+        const sc = s.smokeClouds[i];
+        sc.remainingTicks--;
+
+        if (Math.random() < 0.28) {
+          s.particles.push({
+            x: sc.x + (Math.random() - 0.5) * sc.radius * 1.4,
+            y: sc.y + (Math.random() - 0.5) * (sc.radius * 0.7),
+            vx: (Math.random() - 0.5) * 12,
+            vy: -15 - Math.random() * 20,
+            life: 25,
+            maxLife: 35,
+            color: '#cbd5e1',
+            size: 8 + Math.random() * 8,
+          });
+        }
+
+        if (sc.remainingTicks <= 0) {
+          s.smokeClouds.splice(i, 1);
+        }
+      }
+
+      // 6.3. DECAY DE DESTELLO CEGADOR (FLASHBANG)
+      if (s.flashbangFlash > 0) {
+        s.flashbangFlash = Math.max(0, s.flashbangFlash - 0.035);
+      }
+
+      // Partículas
+      for (let i = s.particles.length - 1; i >= 0; i--) {
+        const pt = s.particles[i];
+        pt.x += pt.vx * (1 / 60);
+        pt.y += pt.vy * (1 / 60);
+        pt.life--;
+        if (pt.life <= 0) s.particles.splice(i, 1);
+      }
+
+      // Textos flotantes
+      for (let i = s.floatingTexts.length - 1; i >= 0; i--) {
+        const ft = s.floatingTexts[i];
+        ft.y -= 0.6;
+        ft.life--;
+        if (ft.life <= 0) s.floatingTexts.splice(i, 1);
+      }
+
+      // Shake decay
+      if (s.screenShake > 0) {
+        s.screenShake *= 0.88;
+        if (s.screenShake < 0.1) s.screenShake = 0;
+      }
+
+      // Limpiar teclas de pulsación única
+      s.keysJustPressed = {};
+
+      // Sincronizar HUD cada 3 frames
+      if (s.worldTick % 3 === 0) {
+        const currentP1Faction = s.p1Faction || p1.faction || playerFaction || BotFaction.Ninja;
+        const p1Portrait = getPlayerFactionPortrait(currentP1Faction);
+        const p1Color = getPlayerFactionColor(currentP1Faction);
+        const fightersData: FighterBarData[] = [
+          buildFighterBarData(p1, p1Color, p1Portrait, s.p1Score, s.p1Grenades),
+          ...s.bots.map((b) =>
+            buildFighterBarData(
+              b.state,
+              b.color,
+              getBotArchetype(b.faction)?.spriteUrl || b.sprite?.src,
+              b.score,
+              b.grenades
+            )
+          ),
+        ];
+
+        setHudState((prev) => ({
+          ...prev,
+          p1Health: p1.health,
+          p1MaxHealth: p1.maxHealth,
+          p1Stamina: p1.stamina,
+          p1Weapon: p1.equippedWeapon,
+          p1Ammo: p1.ammo,
+          p1MaxAmmo: getWeapon(p1.equippedWeapon)?.magSize ?? -1,
+          p1GrenadeType: s.p1Grenades.activeType,
+          p1GrenadeCount: s.p1Grenades.ammo[s.p1Grenades.activeType] || 0,
+          p1GrenadeTotal: getTotalGrenades(s.p1Grenades),
+          p1GrenadeMax: GRENADE_MAX_CAPACITY,
+          botHealth: s.bots[0]?.state.health ?? 0,
+          botMaxHealth: s.bots[0]?.state.maxHealth ?? 100,
+          botWeapon: s.bots[0]?.state.equippedWeapon ?? WeaponType.Fists,
+          botAmmo: s.bots[0]?.state.ammo ?? 0,
+          botGrenadeType: s.bots[0]?.grenades.activeType ?? GrenadeType.Frag,
+          botGrenadeCount: s.bots[0]?.grenades ? (s.bots[0].grenades.ammo[s.bots[0].grenades.activeType] || 0) : 0,
+          round: s.round,
+          p1Score: s.p1Score,
+          botScore: s.botScore,
+          announcement: s.announcement,
+          fighters: fightersData,
+        }));
+      }
+
+
+    };
+
+    // ─────────────────────────────────────────────────────────
+    // RENDERIZADOR CANVAS 2D
+    // ─────────────────────────────────────────────────────────
+    const renderGame = () => {
+      const s = stateRef.current;
+      const canvas = canvasRef.current;
+      if (!s || !canvas) return;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      ctx.save();
+      ctx.imageSmoothingEnabled = false;
+      (ctx as any).webkitImageSmoothingEnabled = false;
+      (ctx as any).mozImageSmoothingEnabled = false;
+      (ctx as any).msImageSmoothingEnabled = false;
+
+      // Screen Shake
+      if (s.screenShake > 0.5) {
+        const shakeX = (Math.random() - 0.5) * s.screenShake * 2;
+        const shakeY = (Math.random() - 0.5) * s.screenShake * 2;
+        ctx.translate(shakeX, shakeY);
+      }
+
+      const worldCfg = s.worldConfig;
+
+      // 1. CIELO Y PARALLAX POR MUNDO
+      if (worldCfg.id === 'desert') {
+        // Cielo degradado azul claro a cálido
+        const skyGrad = ctx.createLinearGradient(0, 0, 0, ARENA_HEIGHT);
+        skyGrad.addColorStop(0, '#38bdf8');
+        skyGrad.addColorStop(0.55, '#93c5fd');
+        skyGrad.addColorStop(1, '#fef08a');
+        ctx.fillStyle = skyGrad;
+        ctx.fillRect(0, 0, ARENA_WIDTH, ARENA_HEIGHT);
+
+        // Sol brillante en el desierto
+        ctx.fillStyle = 'rgba(254, 240, 138, 0.4)';
+        ctx.beginPath();
+        ctx.arc(820, 110, 48, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#fffbeb';
+        ctx.beginPath();
+        ctx.arc(820, 110, 24, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Parallax 1: Montañas distantes
+        ctx.fillStyle = '#9a7b56';
+        ctx.beginPath();
+        ctx.moveTo(0, 360);
+        ctx.lineTo(80, 260);
+        ctx.lineTo(190, 350);
+        ctx.lineTo(310, 240);
+        ctx.lineTo(460, 370);
+        ctx.lineTo(600, 250);
+        ctx.lineTo(750, 360);
+        ctx.lineTo(870, 270);
+        ctx.lineTo(960, 350);
+        ctx.lineTo(960, ARENA_HEIGHT);
+        ctx.lineTo(0, ARENA_HEIGHT);
+        ctx.closePath();
+        ctx.fill();
+
+        // Parallax 2: Pirámides y crestas arenosas
+        ctx.fillStyle = '#c28847';
+        ctx.beginPath();
+        ctx.moveTo(140, 390);
+        ctx.lineTo(260, 280);
+        ctx.lineTo(380, 390);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.beginPath();
+        ctx.moveTo(640, 390);
+        ctx.lineTo(750, 300);
+        ctx.lineTo(860, 390);
+        ctx.closePath();
+        ctx.fill();
+
+        // Parallax 3: Dunas anaranjadas
+        ctx.fillStyle = '#e09848';
+        ctx.beginPath();
+        ctx.moveTo(0, 410);
+        ctx.bezierCurveTo(200, 360, 400, 430, 600, 380);
+        ctx.bezierCurveTo(750, 350, 880, 420, 960, 390);
+        ctx.lineTo(960, ARENA_HEIGHT);
+        ctx.lineTo(0, ARENA_HEIGHT);
+        ctx.closePath();
+        ctx.fill();
+      } else if (worldCfg.id === 'industrial') {
+        // Cielo gris azulado
+        const skyGrad = ctx.createLinearGradient(0, 0, 0, ARENA_HEIGHT);
+        skyGrad.addColorStop(0, '#0f172a');
+        skyGrad.addColorStop(0.65, '#1e293b');
+        skyGrad.addColorStop(1, '#334155');
+        ctx.fillStyle = skyGrad;
+        ctx.fillRect(0, 0, ARENA_WIDTH, ARENA_HEIGHT);
+
+        // Siluetas de fábricas y chimeneas
+        ctx.fillStyle = '#131b28';
+        ctx.fillRect(40, 160, 120, 300);
+        ctx.fillRect(200, 120, 160, 340);
+        ctx.fillRect(480, 180, 140, 280);
+        ctx.fillRect(720, 140, 180, 320);
+
+        // Chimeneas rojiblancas
+        const drawChimney = (cx: number, cy: number, w: number, h: number) => {
+          ctx.fillStyle = '#cbd5e1';
+          ctx.fillRect(cx, cy, w, h);
+          ctx.fillStyle = '#dc2626';
+          for (let y = cy + 10; y < cy + h; y += 30) {
+            ctx.fillRect(cx, y, w, 15);
+          }
+          // Humo sutil
+          ctx.fillStyle = 'rgba(148, 163, 184, 0.2)';
+          ctx.beginPath();
+          ctx.arc(cx + w / 2, cy - 10, 12, 0, Math.PI * 2);
+          ctx.fill();
+        };
+        drawChimney(840, 50, 26, 120);
+        drawChimney(905, 30, 22, 140);
+
+        // Estructuras y vigas metálicas en X
+        ctx.strokeStyle = '#1e293b';
+        ctx.lineWidth = 2;
+        for (let x = 80; x < ARENA_WIDTH; x += 160) {
+          ctx.strokeRect(x, 80, 120, 120);
+          ctx.beginPath();
+          ctx.moveTo(x, 80);
+          ctx.lineTo(x + 120, 200);
+          ctx.moveTo(x + 120, 80);
+          ctx.lineTo(x, 200);
+          ctx.stroke();
+        }
+      } else if (s.bgImage && s.bgImage.complete && s.bgImage.naturalWidth > 0) {
+        // Fondo oficial del escenario en alta fidelidad pixel art (Puerto Maldito, Fundición, Metro Neón, Lab Tóxico, Foso БОЙ, Azotea Hotel)
+        ctx.drawImage(s.bgImage, 0, 0, ARENA_WIDTH, ARENA_HEIGHT);
+      } else {
+        // Warehouse: Almacén industrial oscuro con figuras geométricas y sistema de tuberías estilo Superfighters
+        const bgGrad = ctx.createLinearGradient(0, 0, 0, ARENA_HEIGHT);
+        bgGrad.addColorStop(0, '#060911');
+        bgGrad.addColorStop(0.65, '#0c121e');
+        bgGrad.addColorStop(1, '#111927');
+        ctx.fillStyle = bgGrad;
+        ctx.fillRect(0, 0, ARENA_WIDTH, ARENA_HEIGHT);
+
+        // Rejilla técnica de fondo estilo blueprint industrial
+        ctx.strokeStyle = 'rgba(30, 41, 59, 0.35)';
+        ctx.lineWidth = 1;
+        for (let x = 0; x < ARENA_WIDTH; x += 32) {
+          ctx.beginPath();
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x, ARENA_HEIGHT);
+          ctx.stroke();
+        }
+        for (let y = 0; y < ARENA_HEIGHT; y += 32) {
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          ctx.lineTo(ARENA_WIDTH, y);
+          ctx.stroke();
+        }
+
+        // Estructuras de vigas metálicas en cruz (X-braces estilo Superfighters)
+        ctx.strokeStyle = 'rgba(51, 65, 85, 0.35)';
+        ctx.lineWidth = 2;
+        for (let bx = 30; bx < ARENA_WIDTH; bx += 150) {
+          ctx.strokeRect(bx, 60, 120, 80);
+          ctx.beginPath();
+          ctx.moveTo(bx, 60);
+          ctx.lineTo(bx + 120, 140);
+          ctx.moveTo(bx + 120, 60);
+          ctx.lineTo(bx, 140);
+          ctx.stroke();
+        }
+
+        // Función de tubería geométrica con sombreado cilíndrico metálico
+        const drawSuperPipe = (px: number, py: number, pw: number, ph: number, isVert: boolean) => {
+          ctx.save();
+          const pGrad = isVert
+            ? ctx.createLinearGradient(px, py, px + pw, py)
+            : ctx.createLinearGradient(px, py, px, py + ph);
+          pGrad.addColorStop(0, '#0f172a');
+          pGrad.addColorStop(0.25, '#334155');
+          pGrad.addColorStop(0.5, '#64748b');
+          pGrad.addColorStop(0.75, '#334155');
+          pGrad.addColorStop(1, '#090d16');
+          ctx.fillStyle = pGrad;
+          ctx.fillRect(px, py, pw, ph);
+
+          ctx.strokeStyle = '#020617';
+          ctx.lineWidth = 1.5;
+          ctx.strokeRect(px, py, pw, ph);
+
+          // Anillos de acople con remaches
+          if (isVert) {
+            for (let ry = py + 30; ry < py + ph - 10; ry += 70) {
+              ctx.fillStyle = '#475569';
+              ctx.fillRect(px - 3, ry, pw + 6, 8);
+              ctx.strokeRect(px - 3, ry, pw + 6, 8);
+              ctx.fillStyle = '#94a3b8';
+              ctx.fillRect(px, ry + 2, 3, 3);
+              ctx.fillRect(px + pw - 3, ry + 2, 3, 3);
+            }
+          } else {
+            for (let rx = px + 40; rx < px + pw - 10; rx += 100) {
+              ctx.fillStyle = '#475569';
+              ctx.fillRect(rx, py - 3, 10, ph + 6);
+              ctx.strokeRect(rx, py - 3, 10, ph + 6);
+              ctx.fillStyle = '#94a3b8';
+              ctx.fillRect(rx + 3, py, 3, 3);
+              ctx.fillRect(rx + 3, py + ph - 3, 3, 3);
+            }
+          }
+          ctx.restore();
+        };
+
+        // Red de tuberías geométricas principales (Superfighters style)
+        drawSuperPipe(0, 110, ARENA_WIDTH, 26, false);
+        drawSuperPipe(0, 255, ARENA_WIDTH, 18, false);
+        drawSuperPipe(140, 30, 22, 290, true);
+        drawSuperPipe(480, 30, 22, 290, true);
+        drawSuperPipe(810, 30, 22, 290, true);
+
+        // Codos geométricos (uniones cuadradas en 90°)
+        const drawPipeJoint = (jx: number, jy: number, jsize: number) => {
+          ctx.fillStyle = '#334155';
+          ctx.strokeStyle = '#020617';
+          ctx.lineWidth = 1.5;
+          ctx.fillRect(jx, jy, jsize, jsize);
+          ctx.strokeRect(jx, jy, jsize, jsize);
+          ctx.fillStyle = '#64748b';
+          ctx.beginPath();
+          ctx.arc(jx + jsize / 2, jy + jsize / 2, jsize * 0.28, 0, Math.PI * 2);
+          ctx.fill();
+        };
+        drawPipeJoint(137, 107, 28);
+        drawPipeJoint(477, 107, 28);
+        drawPipeJoint(807, 107, 28);
+        drawPipeJoint(138, 251, 26);
+        drawPipeJoint(478, 251, 26);
+        drawPipeJoint(808, 251, 26);
+
+        // Manómetros de presión industriales con aguja roja
+        const drawPressureGauge = (gx: number, gy: number) => {
+          ctx.save();
+          ctx.fillStyle = '#b45309';
+          ctx.beginPath();
+          ctx.arc(gx, gy, 14, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = '#f8fafc';
+          ctx.beginPath();
+          ctx.arc(gx, gy, 11, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = '#0f172a';
+          ctx.lineWidth = 1;
+          ctx.stroke();
+          ctx.fillStyle = '#0f172a';
+          ctx.fillRect(gx - 7, gy - 1, 2, 2);
+          ctx.fillRect(gx + 5, gy - 1, 2, 2);
+          ctx.fillRect(gx - 1, gy - 7, 2, 2);
+          ctx.strokeStyle = '#ef4444';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.moveTo(gx, gy);
+          ctx.lineTo(gx + 5, gy - 6);
+          ctx.stroke();
+          ctx.restore();
+        };
+        drawPressureGauge(310, 123);
+        drawPressureGauge(650, 123);
+
+        // Válvulas industriales circulares rojas
+        const drawValve = (vx: number, vy: number) => {
+          ctx.save();
+          ctx.strokeStyle = '#dc2626';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(vx, vy, 11, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(vx - 11, vy);
+          ctx.lineTo(vx + 11, vy);
+          ctx.moveTo(vx, vy - 11);
+          ctx.lineTo(vx, vy + 11);
+          ctx.stroke();
+          ctx.fillStyle = '#fef08a';
+          ctx.beginPath();
+          ctx.arc(vx, vy, 3, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        };
+        drawValve(230, 123);
+        drawValve(730, 123);
+
+        // Lámparas colgantes
+        const drawLamp = (lx: number) => {
+          ctx.strokeStyle = '#475569';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.moveTo(lx, 0);
+          ctx.lineTo(lx, 70);
+          ctx.stroke();
+
+          ctx.fillStyle = '#334155';
+          ctx.beginPath();
+          ctx.moveTo(lx - 12, 85);
+          ctx.lineTo(lx + 12, 85);
+          ctx.lineTo(lx + 6, 70);
+          ctx.lineTo(lx - 6, 70);
+          ctx.closePath();
+          ctx.fill();
+
+          const lightGrad = ctx.createRadialGradient(lx, 85, 2, lx, 220, 150);
+          lightGrad.addColorStop(0, 'rgba(250, 204, 21, 0.16)');
+          lightGrad.addColorStop(1, 'rgba(250, 204, 21, 0)');
+          ctx.fillStyle = lightGrad;
+          ctx.beginPath();
+          ctx.moveTo(lx - 12, 85);
+          ctx.lineTo(lx - 90, 320);
+          ctx.lineTo(lx + 90, 320);
+          ctx.lineTo(lx + 12, 85);
+          ctx.closePath();
+          ctx.fill();
+        };
+
+        drawLamp(220);
+        drawLamp(480);
+        drawLamp(740);
+      }
+
+      // 2. PROPS DECORATIVOS SIN COLISIÓN
+      worldCfg.props.forEach((prop) => {
+        ctx.save();
+        ctx.translate(prop.x, prop.y);
+        const scale = prop.scale || 1;
+        ctx.scale(scale, scale);
+
+        if (prop.type === 'cactus') {
+          // Cactus estilizado
+          ctx.fillStyle = '#15803d';
+          ctx.fillRect(-6, -38, 12, 38);
+          ctx.fillRect(-16, -26, 10, 6);
+          ctx.fillRect(-16, -34, 6, 12);
+          ctx.fillRect(6, -20, 10, 6);
+          ctx.fillRect(10, -28, 6, 12);
+        } else if (prop.type === 'dry_tree') {
+          // Árbol tipo sabana
+          ctx.fillStyle = '#78350f';
+          ctx.fillRect(-8, -48, 16, 48);
+          ctx.fillRect(-22, -48, 14, 8);
+          ctx.fillRect(8, -48, 14, 8);
+          ctx.fillStyle = '#65a30d';
+          ctx.beginPath();
+          ctx.ellipse(0, -56, 36, 14, 0, 0, Math.PI * 2);
+          ctx.fill();
+        } else if (prop.type === 'cow_skull') {
+          // Cráneo de vaca con cuernos
+          ctx.fillStyle = '#fef08a';
+          ctx.beginPath();
+          ctx.arc(0, -8, 8, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = '#ca8a04';
+          ctx.lineWidth = 2.5;
+          ctx.beginPath();
+          ctx.moveTo(-6, -10);
+          ctx.quadraticCurveTo(-18, -18, -16, -6);
+          ctx.moveTo(6, -10);
+          ctx.quadraticCurveTo(18, -18, 16, -6);
+          ctx.stroke();
+        } else if (prop.type === 'dry_bush') {
+          ctx.fillStyle = '#92400e';
+          ctx.beginPath();
+          ctx.arc(0, -6, 9, 0, Math.PI * 2);
+          ctx.fill();
+        } else if (prop.type === 'arrow_sign') {
+          ctx.fillStyle = '#78350f';
+          ctx.fillRect(-3, -24, 6, 24);
+          ctx.fillStyle = '#b45309';
+          ctx.fillRect(-14, -28, 28, 12);
+          ctx.fillStyle = '#fef3c7';
+          ctx.font = 'bold 9px monospace';
+          ctx.fillText('→', -4, -19);
+        } else if (prop.type === 'lockers') {
+          ctx.fillStyle = '#334155';
+          ctx.fillRect(-18, -42, 36, 42);
+          ctx.fillStyle = '#1e293b';
+          ctx.fillRect(-15, -38, 14, 34);
+          ctx.fillRect(1, -38, 14, 34);
+        } else if (prop.type === 'warning_board') {
+          ctx.fillStyle = '#eab308';
+          ctx.fillRect(-12, -24, 24, 18);
+          ctx.fillStyle = '#0f172a';
+          ctx.font = 'bold 9px monospace';
+          ctx.fillText('⚠️', -8, -11);
+        } else if (prop.type === 'box_stack') {
+          ctx.fillStyle = '#b45309';
+          ctx.fillRect(-12, -22, 24, 22);
+          ctx.fillRect(-6, -38, 16, 16);
+        }
+        ctx.restore();
+      });
+
+      // 3. PLATAFORMAS CON TEMÁTICA (UI-03: Contraste reforzado con bordes superiores claros)
+      for (const plat of s.platforms) {
+        if (plat.theme === 'desert_earth') {
+          // Tierra marrón con borde superior de arena clara reflectante
+          ctx.fillStyle = '#78461f';
+          ctx.fillRect(plat.x, plat.y, plat.w, plat.h);
+
+          ctx.fillStyle = '#fef08a';
+          ctx.fillRect(plat.x, plat.y, plat.w, 3);
+          ctx.fillStyle = '#e6b566';
+          ctx.fillRect(plat.x, plat.y + 3, plat.w, 4);
+
+          // Puntos y textura arenosa
+          ctx.fillStyle = '#d49b4b';
+          for (let px = plat.x + 4; px < plat.x + plat.w; px += 14) {
+            ctx.beginPath();
+            ctx.arc(px, plat.y + 7, 3, 0, Math.PI);
+            ctx.fill();
+          }
+        } else if (plat.theme === 'hazard_stripe' || plat.label === 'CONVEYOR') {
+          // Base metálica
+          ctx.fillStyle = '#1e293b';
+          ctx.fillRect(plat.x, plat.y, plat.w, plat.h);
+
+          // Franjas diagonales de peligro (Amarillo/Negro o Naranja/Negro)
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(plat.x, plat.y, plat.w, plat.h);
+          ctx.clip();
+
+          const offset = (s.worldTick * 2) % 24;
+          for (let sx = plat.x - 24; sx < plat.x + plat.w + 24; sx += 24) {
+            ctx.fillStyle = '#f97316';
+            ctx.beginPath();
+            ctx.moveTo(sx + offset, plat.y);
+            ctx.lineTo(sx + 12 + offset, plat.y);
+            ctx.lineTo(sx + offset, plat.y + plat.h);
+            ctx.lineTo(sx - 12 + offset, plat.y + plat.h);
+            ctx.closePath();
+            ctx.fill();
+          }
+
+          // Chevrons si es cinta transportadora
+          if (plat.label === 'CONVEYOR') {
+            ctx.fillStyle = '#f8fafc';
+            ctx.font = 'bold 10px monospace';
+            const chevOffset = (s.worldTick * 3) % 40;
+            for (let cx = plat.x + chevOffset; cx < plat.x + plat.w; cx += 40) {
+              ctx.fillText('>>>', cx, plat.y + 13);
+            }
+          }
+          ctx.restore();
+
+          // Borde superior claro reflectante
+          ctx.fillStyle = '#fed7aa';
+          ctx.fillRect(plat.x, plat.y, plat.w, 2);
+
+          ctx.strokeStyle = '#475569';
+          ctx.lineWidth = 1.5;
+          ctx.strokeRect(plat.x, plat.y, plat.w, plat.h);
+        } else if (plat.theme === 'industrial_metal') {
+          // Paneles metálicos azul oscuro con remaches
+          ctx.fillStyle = '#1e293b';
+          ctx.fillRect(plat.x, plat.y, plat.w, plat.h);
+
+          // Borde superior metálico claro
+          ctx.fillStyle = '#64748b';
+          ctx.fillRect(plat.x, plat.y, plat.w, 4);
+          ctx.fillStyle = '#cbd5e1';
+          ctx.fillRect(plat.x, plat.y, plat.w, 1.5);
+
+          // Remaches
+          ctx.fillStyle = '#94a3b8';
+          for (let rx = plat.x + 8; rx < plat.x + plat.w; rx += 20) {
+            ctx.beginPath();
+            ctx.arc(rx, plat.y + plat.h / 2, 1.5, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        } else {
+          // Warehouse: Plataformas de hormigón oscuro y vigas
+          ctx.fillStyle = '#1e293b';
+          ctx.fillRect(plat.x, plat.y, plat.w, plat.h);
+
+          // Borde superior de hormigón claro para alto contraste táctico
+          ctx.fillStyle = '#64748b';
+          ctx.fillRect(plat.x, plat.y, plat.w, 4);
+          ctx.fillStyle = '#cbd5e1';
+          ctx.fillRect(plat.x, plat.y, plat.w, 1.5);
+
+          // Textura de bloques de hormigón
+          ctx.strokeStyle = '#0f172a';
+          ctx.lineWidth = 1;
+          for (let bx = plat.x + 30; bx < plat.x + plat.w; bx += 30) {
+            ctx.beginPath();
+            ctx.moveTo(bx, plat.y);
+            ctx.lineTo(bx, plat.y + plat.h);
+            ctx.stroke();
+          }
+        }
+      }
+
+      // 3.5. ESTANTE DE ARMAS INTERACTIVO (MODO PRÁCTICA - EL GIMNASIO)
+      if (gameMode === 'practice') {
+        const rackX = 105;
+        const rackY = 440;
+        const rackW = 70;
+        const rackH = 61;
+        const isNear = Math.hypot(s.p1.x - 140, s.p1.y - 470) < 90;
+
+        // Fondo y marco del estante metálico
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(rackX, rackY, rackW, rackH);
+        ctx.strokeStyle = isNear ? '#38bdf8' : '#475569';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(rackX, rackY, rackW, rackH);
+
+        // Franjas de advertencia industrial en la parte superior del estante
+        ctx.fillStyle = '#eab308';
+        ctx.fillRect(rackX + 2, rackY + 2, rackW - 4, 6);
+        ctx.fillStyle = '#0f172a';
+        for (let fx = rackX + 4; fx < rackX + rackW - 4; fx += 10) {
+          ctx.beginPath();
+          ctx.moveTo(fx, rackY + 2);
+          ctx.lineTo(fx + 5, rackY + 8);
+          ctx.lineTo(fx + 3, rackY + 8);
+          ctx.lineTo(fx - 2, rackY + 2);
+          ctx.fill();
+        }
+
+        // Estantes interiores
+        ctx.fillStyle = '#1e293b';
+        ctx.fillRect(rackX + 4, rackY + 14, rackW - 8, 20);
+        ctx.fillRect(rackX + 4, rackY + 38, rackW - 8, 20);
+
+        // Siluetas de armas dentro del estante
+        ctx.fillStyle = '#94a3b8';
+        // Rifle superior
+        ctx.fillRect(rackX + 10, rackY + 22, 48, 4);
+        ctx.fillRect(rackX + 14, rackY + 26, 6, 6);
+        ctx.fillRect(rackX + 40, rackY + 26, 8, 5);
+        // Pistola y katana inferior
+        ctx.fillRect(rackX + 10, rackY + 46, 22, 4);
+        ctx.fillRect(rackX + 12, rackY + 50, 4, 5);
+        ctx.strokeStyle = '#38bdf8';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(rackX + 38, rackY + 54);
+        ctx.lineTo(rackX + 60, rackY + 44);
+        ctx.stroke();
+
+        // Placa o Badge flotante sobre el estante
+        const badgeY = rackY - 22;
+        ctx.fillStyle = isNear ? 'rgba(14, 165, 233, 0.95)' : 'rgba(15, 23, 42, 0.9)';
+        ctx.fillRect(rackX - 4, badgeY, rackW + 8, 18);
+        ctx.strokeStyle = isNear ? '#fde047' : '#94a3b8';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(rackX - 4, badgeY, rackW + 8, 18);
+
+        ctx.fillStyle = isNear ? '#020617' : '#f8fafc';
+        ctx.font = 'bold 9px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('[E] ARMERÍA', rackX + rackW / 2, badgeY + 12);
+
+        // Si el jugador está cerca, tooltip dinámico abajo
+        if (isNear) {
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+          ctx.fillRect(rackX - 35, rackY + rackH + 6, rackW + 70, 16);
+          ctx.strokeStyle = '#38bdf8';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(rackX - 35, rackY + rackH + 6, rackW + 70, 16);
+          ctx.fillStyle = '#fde047';
+          ctx.font = 'bold 8px monospace';
+          ctx.fillText('PULSA [E] PARA ELEGIR ARMA', rackX + rackW / 2, rackY + rackH + 18);
+        }
+      }
+
+      // 4. PRENSAS HIDRÁULICAS (ZONA INDUSTRIAL)
+      s.presses.forEach((press) => {
+        // Cilindro superior fijo
+        ctx.fillStyle = '#334155';
+        ctx.fillRect(press.x + press.w / 2 - 8, press.baseY - 40, 16, 40);
+
+        // Vástago de pistón cromado
+        ctx.fillStyle = '#cbd5e1';
+        ctx.fillRect(
+          press.x + press.w / 2 - 5,
+          press.baseY,
+          10,
+          Math.max(0, press.currentY - press.baseY)
+        );
+
+        // Cabezal de estampado
+        ctx.fillStyle = '#dc2626';
+        ctx.fillRect(press.x, press.currentY, press.w, press.h);
+
+        // Franja de advertencia en cabezal
+        ctx.fillStyle = '#facc15';
+        ctx.fillRect(press.x + 4, press.currentY + press.h - 8, press.w - 8, 6);
+
+        // Luz de aviso
+        ctx.fillStyle = press.tick >= 90 && press.tick <= 125 ? '#ef4444' : '#22c55e';
+        ctx.beginPath();
+        ctx.arc(press.x + press.w / 2, press.currentY + 12, 4, 0, Math.PI * 2);
+        ctx.fill();
+      });
+
+      // 5. CAJAS DESTRUCTIBLES (DESIERTO)
+      s.crates.forEach((crate) => {
+        ctx.fillStyle = '#b45309';
+        ctx.fillRect(crate.x, crate.y, crate.w, crate.h);
+
+        ctx.strokeStyle = '#78350f';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(crate.x, crate.y, crate.w, crate.h);
+
+        // Tablas cruzadas en X
+        ctx.beginPath();
+        ctx.moveTo(crate.x, crate.y);
+        ctx.lineTo(crate.x + crate.w, crate.y + crate.h);
+        ctx.moveTo(crate.x + crate.w, crate.y);
+        ctx.lineTo(crate.x, crate.y + crate.h);
+        ctx.stroke();
+
+        // Barra de vida si está dañada
+        if (crate.health < crate.maxHealth) {
+          ctx.fillStyle = '#1e293b';
+          ctx.fillRect(crate.x, crate.y - 6, crate.w, 4);
+          ctx.fillStyle = '#f59e0b';
+          ctx.fillRect(crate.x, crate.y - 6, (crate.health / crate.maxHealth) * crate.w, 4);
+        }
+      });
+
+      // 6. BARRILES EXPLOSIVOS (ZONA INDUSTRIAL)
+      s.barrels.forEach((barrel) => {
+        // Tambor de acero rojo
+        ctx.fillStyle = '#dc2626';
+        ctx.fillRect(barrel.x, barrel.y, barrel.w, barrel.h);
+
+        // Rebordes metálicos oscuros
+        ctx.fillStyle = '#991b1b';
+        ctx.fillRect(barrel.x, barrel.y, barrel.w, 4);
+        ctx.fillRect(barrel.x, barrel.y + barrel.h / 2 - 2, barrel.w, 4);
+        ctx.fillRect(barrel.x, barrel.y + barrel.h - 4, barrel.w, 4);
+
+        // Icono de peligro de fuego
+        ctx.fillStyle = '#fef08a';
+        ctx.font = 'bold 11px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('🔥', barrel.x + barrel.w / 2, barrel.y + barrel.h / 2 + 3);
+
+        if (barrel.health < barrel.maxHealth) {
+          ctx.fillStyle = '#1e293b';
+          ctx.fillRect(barrel.x, barrel.y - 6, barrel.w, 4);
+          ctx.fillStyle = '#ef4444';
+          ctx.fillRect(barrel.x, barrel.y - 6, (barrel.health / barrel.maxHealth) * barrel.w, 4);
+        }
+      });
+
+      // 7. BOTIQUINES (+35 HP)
+      s.medkits.forEach((med) => {
+        const bobY = Math.sin(med.bobTicks * 0.1) * 3;
+
+        // Aura verde
+        ctx.fillStyle = 'rgba(34, 197, 94, 0.25)';
+        ctx.beginPath();
+        ctx.arc(med.x, med.y + bobY, 18, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Maletín blanco
+        ctx.fillStyle = '#f8fafc';
+        ctx.fillRect(med.x - 12, med.y - 8 + bobY, 24, 16);
+        ctx.strokeStyle = '#e2e8f0';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(med.x - 12, med.y - 8 + bobY, 24, 16);
+
+        // Cruz médica verde
+        ctx.fillStyle = '#16a34a';
+        ctx.fillRect(med.x - 2, med.y - 6 + bobY, 4, 12);
+        ctx.fillRect(med.x - 6, med.y - 2 + bobY, 12, 4);
+      });
+
+      // 8. ARMAS EN EL MUNDO
+      for (const w of s.worldWeapons) {
+        const wData = getWeapon(w.weaponType);
+        const wImg = s.weaponImages[w.weaponType];
+        const bobY = Math.sin(w.bobTicks * 0.1) * 4;
+
+        ctx.fillStyle = 'rgba(56, 189, 248, 0.25)';
+        ctx.beginPath();
+        ctx.arc(w.x, w.y + bobY, 18, 0, Math.PI * 2);
+        ctx.fill();
+
+        if (wImg && wImg.complete && wImg.naturalWidth > 0) {
+          ctx.drawImage(wImg, w.x - 16, w.y - 12 + bobY, 32, 16);
+        } else {
+          ctx.fillStyle = '#1e293b';
+          ctx.strokeStyle = wData.color;
+          ctx.lineWidth = 1.5;
+          ctx.fillRect(w.x - 14, w.y - 7 + bobY, 28, 14);
+          ctx.strokeRect(w.x - 14, w.y - 7 + bobY, 28, 14);
+        }
+
+        ctx.fillStyle = '#f8fafc';
+        ctx.font = 'bold 9px monospace';
+        ctx.textAlign = 'center';
+        // UI-04: Truncar dinámicamente según measureText con '…'
+        const maxTextW = 64;
+        let displayName = wData.name.toUpperCase();
+        if (ctx.measureText(displayName).width > maxTextW) {
+          while (displayName.length > 2 && ctx.measureText(displayName + '…').width > maxTextW) {
+            displayName = displayName.slice(0, -1);
+          }
+          displayName += '…';
+        }
+        ctx.fillText(displayName, w.x, w.y + 14 + bobY);
+        ctx.fillStyle = wData.color;
+        ctx.fillText('▼', w.x, w.y - 14 + bobY);
+      }
+
+      // 8.5. PAQUETES DE GRANADAS EN EL MUNDO
+      for (const gp of s.grenadePickups) {
+        const gCfg = GRENADE_DATABASE[gp.type];
+        const gImg = s.grenadeImages[gp.type];
+        const bobY = Math.sin(gp.bobTicks * 0.1) * 4;
+
+        // Aura de color según el tipo de granada
+        ctx.fillStyle = gCfg.color + '40';
+        ctx.beginPath();
+        ctx.arc(gp.x, gp.y + bobY, 16, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Caja de suministro táctico
+        ctx.fillStyle = '#0f172a';
+        ctx.strokeStyle = gCfg.color;
+        ctx.lineWidth = 1.5;
+        ctx.fillRect(gp.x - 12, gp.y - 10 + bobY, 24, 20);
+        ctx.strokeRect(gp.x - 12, gp.y - 10 + bobY, 24, 20);
+
+        if (gImg && gImg.complete && gImg.naturalWidth > 0) {
+          ctx.drawImage(gImg, gp.x - 9, gp.y - 8 + bobY, 18, 16);
+        } else {
+          ctx.fillStyle = gCfg.color;
+          ctx.beginPath();
+          ctx.arc(gp.x, gp.y + bobY, 5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        // Etiqueta del tipo y cantidad
+        ctx.fillStyle = '#f8fafc';
+        ctx.font = 'bold 8px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(`${gCfg.shortName} x${gp.amount}`, gp.x, gp.y + 18 + bobY);
+        ctx.fillStyle = gCfg.color;
+        ctx.fillText('▼', gp.x, gp.y - 13 + bobY);
+      }
+
+      // 9. ZONAS DE FUEGO
+      for (const fz of s.fireZones) {
+        const grad = ctx.createRadialGradient(fz.x, fz.y, 5, fz.x, fz.y, fz.radius);
+        grad.addColorStop(0, 'rgba(251, 146, 60, 0.7)');
+        grad.addColorStop(0.6, 'rgba(234, 88, 12, 0.4)');
+        grad.addColorStop(1, 'rgba(220, 38, 38, 0)');
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(fz.x, fz.y, fz.radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // 10. JUGADORES
+      const renderFighter = (
+        p: PlayerState,
+        sprite: HTMLImageElement | null,
+        nameTagColor: string,
+        playerId: number,
+        isDuplicateFaction: boolean = false
+      ) => {
+        const isP1 = playerId === 1;
+        const isP2Human = playerId === 2 && (gameMode === 'local1v1' || gameMode === 'coop');
+        const is1v1 = gameMode === 'local1v1';
+        // Dimensiones aumentadas para hacer a los personajes más grandes y visibles en pantalla
+        const isBigFighter =
+          p.name.includes('TANQUE') ||
+          p.name.includes('MUTANTE') ||
+          p.name.includes('BERSERKER') ||
+          p.name.includes('SANTA') ||
+          (isP1 && (playerFaction || BotFaction.Ninja) === BotFaction.Santa) ||
+          (isP2Human && (botFaction || BotFaction.Ninja) === BotFaction.Santa);
+        const charW = isBigFighter ? 60 : 52;
+        const charH = isBigFighter ? 82 : 74;
+        const drawX = -charW / 2;
+        const drawY = -charH / 2;
+
+        const isGymratFighter =
+          p.name.toUpperCase().includes('GYMRAT') ||
+          (isP1 && (playerFaction || BotFaction.Ninja) === BotFaction.Gymrat) ||
+          (isP2Human && (botFaction || BotFaction.Ninja) === BotFaction.Gymrat);
+        const isSantaFighter =
+          p.name.toUpperCase().includes('SANTA') ||
+          (isP1 && (playerFaction || BotFaction.Ninja) === BotFaction.Santa) ||
+          (isP2Human && (botFaction || BotFaction.Ninja) === BotFaction.Santa);
+        const charPrefix = isGymratFighter ? 'gymrat_' : (isSantaFighter ? 'santaclo_' : 'ninja_');
+
+        const controller = isP1 ? s.p1Controller : isP2Human ? s.p2Controller : undefined;
+        const sheet = isP1 ? s.p1WalkSheet : (isP2Human ? s.botWalkSheet : null);
+        const runSheet = isP1 ? s.p1RunSheet : (isP2Human ? s.botRunSheet : null);
+        const rollSheet = isP1 ? s.p1RollSheet : (isP2Human ? s.botRollSheet : null);
+        const jumpSheet = isP1 ? s.p1JumpSheet : (isP2Human ? s.botJumpSheet : null);
+        const idleImg = isP1
+          ? s.p1IdleSprite
+          : isP2Human
+          ? (s.botIdleSprite || s.p1IdleSprite)
+          : (sprite || s.botIdleSprite);
+        const cfg = isP1 ? s.p1SheetConfig : (isP2Human ? s.botSheetConfig : null);
+        const activeThrowSheet = isP1 ? s.p1ThrowUpSheet : (isP2Human ? s.botThrowUpSheet : null);
+        const activeRifleSheet = isP1 ? s.p1RifleSheet : (isP2Human ? s.botRifleSheet : null);
+        const activePistolSheet = isP1 ? s.p1PistolSheet : (isP2Human ? s.botPistolSheet : null);
+        const activeTwoHandSheet = isP1 ? s.p1TwoHandSheet : (isP2Human ? s.botTwoHandSheet : null);
+        const activeOneHandSheet = isP1 ? s.p1OneHandSheet : (isP2Human ? s.botOneHandSheet : null);
+        const activeMeleeSheet = isP1 ? s.p1MeleeSheet : (isP2Human ? s.botMeleeSheet : null);
+        // Sombra suave proyectada bajo los pies del Ninja y los bots (solo visual, sin colisión)
+        if (p.isAlive) {
+          ctx.save();
+          const feetY = p.y + charH / 2 - 2;
+          const inAirDist = p.onGround ? 0 : Math.min(80, Math.max(0, p.velocityY < 0 ? 22 : 14));
+          const shadowScale = Math.max(0.45, 1 - inAirDist / 95);
+          const shadowAlpha = Math.max(0.18, 0.45 * (1 - inAirDist / 120));
+          ctx.fillStyle = `rgba(0, 0, 0, ${shadowAlpha})`;
+          ctx.beginPath();
+          ctx.ellipse(p.x, feetY, (charW * 0.4) * shadowScale, 5 * shadowScale, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        } else {
+          ctx.save();
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+          ctx.beginPath();
+          ctx.ellipse(p.x, p.y + 16, charW * 0.45, 5, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+
+        if (!p.isAlive) {
+          ctx.save();
+          ctx.translate(p.x, p.y + 16);
+          ctx.rotate((p.facingRight ? 1 : -1) * 1.5);
+          ctx.globalAlpha = 0.65;
+          const deadImg = isP1 || isP2Human ? (idleImg || sprite) : (sprite || s.botIdleSprite);
+          if (deadImg && deadImg.complete && deadImg.naturalWidth > 0) {
+            ctx.drawImage(deadImg, drawX, drawY, charW, charH);
+            if (!isP1 && isDuplicateFaction) {
+              ctx.save();
+              ctx.globalCompositeOperation = 'source-atop';
+              ctx.fillStyle = nameTagColor;
+              ctx.globalAlpha = 0.25;
+              ctx.fillRect(drawX, drawY, charW, charH);
+              ctx.restore();
+              ctx.strokeStyle = nameTagColor;
+              ctx.lineWidth = 1.5;
+              ctx.strokeRect(drawX, drawY, charW, charH);
+            }
+          } else {
+            ctx.fillStyle = 'rgba(100, 116, 139, 0.6)';
+            ctx.fillRect(-charW / 3, -charH / 2, (charW * 2) / 3, charH);
+          }
+          ctx.restore();
+          return;
+        }
+
+        ctx.save();
+        ctx.translate(p.x, p.y);
+
+        const isRolling =
+          p.fsm === PlayerFSMState.Roll ||
+          (controller && controller.state === ControllerState.Roll);
+
+        const isInvulnerable = controller
+          ? controller.isInvulnerable
+          : (p.invulnerabilityTicks > 0);
+
+        if (p.invulnerabilityTicks > 0 && Math.floor(p.invulnerabilityTicks / 4) % 2 === 0) {
+          ctx.globalAlpha = 0.5;
+        } else if (isRolling && isInvulnerable) {
+          ctx.shadowColor = isP1 ? '#38bdf8' : '#f43f5e';
+          ctx.shadowBlur = 16;
+        }
+
+        // Aura pulsante durante la carga de Heavy Smash
+        if (p.isChargingHeavy) {
+          const pulse = Math.sin(p.heavyChargeTicks * 0.45) * 0.5 + 0.5;
+          ctx.save();
+          ctx.strokeStyle = isP1
+            ? `rgba(56, 189, 248, ${0.45 + pulse * 0.55})`
+            : `rgba(244, 63, 94, ${0.45 + pulse * 0.55})`;
+          ctx.lineWidth = 3 + pulse * 3;
+          ctx.beginPath();
+          ctx.arc(0, 0, charH * 0.52, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.restore();
+        }
+
+        // Postura aerodinámica agachada al ejecutar Barrida (Slide)
+        if (p.isSliding) {
+          ctx.translate(0, charH * 0.16);
+          ctx.scale(1.18, 0.72);
+        }
+
+        // Fuego si está ardiendo
+        if (p.isOnFire || p.fireTicks > 0) {
+          ctx.fillStyle = 'rgba(249, 115, 22, 0.35)';
+          ctx.beginPath();
+          ctx.arc(0, 0, 34, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        ctx.scale(p.facingRight ? 1 : -1, 1);
+
+        // Estado de caminata activo sobre el suelo
+        const isWalking =
+          p.onGround &&
+          p.isMovingHorizontally &&
+          p.fsm !== PlayerFSMState.Roll &&
+          p.fsm !== PlayerFSMState.KnockedDown &&
+          p.fsm !== PlayerFSMState.GetUp &&
+          p.fsm !== PlayerFSMState.Dead;
+
+        const isBlade = isBladeWeapon(p.equippedWeapon);
+        const isBladeAttacking =
+          isBlade &&
+          (p.fsm === PlayerFSMState.MeleeAttack || p.isSliding || p.isChargingHeavy);
+
+        // -2. Animación de Lanzamiento (throw_up - 5 frames)
+        if (
+          p.isThrowing &&
+          activeThrowSheet &&
+          activeThrowSheet.complete &&
+          activeThrowSheet.naturalWidth > 0
+        ) {
+          const throwCols = cfg?.throwUpCols || 5;
+          const throwRows = cfg?.throwUpRows || 1;
+          const safeCol = Math.max(0, Math.min(throwCols - 1, p.throwAnimFrame || 0));
+          drawSheetFrame(ctx, activeThrowSheet, `${charPrefix}throw_up`, safeCol, throwCols, throwRows, drawX, drawY, charW, charH);
+
+          const currentF = p.throwAnimFrame || 0;
+          const isSantaThrow =
+            (isP1 ? s.p1Faction : s.botFaction) === BotFaction.Santa ||
+            p.faction === BotFaction.Santa ||
+            (p.name && p.name.toUpperCase().includes('SANTA'));
+          const isGymratThrow = (isP1 ? s.p1Faction : s.botFaction) === BotFaction.Gymrat || p.faction === BotFaction.Gymrat;
+          const releaseF = isSantaThrow ? 3 : 2;
+
+          if (currentF < releaseF && !p.throwHasReleased) {
+            const wImg = s.weaponImages[p.equippedWeapon] || s.weaponImages[WeaponType.Grenade];
+            if (wImg && wImg.complete && wImg.naturalWidth > 0) {
+              ctx.save();
+              if (isSantaThrow) {
+                if (currentF === 0) {
+                  // Frame 0: mano derecha abajo/recogida
+                  ctx.translate(-10, -6);
+                  ctx.rotate(-0.25);
+                } else if (currentF === 1) {
+                  // Frame 1: mano levantándose hacia el hombro
+                  ctx.translate(-16, -18);
+                  ctx.rotate(-0.55);
+                } else if (currentF === 2) {
+                  // Frame 2: mano cargada hacia atrás detrás de la cabeza
+                  ctx.translate(-22, -26);
+                  ctx.rotate(-0.85);
+                }
+              } else if (isGymratThrow) {
+                if (currentF === 0) {
+                  // Frame 0: manos al pecho en guardia
+                  ctx.translate(12, -4);
+                  ctx.rotate(-0.1);
+                } else if (currentF === 1) {
+                  // Frame 1: mano levantada y cargada hacia atrás (windup)
+                  ctx.translate(-16, -26);
+                  ctx.rotate(-0.55);
+                }
+              } else {
+                if (currentF === 0) {
+                  // Frame 0: mano recogida hacia atrás
+                  ctx.translate(-14, -14);
+                  ctx.rotate(-0.35);
+                } else if (currentF === 1) {
+                  // Frame 1: mano levantada hacia arriba
+                  ctx.translate(-6, -26);
+                  ctx.rotate(-0.75);
+                }
+              }
+              ctx.drawImage(wImg, -8, -8, 16, 16);
+              ctx.restore();
+            }
+          }
+        } else if (
+          p.isRifleShooting &&
+          activeRifleSheet &&
+          activeRifleSheet.complete &&
+          activeRifleSheet.naturalWidth > 0
+        ) {
+          const rifleCols = cfg?.rifleCols || 4;
+          const rifleRows = cfg?.rifleRows || 1;
+          const safeCol = Math.max(0, Math.min(rifleCols - 1, p.rifleAnimFrame || 0));
+          drawSheetFrame(ctx, activeRifleSheet, `${charPrefix}rifle_shoot`, safeCol, rifleCols, rifleRows, drawX, drawY, charW, charH);
+
+          const currentF = p.rifleAnimFrame || 0;
+          const isGymrat = (isP1 ? s.p1Faction : s.botFaction) === BotFaction.Gymrat || p.faction === BotFaction.Gymrat;
+          const isSanta =
+            (isP1 ? s.p1Faction : s.botFaction) === BotFaction.Santa ||
+            p.faction === BotFaction.Santa ||
+            (p.name && p.name.toUpperCase().includes('SANTA'));
+          const hasBuiltInGun = isGymrat || isSanta;
+
+          // Para Ninja y otros personajes sin arma integrada en su sprite:
+          // Rifle / arma pesada en dos manos orientada y sacudida según el retroceso
+          if (!hasBuiltInGun) {
+            const wImg = s.weaponImages[p.equippedWeapon];
+            if (wImg && wImg.complete && wImg.naturalWidth > 0) {
+              ctx.save();
+              if (currentF === 0) {
+                // Frame 1: Apuntado frontal
+                ctx.translate(22, 0);
+                ctx.rotate(-0.02);
+              } else if (currentF === 1) {
+                // Frame 2: Disparo con fogonazo frontal
+                ctx.translate(22, -1);
+                ctx.rotate(-0.05);
+              } else if (currentF === 2) {
+                // Frame 3: Fuerte retroceso / sacudida hacia atrás
+                ctx.translate(14, -18);
+                ctx.rotate(-0.65);
+              } else {
+                // Frame 4: Recuperación y re-alineación
+                ctx.translate(22, -2);
+                ctx.rotate(-0.05);
+              }
+              ctx.drawImage(wImg, -6, -8, 36, 18);
+              ctx.restore();
+            }
+          }
+
+          // Fogonazo pesado / Destello frontal (Muzzle Flash)
+          // Para Ninja y personajes sin fogonazo integrado en su spritesheet:
+          if (!hasBuiltInGun && currentF === 0) {
+            ctx.save();
+            ctx.fillStyle = '#fde047';
+            ctx.shadowColor = '#f97316';
+            ctx.shadowBlur = 18;
+            ctx.beginPath();
+            ctx.arc(44, 0, 8, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.moveTo(38, -6);
+            ctx.lineTo(56, 0);
+            ctx.lineTo(38, 6);
+            ctx.closePath();
+            ctx.fill();
+            ctx.restore();
+          }
+        } else if (
+          p.isPistolShooting &&
+          activePistolSheet &&
+          activePistolSheet.complete &&
+          activePistolSheet.naturalWidth > 0
+        ) {
+          const pistolCols = cfg?.pistolCols || 4;
+          const pistolRows = cfg?.pistolRows || 1;
+          const safeCol = Math.max(0, Math.min(pistolCols - 1, p.pistolAnimFrame || 0));
+          drawSheetFrame(ctx, activePistolSheet, `${charPrefix}pistol_shoot`, safeCol, pistolCols, pistolRows, drawX, drawY, charW, charH);
+
+          const currentF = p.pistolAnimFrame || 0;
+          const hasBuiltInGun =
+            p.faction === BotFaction.Gymrat ||
+            p.faction === BotFaction.Santa ||
+            (p.name && p.name.toUpperCase().includes('SANTA'));
+
+          if (!hasBuiltInGun) {
+            // Para Ninja: Arma equipada en la mano orientada y posicionada según el frame
+            const wImg = s.weaponImages[p.equippedWeapon];
+            if (wImg && wImg.complete && wImg.naturalWidth > 0) {
+              ctx.save();
+              if (currentF === 0) {
+                // Apuntado horizontal directo
+                ctx.translate(22, -3);
+                ctx.rotate(0);
+              } else if (currentF === 1) {
+                // Comienzo de retroceso
+                ctx.translate(23, -5);
+                ctx.rotate(-0.15);
+              } else if (currentF === 2) {
+                // Frame 3 (donde levanta la mano): retroceso/recarga hacia arriba
+                ctx.translate(20, -18);
+                ctx.rotate(-0.75);
+              } else {
+                // Frame 4: recuperación y retorno al apuntado
+                ctx.translate(22, -3);
+                ctx.rotate(-0.05);
+              }
+              ctx.drawImage(wImg, -4, -6, 24, 14);
+              ctx.restore();
+            }
+
+            // Fogonazo / Destello frontal (Muzzle Flash) en el primer frame para Ninja
+            if (currentF === 0) {
+              ctx.save();
+              ctx.fillStyle = '#fde047';
+              ctx.shadowColor = '#f59e0b';
+              ctx.shadowBlur = 14;
+              ctx.beginPath();
+              ctx.arc(36, -3, 6, 0, Math.PI * 2);
+              ctx.fill();
+
+              ctx.fillStyle = '#ffffff';
+              ctx.beginPath();
+              ctx.moveTo(34, -6);
+              ctx.lineTo(44, -3);
+              ctx.lineTo(34, 0);
+              ctx.closePath();
+              ctx.fill();
+              ctx.restore();
+            }
+          }
+        } else if (p.isTwoHandAttacking) {
+          const sheetToUse = (activeTwoHandSheet && activeTwoHandSheet.complete && activeTwoHandSheet.naturalWidth > 0)
+            ? activeTwoHandSheet
+            : ((activeMeleeSheet && activeMeleeSheet.complete && activeMeleeSheet.naturalWidth > 0) ? activeMeleeSheet : null);
+
+          if (sheetToUse) {
+            const isUsingTwoHandSheet = sheetToUse === activeTwoHandSheet;
+            const twoHandCols = isUsingTwoHandSheet ? (cfg?.twoHandCols || 6) : (cfg?.meleeCols || 6);
+            const twoHandRows = isUsingTwoHandSheet ? (cfg?.twoHandRows || 1) : (cfg?.meleeRows || 1);
+            const sheetKey = isUsingTwoHandSheet ? `${charPrefix}two_hand_attack` : `${charPrefix}melee`;
+            const safeCol = Math.max(0, Math.min(twoHandCols - 1, p.twoHandAnimFrame || 0));
+            drawSheetFrame(ctx, sheetToUse, sheetKey, safeCol, twoHandCols, twoHandRows, drawX, drawY, charW, charH);
+          } else if (idleImg && idleImg.complete && idleImg.naturalWidth > 0) {
+            ctx.drawImage(idleImg, drawX, drawY, charW, charH);
+          }
+
+          const currentF = p.twoHandAnimFrame || 0;
+          const isSantaFighter =
+            p.name.toUpperCase().includes('SANTA') ||
+            (isP1 && (playerFaction || BotFaction.Ninja) === BotFaction.Santa) ||
+            (is1v1 && s.botFaction === BotFaction.Santa);
+
+          // Estela pesada de impacto / onda expansiva
+          if (currentF >= 2 && currentF <= 4) {
+            ctx.save();
+            ctx.lineWidth = isSantaFighter ? 5.2 : 4.5;
+            ctx.strokeStyle = isSantaFighter ? '#ef4444' : '#f97316';
+            ctx.shadowColor = isSantaFighter ? '#dc2626' : '#f97316';
+            ctx.shadowBlur = isSantaFighter ? 20 : 16;
+            ctx.beginPath();
+            if (currentF === 3) {
+              // Impacto contra el suelo / arco grande hacia abajo y hacia adelante
+              ctx.arc(22, 14, isSantaFighter ? 52 : 46, -Math.PI * 0.4, Math.PI * 0.45, false);
+            } else {
+              ctx.arc(14, -10, 42, -Math.PI * 0.6, Math.PI * 0.1, false);
+            }
+            ctx.stroke();
+            ctx.restore();
+          }
+
+          // Arma pesada equipada orientada según el fotograma del golpe a dos manos
+          const wImg = s.weaponImages[p.equippedWeapon];
+          if (wImg && wImg.complete && wImg.naturalWidth > 0) {
+            ctx.save();
+            if (currentF === 0) {
+              ctx.translate(14, -2);
+              ctx.rotate(-0.3);
+            } else if (currentF === 1) {
+              ctx.translate(10, -28);
+              ctx.rotate(-1.2);
+            } else if (currentF === 2) {
+              ctx.translate(14, -30);
+              ctx.rotate(-1.4);
+            } else if (currentF === 3) {
+              // Golpe contra el suelo
+              ctx.translate(26, 18);
+              ctx.rotate(1.15);
+            } else if (currentF === 4) {
+              ctx.translate(18, 6);
+              ctx.rotate(0.5);
+            } else {
+              ctx.translate(14, 0);
+              ctx.rotate(0.1);
+            }
+            // Armas pesadas se dibujan con mayor tamaño y peso visual
+            ctx.drawImage(wImg, -6, -9, 34, 18);
+            ctx.restore();
+          }
+        } else if (p.isOneHandAttacking) {
+          const sheetToUse = (activeOneHandSheet && activeOneHandSheet.complete && activeOneHandSheet.naturalWidth > 0)
+            ? activeOneHandSheet
+            : ((activeMeleeSheet && activeMeleeSheet.complete && activeMeleeSheet.naturalWidth > 0) ? activeMeleeSheet : null);
+
+          if (sheetToUse) {
+            const isUsingOneHandSheet = sheetToUse === activeOneHandSheet;
+            const oneHandCols = isUsingOneHandSheet ? (cfg?.oneHandCols || 5) : (cfg?.meleeCols || 6);
+            const oneHandRows = isUsingOneHandSheet ? (cfg?.oneHandRows || 1) : (cfg?.meleeRows || 1);
+            const sheetKey = isUsingOneHandSheet ? `${charPrefix}one_hand_attack` : `${charPrefix}melee`;
+            const safeCol = Math.max(0, Math.min(oneHandCols - 1, p.oneHandAnimFrame || 0));
+            drawSheetFrame(ctx, sheetToUse, sheetKey, safeCol, oneHandCols, oneHandRows, drawX, drawY, charW, charH);
+          } else if (idleImg && idleImg.complete && idleImg.naturalWidth > 0) {
+            ctx.drawImage(idleImg, drawX, drawY, charW, charH);
+          }
+
+          // Estela dinámica de corte/impacto veloz en frames activos (frames 1, 2, 3)
+          if ((p.oneHandAnimFrame || 0) >= 1 && (p.oneHandAnimFrame || 0) <= 3) {
+            const isGymratFighter =
+              p.name.toUpperCase().includes('GYMRAT') ||
+              (isP1 && (playerFaction || BotFaction.Ninja) === BotFaction.Gymrat);
+            ctx.save();
+            ctx.lineWidth = isGymratFighter ? 4.2 : 3.5;
+            ctx.strokeStyle = isGymratFighter ? '#f97316' : '#38bdf8';
+            ctx.shadowColor = isGymratFighter ? '#fb923c' : '#38bdf8';
+            ctx.shadowBlur = 14;
+            ctx.beginPath();
+            if (isGymratFighter && (p.oneHandAnimFrame || 0) === 2) {
+              ctx.moveTo(14, -4);
+              ctx.lineTo(48, -4);
+            } else {
+              ctx.arc(12, -4, 38, -Math.PI * 0.35, Math.PI * 0.25, false);
+            }
+            ctx.stroke();
+            ctx.restore();
+          }
+
+          // Arma equipada en la mano orientada y posicionada según el fotograma del swing
+          const wImg = s.weaponImages[p.equippedWeapon];
+          if (wImg && wImg.complete && wImg.naturalWidth > 0) {
+            ctx.save();
+            const frame = p.oneHandAnimFrame || 0;
+            if (frame === 0) {
+              ctx.translate(12, -2);
+              ctx.rotate(-0.25);
+            } else if (frame === 1) {
+              ctx.translate(18, -14);
+              ctx.rotate(-0.7);
+            } else if (frame === 2) {
+              ctx.translate(26, -2);
+              ctx.rotate(0.2);
+            } else if (frame === 3) {
+              ctx.translate(22, 8);
+              ctx.rotate(0.65);
+            } else {
+              ctx.translate(16, 2);
+              ctx.rotate(0.1);
+            }
+            ctx.drawImage(wImg, -4, -8, 28, 14);
+            ctx.restore();
+          }
+        } else if (
+          p.isMeleeComboAttacking &&
+          activeMeleeSheet &&
+          activeMeleeSheet.complete &&
+          activeMeleeSheet.naturalWidth > 0
+        ) {
+          const isGymratFighter =
+            p.name.toUpperCase().includes('GYMRAT') ||
+            (isP1 && (playerFaction || BotFaction.Ninja) === BotFaction.Gymrat);
+
+          if (isGymratFighter) {
+            // Gymrat: Hoja horizontal de 6 frames limpios y contundentes
+            // Frame 1 y 2 (idx 0 y 1): Puñetazo recto
+            // Frame 3 y 4 (idx 2 y 3): Patada frontal alta
+            // Frame 5 y 6 (idx 4 y 5): Gancho / Recuperación
+            const totalFrames = 6;
+            const safeFrame = Math.max(0, Math.min(5, p.meleeAnimFrame));
+            drawSheetFrame(ctx, activeMeleeSheet, 'gymrat_melee', safeFrame, totalFrames, 1, drawX, drawY, charW, charH);
+
+            // Estelas dinámicas de fuerza bruta para Gymrat en frames de impacto
+            if (safeFrame === 1) {
+              // Frame 2: Puñetazo recto
+              ctx.save();
+              ctx.lineWidth = 4.2;
+              ctx.strokeStyle = '#f97316';
+              ctx.shadowColor = '#fb923c';
+              ctx.shadowBlur = 14;
+              ctx.beginPath();
+              ctx.moveTo(14, -4);
+              ctx.lineTo(44, -4);
+              ctx.stroke();
+              ctx.restore();
+            } else if (safeFrame === 3) {
+              // Frame 4: Patada frontal alta
+              ctx.save();
+              ctx.lineWidth = 4.5;
+              ctx.strokeStyle = '#ea580c';
+              ctx.shadowColor = '#f59e0b';
+              ctx.shadowBlur = 16;
+              ctx.beginPath();
+              ctx.arc(8, 2, 38, -Math.PI * 0.25, Math.PI * 0.3, false);
+              ctx.stroke();
+              ctx.restore();
+            } else if (safeFrame === 4) {
+              // Frame 5: Gancho demoledor
+              ctx.save();
+              ctx.lineWidth = 4.8;
+              ctx.strokeStyle = '#ef4444';
+              ctx.shadowColor = '#f97316';
+              ctx.shadowBlur = 18;
+              ctx.beginPath();
+              ctx.arc(10, -6, 42, Math.PI * 0.15, -Math.PI * 0.5, true);
+              ctx.stroke();
+              ctx.restore();
+            }
+
+            // Arma contundente en mano para Gymrat durante golpe
+            if (isOneHandBluntWeapon(p.equippedWeapon)) {
+              const wImg = s.weaponImages[p.equippedWeapon];
+              if (wImg && wImg.complete && wImg.naturalWidth > 0) {
+                ctx.save();
+                const f = p.meleeAnimFrame;
+                if (f === 0) {
+                  ctx.translate(10, -6);
+                  ctx.rotate(-0.35);
+                } else if (f === 1 || f === 2) {
+                  ctx.translate(26, -8);
+                  ctx.rotate(0.2);
+                } else if (f === 3 || f === 4) {
+                  ctx.translate(24, 2);
+                  ctx.rotate(0.45);
+                } else {
+                  ctx.translate(14, -2);
+                  ctx.rotate(0.0);
+                }
+                ctx.drawImage(wImg, -4, -8, 28, 14);
+                ctx.restore();
+              }
+            }
+          } else if (isSantaFighter) {
+            // Santa Claus: Hoja de 5 frames horizontales contundentes
+            const safeFrame = Math.max(0, Math.min(4, p.meleeAnimFrame));
+            drawSheetFrame(ctx, activeMeleeSheet, 'santaclo_melee', safeFrame, 5, 1, drawX, drawY, charW, charH);
+          } else {
+            const meleeCols = cfg?.meleeCols || 6;
+            const meleeRows = cfg?.meleeRows || 3;
+            const safeRow = Math.max(0, Math.min(meleeRows - 1, p.meleeComboStep));
+            const safeCol = Math.max(0, Math.min(meleeCols - 1, p.meleeAnimFrame));
+            const frameIndex = safeRow * 6 + safeCol;
+            drawSheetFrame(ctx, activeMeleeSheet, 'ninja_melee', frameIndex, meleeCols, meleeRows, drawX, drawY, charW, charH);
+
+            // Arma contundente en mano para Ninja / Santa durante golpe
+            if (isOneHandBluntWeapon(p.equippedWeapon)) {
+              const wImg = s.weaponImages[p.equippedWeapon];
+              if (wImg && wImg.complete && wImg.naturalWidth > 0) {
+                ctx.save();
+                const f = p.meleeAnimFrame;
+                if (f === 0) {
+                  ctx.translate(10, -6);
+                  ctx.rotate(-0.35);
+                } else if (f === 1 || f === 2) {
+                  ctx.translate(26, -8);
+                  ctx.rotate(0.2);
+                } else if (f === 3 || f === 4) {
+                  ctx.translate(24, 2);
+                  ctx.rotate(0.45);
+                } else {
+                  ctx.translate(14, -2);
+                  ctx.rotate(0.0);
+                }
+                ctx.drawImage(wImg, -4, -8, 28, 14);
+                ctx.restore();
+              }
+            }
+
+            // Estelas dinámicas de impacto (frames activos 2 y 3)
+            if (p.meleeAnimFrame >= 2 && p.meleeAnimFrame <= 3) {
+              ctx.save();
+              ctx.lineWidth = 3.5;
+              if (safeRow === 0) {
+                // Puñetazo: Destello horizontal azul cielo
+                ctx.strokeStyle = '#38bdf8';
+                ctx.shadowColor = '#38bdf8';
+                ctx.shadowBlur = 10;
+                ctx.beginPath();
+                ctx.moveTo(14, -6);
+                ctx.lineTo(36, -6);
+                ctx.stroke();
+              } else if (safeRow === 1) {
+                // Patada: Arco dinámico ámbar
+                ctx.strokeStyle = '#f59e0b';
+                ctx.shadowColor = '#f59e0b';
+                ctx.shadowBlur = 12;
+                ctx.beginPath();
+                ctx.arc(6, 4, 32, -Math.PI * 0.25, Math.PI * 0.35, false);
+                ctx.stroke();
+              } else {
+                // Uppercut: Arco ascendente rojo/dorado demoledor
+                ctx.strokeStyle = '#ef4444';
+                ctx.shadowColor = '#fde047';
+                ctx.shadowBlur = 16;
+                ctx.beginPath();
+                ctx.arc(8, -8, 38, Math.PI * 0.1, -Math.PI * 0.5, true);
+                ctx.stroke();
+              }
+              ctx.restore();
+            }
+          }
+        } else if (
+          !p.onGround &&
+          !isRolling &&
+          cfg?.hasJumpSheet &&
+          jumpSheet &&
+          jumpSheet.complete &&
+          jumpSheet.naturalWidth > 0
+        ) {
+          const isGymrat =
+            p.name.toUpperCase().includes('GYMRAT') ||
+            (isP1 && (playerFaction || BotFaction.Ninja) === BotFaction.Gymrat);
+
+          const isSanta =
+            p.name.toUpperCase().includes('SANTA') ||
+            (isP1 && (playerFaction || BotFaction.Ninja) === BotFaction.Santa) ||
+            (!isP1 && (botFaction || BotFaction.Ninja) === BotFaction.Santa);
+
+          const jumpCols = cfg.jumpCols || (isGymrat || isSanta ? 6 : 3);
+          const jumpRows = cfg.jumpRows || (isGymrat || isSanta ? 1 : 2);
+          const totalJumpFrames = cfg.jumpTotalFrames || 6;
+
+          const jumpFrameW = jumpSheet.naturalWidth / jumpCols;
+          const jumpFrameH = jumpSheet.naturalHeight / jumpRows;
+
+          let jumpFrame = 0;
+          if (isSanta) {
+            // Lógica de Física (Santa Claus):
+            // Frame 1 (idx 0): Reposo/Preparación (en el suelo)
+            // Frames 2 y 3 (idx 1 y 2): Impulso (cuando presiona el botón de salto y comienza a subir)
+            // Frame 4 (idx 3): Punto máximo (cuando la velocidad vertical llega a 0 en el ápice)
+            // Frame 5 (idx 4): Caída (pausa en el aire mientras desciende hasta tocar el suelo)
+            // Frame 6 (idx 5): Aterrizaje al colisionar con el suelo (reproducido al tocar suelo)
+            if (p.velocityY < -260) {
+              jumpFrame = 1; // Frame 2: Impulso inicial de despegue
+            } else if (p.velocityY < -40) {
+              jumpFrame = 2; // Frame 3: Impulso en ascenso
+            } else if (p.velocityY < 150) {
+              jumpFrame = 3; // Frame 4: Punto máximo / ápice (vy ≈ 0)
+            } else {
+              jumpFrame = 4; // Frame 5: Caída libre pausada en el aire hasta tocar el suelo
+            }
+          } else if (isGymrat) {
+            // Lógica de Física (Gymrat):
+            // Frame 1 (idx 0): Reposo (antes de saltar)
+            // Frames 2 y 3 (idx 1 y 2): Impulso (cuando presionas el botón de salto y sube)
+            // Frames 4 y 5 (idx 3 y 4): Caída (pausa en frame 4 mientras cae en el aire sin loop)
+            if (p.velocityY < -260) {
+              jumpFrame = 1; // Frame 2: Impulso inicial de despegue
+            } else if (p.velocityY < -40) {
+              jumpFrame = 2; // Frame 3: Impulso en ascenso
+            } else if (p.velocityY < 160) {
+              jumpFrame = 3; // Frame 4: Transición en el ápice / inicio de caída
+            } else {
+              jumpFrame = 4; // Frame 5: Caída libre pausada en el aire
+            }
+          } else {
+            // Sincronización precisa con el arco de física vertical para Ninja y bots estándar (intacto):
+            // Frame 0: Impulso inicial / despegue (vy < -350)
+            // Frame 1: Ascenso veloz (vy entre -350 y -100)
+            // Frame 2: Ápice / cúspide del salto (vy entre -100 y +120)
+            // Frame 3: Comienzo del descenso (vy entre +120 y +320)
+            // Frame 4: Caída libre en el aire (se mantiene aquí mientras siga cayendo en el aire)
+            if (p.velocityY < -350) {
+              jumpFrame = 0;
+            } else if (p.velocityY < -100) {
+              jumpFrame = 1;
+            } else if (p.velocityY < 120) {
+              jumpFrame = 2;
+            } else if (p.velocityY < 320) {
+              jumpFrame = 3;
+            } else {
+              jumpFrame = 4; // Pausa y se mantiene en el frame de caída si sigue en el aire
+            }
+          }
+
+          const safeFrame = Math.min(totalJumpFrames - 1, Math.max(0, jumpFrame));
+          drawSheetFrame(ctx, jumpSheet, `${charPrefix}jump`, safeFrame, jumpCols, jumpRows, drawX, drawY, charW, charH);
+        } else if (
+          isRolling &&
+          cfg?.hasRollSheet &&
+          rollSheet &&
+          rollSheet.complete &&
+          rollSheet.naturalWidth > 0
+        ) {
+          const rollCols = cfg.rollCols || 7;
+          const rollRows = cfg.rollRows || 1;
+          const totalRollFrames = cfg.rollTotalFrames || 7;
+
+          // Progreso continuo de 0 a 1 durante la rodada (ejecuta los 7 frames una sola vez sin loop)
+          const rollProgress = isP1
+            ? s.p1Controller.rollProgress
+            : isP2Human
+            ? s.p2Controller.rollProgress
+            : Math.min(1, Math.max(0, 1 - (p.rollTicks / (GameConstants.RollDurationTicks || 21))));
+
+          const safeFrame = Math.min(totalRollFrames - 1, Math.max(0, Math.floor(rollProgress * totalRollFrames)));
+          drawSheetFrame(ctx, rollSheet, `${charPrefix}roll`, safeFrame, rollCols, rollRows, drawX, drawY, charW, charH);
+        } else if (
+          isBladeAttacking &&
+          s.swordComboSheet &&
+          s.swordComboSheet.complete &&
+          s.swordComboSheet.naturalWidth > 0
+        ) {
+          const swordCols = 4;
+          const swordRows = 4;
+          const sw = s.swordComboSheet.naturalWidth / swordCols;
+          const sh = s.swordComboSheet.naturalHeight / swordRows;
+          let sFrame = 0;
+          if (p.isChargingHeavy) {
+            sFrame = 2; // Guardia alta cargando poder
+          } else if (p.isSliding) {
+            sFrame = 10; // Tajo rasante rozando el suelo
+          } else if (p.fsm === PlayerFSMState.MeleeAttack) {
+            if (p.comboStep === 0) sFrame = 4; // Tajo 1 horizontal con arco
+            else if (p.comboStep === 1) sFrame = 5; // Tajo 2 cleave diagonal
+            else sFrame = 12; // Tajo 3 estocada / remate devastador
+          }
+          const sCol = sFrame % swordCols;
+          const sRow = Math.floor(sFrame / swordCols);
+          const sx = sCol * sw;
+          const sy = sRow * sh;
+
+          const swordDrawW = charW * 1.5;
+          const swordDrawH = charH * 1.5;
+          const swordDrawX = -swordDrawW / 2 + 10;
+          const swordDrawY = -swordDrawH / 2 - 4;
+
+          ctx.drawImage(s.swordComboSheet, sx, sy, sw, sh, swordDrawX, swordDrawY, swordDrawW, swordDrawH);
+
+          // Arco y estela dinámica de corte con brillo de acero
+          ctx.save();
+          ctx.strokeStyle = '#e0f2fe';
+          ctx.shadowColor = '#38bdf8';
+          ctx.shadowBlur = 12;
+          ctx.lineWidth = 3.8;
+          ctx.beginPath();
+          if (p.isSliding) {
+            ctx.moveTo(-8, 16);
+            ctx.quadraticCurveTo(24, 22, 54, 14);
+          } else if (p.comboStep === 0) {
+            ctx.arc(8, -6, 42, -Math.PI * 0.35, Math.PI * 0.35, false);
+          } else if (p.comboStep === 1) {
+            ctx.arc(6, -10, 44, -Math.PI * 0.6, Math.PI * 0.15, false);
+          } else {
+            ctx.arc(12, -2, 48, -Math.PI * 0.45, Math.PI * 0.45, false);
+          }
+          ctx.stroke();
+          ctx.restore();
+        } else if (
+          ((isGymratFighter && (p.gymratLandingTicks || 0) > 0) ||
+           (isSantaFighter && (p.santaLandingTicks || 0) > 0)) &&
+          p.onGround &&
+          !isWalking &&
+          !isRolling &&
+          !isBladeAttacking &&
+          jumpSheet &&
+          jumpSheet.complete &&
+          jumpSheet.naturalWidth > 0
+        ) {
+          // Frame 6 (índice 5): Aterrizaje al colisionar con el suelo
+          const jumpCols = cfg?.jumpCols || 6;
+          const jumpRows = cfg?.jumpRows || 1;
+          const safeFrame = 5;
+          drawSheetFrame(ctx, jumpSheet, `${charPrefix}jump`, safeFrame, jumpCols, jumpRows, drawX, drawY, charW, charH);
+        } else if (
+          (isGymratFighter || isSantaFighter) &&
+          p.onGround &&
+          p.fsm === PlayerFSMState.Crouch &&
+          !isWalking &&
+          !isRolling &&
+          !isBladeAttacking &&
+          jumpSheet &&
+          jumpSheet.complete &&
+          jumpSheet.naturalWidth > 0
+        ) {
+          // Frame 1 (índice 0): Reposo antes de saltar / agachado
+          const jumpCols = cfg?.jumpCols || 6;
+          const jumpRows = cfg?.jumpRows || 1;
+          const safeFrame = 0;
+          drawSheetFrame(ctx, jumpSheet, `${charPrefix}jump`, safeFrame, jumpCols, jumpRows, drawX, drawY, charW, charH);
+        } else if (
+          isWalking &&
+          ((cfg?.hasRunSheet && Math.abs(p.velocityX) >= PLAYER_CONFIG.RUN_THRESHOLD && runSheet && runSheet.complete && runSheet.naturalWidth > 0) ||
+           (cfg?.hasWalkSheet && sheet && sheet.complete && sheet.naturalWidth > 0))
+        ) {
+          const isRunning = Math.abs(p.velocityX) >= PLAYER_CONFIG.RUN_THRESHOLD && cfg?.hasRunSheet && runSheet && runSheet.complete && runSheet.naturalWidth > 0;
+          const activeSheet = isRunning ? runSheet! : sheet!;
+          const cols = isRunning ? (cfg.runCols || 6) : (cfg.cols || 6);
+          const rows = isRunning ? (cfg.runRows || 1) : (cfg.rows || 1);
+          const totalFrames = isRunning ? (cfg.runTotalFrames || 6) : (cfg.totalFrames || 6);
+          const safeFrame = Math.max(0, Math.min(p.animFrame, totalFrames - 1));
+          drawSheetFrame(ctx, activeSheet, isRunning ? `${charPrefix}run` : `${charPrefix}walk`, safeFrame, cols, rows, drawX, drawY, charW, charH);
+        } else if (idleImg && idleImg.complete && idleImg.naturalWidth > 0) {
+          // 2. Facción con su imagen oficial prevista (ej. assassin.png, Agent_2.png, etc.):
+          // Se mantiene SIEMPRE la imagen correcta en todos los estados sin perderla ni deformarla.
+          if (isRolling) {
+            const rollTicksLeft = p.rollTicks > 0 ? p.rollTicks : 12;
+            const rollProgress = Math.min(1, Math.max(0, 1 - (rollTicksLeft / (GameConstants.RollDurationTicks || 24))));
+            ctx.rotate(rollProgress * Math.PI * 2);
+            ctx.drawImage(idleImg, drawX, drawY, charW, charH);
+          } else if (p.fsm === PlayerFSMState.Crouch) {
+            ctx.translate(0, charH * 0.12);
+            ctx.scale(1.05, 0.78);
+            ctx.drawImage(idleImg, drawX, drawY, charW, charH);
+          } else if (p.fsm === PlayerFSMState.KnockedDown) {
+            ctx.translate(0, charH * 0.28);
+            ctx.rotate(-Math.PI / 2);
+            ctx.drawImage(idleImg, drawX, drawY, charW, charH);
+          } else if (p.fsm === PlayerFSMState.GetUp) {
+            // Animación suave de levantarse de -90° hasta 0° (de pie)
+            const getUpTicksMax = 16;
+            const remaining = Math.max(0, p.getUpTicks);
+            const progress = Math.min(1, Math.max(0, 1 - (remaining / getUpTicksMax)));
+            const angle = (-Math.PI / 2) * (1 - progress);
+            const offsetY = (charH * 0.28) * (1 - progress);
+            ctx.translate(0, offsetY);
+            ctx.rotate(angle);
+            ctx.drawImage(idleImg, drawX, drawY, charW, charH);
+          } else if (isWalking) {
+            // Ciclo de caminata dinámico y continuo con la imagen oficial prevista:
+            // - Rebote de pasos (bobbing)
+            // - Inclinación biomecánica hacia adelante/atrás (lean)
+            // - Ligera compresión de impacto en cada paso
+            const walkStep = (p.animFrame / 14) * Math.PI * 2;
+            const walkBobY = -Math.abs(Math.sin(walkStep * 2)) * 3;
+            const walkTilt = Math.sin(walkStep) * 0.07;
+            const walkSquash = 1 + Math.sin(walkStep * 2) * 0.03;
+
+            ctx.translate(0, walkBobY);
+            ctx.rotate(walkTilt);
+            ctx.scale(1 / walkSquash, walkSquash);
+            ctx.drawImage(idleImg, drawX, drawY, charW, charH);
+          } else if (!p.onGround) {
+            // En el aire (salto / caída)
+            if (p.velocityY < -60) {
+              ctx.scale(0.95, 1.05);
+            } else if (p.velocityY > 60) {
+              ctx.rotate(0.05);
+            }
+            ctx.drawImage(idleImg, drawX, drawY, charW, charH);
+          } else {
+            // Posición estática (idle de pie): mantiene la imagen oficial exacta
+            ctx.drawImage(idleImg, drawX, drawY, charW, charH);
+          }
+        } else if (sprite && sprite.complete && sprite.naturalWidth > 0) {
+          ctx.drawImage(sprite, drawX, drawY, charW, charH);
+        } else {
+          ctx.fillStyle = isP1 ? '#0284c7' : '#e11d48';
+          ctx.fillRect(drawX, drawY, charW, charH);
+          ctx.fillStyle = '#f8fafc';
+          ctx.fillRect(drawX + 18, drawY + 10, 8, 8);
+        }
+
+        // UI-03: Contorno de 1 px claro en el sprite del jugador (P1) para garantizar contraste sobre fondos oscuros
+        if (isP1) {
+          ctx.save();
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(drawX, drawY, charW, charH);
+          ctx.restore();
+        } else if (isDuplicateFaction) {
+          // Distinción visual para bots de la misma facción: tinte de color suave y contorno con inst.color
+          ctx.save();
+          ctx.strokeStyle = nameTagColor;
+          ctx.lineWidth = 2;
+          ctx.shadowColor = nameTagColor;
+          ctx.shadowBlur = 6;
+          ctx.strokeRect(drawX - 1, drawY - 1, charW + 2, charH + 2);
+
+          ctx.globalCompositeOperation = 'source-atop';
+          ctx.fillStyle = nameTagColor;
+          ctx.globalAlpha = 0.22;
+          ctx.fillRect(drawX, drawY, charW, charH);
+          ctx.restore();
+        }
+
+        // Arma equipada en mano (proporcional al personaje aumentado)
+        // Si está ejecutando el ataque de filo, el ataque a una mano, el ataque a dos manos, pistolas, rifles o el combo melee del Ninja, las manos muestran la animación
+        if (p.equippedWeapon !== WeaponType.Fists && !isBladeAttacking && !p.isMeleeComboAttacking && !p.isOneHandAttacking && !p.isTwoHandAttacking && !p.isPistolShooting && !p.isRifleShooting) {
+          const wImg = s.weaponImages[p.equippedWeapon];
+          if (wImg && wImg.complete && wImg.naturalWidth > 0) {
+            ctx.drawImage(wImg, 8, -6, 32, 16);
+          }
+        }
+
+        // Granada táctica activa visible en el cinturón / funda del combatiente
+        const fighterGrenades = isP1 ? s.p1Grenades : (s.bots.find((b) => b.id === p.id)?.grenades || s.bots[0]?.grenades || s.p1Grenades);
+        const activeGType = fighterGrenades.activeType;
+        const activeCount = fighterGrenades.ammo[activeGType] || 0;
+        if (activeCount > 0) {
+          const gImg = s.grenadeImages[activeGType];
+          ctx.save();
+          // Portada en el cinturón / funda táctica de la cadera
+          ctx.translate(-8, 6);
+          ctx.rotate(-0.15);
+          if (gImg && gImg.complete && gImg.naturalWidth > 0) {
+            ctx.drawImage(gImg, -8, -8, 16, 16);
+          } else {
+            ctx.fillStyle = GRENADE_DATABASE[activeGType].color;
+            ctx.beginPath();
+            ctx.arc(0, 0, 5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = '#0f172a';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+          }
+          ctx.restore();
+        }
+
+        // Destello blanco rápido en impacto (Hit Flash Feedback retro)
+        if (p.hitFlashTicks > 0) {
+          ctx.save();
+          ctx.globalCompositeOperation = 'source-atop';
+          ctx.fillStyle = `rgba(255, 255, 255, ${Math.min(0.92, p.hitFlashTicks * 0.25)})`;
+          ctx.fillRect(drawX - 2, drawY - 2, charW + 4, charH + 4);
+          ctx.restore();
+        }
+
+        ctx.restore();
+
+        // Lote 10 - Parte 5: Nametags sin solapamiento (desplazamiento vertical de 10px por solape a < 40px)
+        let overlapOffset = 0;
+        if (p.isAlive) {
+          const aliveFighters = [s.p1, ...s.bots.map((b) => b.state)].filter((f) => f.isAlive);
+          const pIndex = aliveFighters.findIndex((f) => f.id === p.id);
+          if (pIndex > 0) {
+            for (let i = 0; i < pIndex; i++) {
+              if (Math.abs(aliveFighters[i].x - p.x) < 40) {
+                overlapOffset += 10;
+              }
+            }
+          }
+        }
+        const tagY = p.y - 46 - overlapOffset;
+
+        // UI-01: Nombre del personaje sobre cabeza (barra de vida en tarjeta HUD retro)
+        ctx.fillStyle = nameTagColor;
+        ctx.font = 'bold 9px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(p.name, p.x, tagY);
+
+        // Lote 10 - Parte 2: Overlay de depuración bajo ?debug=1 (sin ?debug=1 no dibuja nada)
+        const isDebug = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('debug') === '1';
+        if (isDebug && !isP1) {
+          const inst = s.bots.find((b) => b.id === playerId);
+          if (inst) {
+            ctx.save();
+            ctx.font = 'bold 8px monospace';
+            ctx.textAlign = 'center';
+            const distStr = inst.lastInput?.distToTarget !== undefined ? `${inst.lastInput.distToTarget}px` : '-';
+            const tgtStr = inst.currentTargetId !== undefined ? `T:${inst.currentTargetId}` : 'T:-';
+            const pendStr = inst.ai.pendingState ? `→${inst.ai.pendingState}` : '';
+            const actionStr = `${inst.lastInput?.melee ? ' [M]' : ''}${inst.lastInput?.fire ? ' [F]' : ''}`;
+            const faceStr = p.facingRight ? 'R' : 'L';
+            const line1 = `${inst.ai.currentState}${pendStr} (${faceStr})`;
+            const line2 = `${tgtStr} d:${distStr}${actionStr}`;
+
+            ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+            ctx.fillRect(p.x - 48, tagY - 26, 96, 20);
+            ctx.strokeStyle = nameTagColor;
+            ctx.lineWidth = 1;
+            ctx.strokeRect(p.x - 48, tagY - 26, 96, 20);
+
+            ctx.fillStyle = '#38bdf8';
+            ctx.fillText(line1, p.x, tagY - 15);
+            ctx.fillStyle = '#facc15';
+            ctx.fillText(line2, p.x, tagY - 8);
+            ctx.restore();
+          }
+        }
+      };
+
+      // 9.5 SOMBRA BAJO LOS PIES (CONTACTO Y PESO VISUAL EN EL SUELO / PLATAFORMAS)
+      const renderGroundedShadow = (p: PlayerState) => {
+        if (!p.isAlive) return;
+        const isBigFighter =
+          p.name.includes('TANQUE') ||
+          p.name.includes('MUTANTE') ||
+          p.name.includes('BERSERKER');
+        const charHalfH = isBigFighter ? 41 : 37;
+        const baseW = isBigFighter ? 24 : 18;
+        const baseH = 5;
+
+        // Encontrar plataforma más cercana debajo de los pies
+        let groundY = 501; // Superficie por defecto del suelo
+        for (const plat of s.platforms) {
+          if (p.x >= plat.x - 10 && p.x <= plat.x + plat.w + 10 && plat.y >= p.y - 5) {
+            if (plat.y < groundY) groundY = plat.y;
+          }
+        }
+
+        const feetY = p.y + charHalfH;
+        const dist = Math.max(0, groundY - feetY);
+
+        if (dist < 220) {
+          const shadowScale = Math.max(0.35, 1 - dist / 220);
+          ctx.save();
+          ctx.fillStyle = `rgba(0, 0, 0, ${0.48 * shadowScale})`;
+          ctx.beginPath();
+          const targetY = p.onGround ? feetY - 2 : groundY - 1;
+          ctx.ellipse(p.x, targetY, baseW * shadowScale, baseH * shadowScale, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+      };
+
+      renderGroundedShadow(s.p1);
+      for (const inst of s.bots) {
+        renderGroundedShadow(inst.state);
+      }
+
+      renderFighter(s.p1, s.p1Sprite, '#38bdf8', 1, false);
+      for (const inst of s.bots) {
+        const isDuplicateFaction = gameMode !== 'local1v1' && s.bots.filter((b) => b.faction === inst.faction).length > 1;
+        renderFighter(inst.state, inst.sprite || s.botSprite, inst.color, inst.id, isDuplicateFaction);
+      }
+
+      // 11. PROYECTILES
+      for (const pr of s.projectiles) {
+        if (pr.isGrenade) {
+          const gType = pr.grenadeType || GrenadeType.Frag;
+          const wImg = (pr.weaponType && s.weaponImages[pr.weaponType]) || s.grenadeImages[gType];
+          ctx.save();
+          ctx.translate(pr.x, pr.y);
+
+          // Si está pegado a una superficie (C4 / Mina), orientar adecuadamente
+          if (pr.isStuck) {
+            if (pr.stuckSurface === 'ceiling') {
+              ctx.rotate(Math.PI);
+            } else if (pr.stuckSurface === 'wall') {
+              ctx.rotate(pr.rotation || Math.PI / 2);
+            } else {
+              ctx.rotate(0);
+            }
+          } else {
+            ctx.rotate(pr.rotation || 0);
+          }
+
+          if (wImg && wImg.complete && wImg.naturalWidth > 0) {
+            // Renderizado físico preciso con la imagen/modelo de la granada o arrojadizo equipado
+            ctx.drawImage(wImg, -11, -11, 22, 22);
+          } else {
+            ctx.fillStyle = pr.color;
+            ctx.beginPath();
+            ctx.arc(0, 0, 6, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = '#f8fafc';
+            ctx.lineWidth = 1.5;
+            ctx.strokeRect(-2, -8, 4, 3);
+          }
+
+          // Indicador luminoso de C4 y Minas cuando están adheridos
+          if (pr.isStuck) {
+            if (pr.weaponType === WeaponType.C4 && Math.floor(pr.lifeTicks / 10) % 2 === 0) {
+              ctx.fillStyle = '#ef4444';
+              ctx.beginPath();
+              ctx.arc(0, -3, 2.5, 0, Math.PI * 2);
+              ctx.fill();
+            } else if (pr.weaponType === WeaponType.Mine && Math.floor(pr.lifeTicks / 15) % 2 === 0) {
+              ctx.fillStyle = '#f59e0b';
+              ctx.beginPath();
+              ctx.arc(0, -2, 2.5, 0, Math.PI * 2);
+              ctx.fill();
+            }
+          }
+
+          ctx.restore();
+        } else {
+          ctx.fillStyle = pr.color;
+          ctx.fillRect(pr.x - 3, pr.y - 1.5, 6, 3);
+        }
+      }
+
+      // 11.5. NUBES DE HUMO TÁCTICO
+      for (const sc of s.smokeClouds) {
+        const lifeRatio = Math.min(1, sc.remainingTicks / 60);
+        ctx.save();
+        ctx.fillStyle = `rgba(148, 163, 184, ${0.5 * lifeRatio})`;
+        ctx.beginPath();
+        ctx.arc(sc.x, sc.y, sc.radius, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = `rgba(203, 213, 225, ${0.35 * lifeRatio})`;
+        ctx.beginPath();
+        ctx.arc(sc.x - sc.radius * 0.25, sc.y - sc.radius * 0.15, sc.radius * 0.65, 0, Math.PI * 2);
+        ctx.arc(sc.x + sc.radius * 0.28, sc.y + sc.radius * 0.1, sc.radius * 0.6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+
+      // 12. PARTÍCULAS
+      for (const pt of s.particles) {
+        ctx.fillStyle = pt.color;
+        ctx.globalAlpha = pt.life / pt.maxLife;
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, pt.size, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+
+      // 13. TEXTOS FLOTANTES
+      for (const ft of s.floatingTexts) {
+        ctx.fillStyle = ft.color;
+        ctx.font = 'bold 12px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(ft.text, ft.x, ft.y);
+      }
+
+      // 13.5. DESTELLO DE CEGADORA (FLASHBANG SCREEN FLASH OVERLAY)
+      if (s.flashbangFlash > 0.01) {
+        ctx.save();
+        ctx.fillStyle = `rgba(255, 255, 255, ${Math.min(0.92, s.flashbangFlash)})`;
+        ctx.fillRect(0, 0, ARENA_WIDTH, ARENA_HEIGHT);
+        ctx.restore();
+      }
+
+      // 14. ANUNCIO CENTRAL
+      if (s.announcement) {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+        ctx.fillRect(0, ARENA_HEIGHT / 2 - 32, ARENA_WIDTH, 64);
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(0, ARENA_HEIGHT / 2 - 32, ARENA_WIDTH, 64);
+        ctx.fillStyle = '#facc15';
+        ctx.font = '18px "Press Start 2P", monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(s.announcement, ARENA_WIDTH / 2, ARENA_HEIGHT / 2 + 7);
+      }
+
+      // 15. VISUALIZADOR DE HITBOXES (OPCIÓN MODO PRÁCTICA)
+      if (showHitboxesRef.current) {
+        ctx.save();
+        // A) Plataformas (Amarillo brillante)
+        ctx.strokeStyle = 'rgba(250, 204, 21, 0.85)';
+        ctx.lineWidth = 1.5;
+        s.platforms.forEach((plat) => {
+          ctx.strokeRect(plat.x, plat.y, plat.w, plat.h);
+        });
+
+        // B) Cajas de Colisión y Hurtboxes de Luchadores
+        const allFightersToDraw = [s.p1, ...s.bots.map((b) => b.state)];
+        allFightersToDraw.forEach((f) => {
+          if (!f.isAlive) return;
+
+          // Hurtbox del cuerpo (Azul cian)
+          ctx.strokeStyle = 'rgba(56, 189, 248, 0.85)';
+          ctx.lineWidth = 1.5;
+          ctx.strokeRect(f.x - 14, f.y - 28, 28, 56);
+
+          // Caja de colisión física inferior (Verde)
+          ctx.strokeStyle = 'rgba(34, 197, 94, 0.9)';
+          ctx.lineWidth = 1.5;
+          ctx.strokeRect(f.x - 10, f.y + 14, 20, 14);
+
+          // Hitbox de ataque activo (Rojo translúcido)
+          if (
+            f.isMeleeComboAttacking ||
+            f.isSwordAttacking ||
+            f.isOneHandAttacking ||
+            f.isTwoHandAttacking ||
+            f.isSliding
+          ) {
+            const dir = f.facingRight ? 1 : -1;
+            const reach = f.isSwordAttacking ? 74 : f.isOneHandAttacking ? 62 : 52;
+            const atkX = dir > 0 ? f.x : f.x - reach;
+            ctx.strokeStyle = 'rgba(239, 68, 68, 0.95)';
+            ctx.fillStyle = 'rgba(239, 68, 68, 0.2)';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(atkX, f.y - 18, reach, 36);
+            ctx.fillRect(atkX, f.y - 18, reach, 36);
+          }
+        });
+
+        // C) Proyectiles (Naranja)
+        s.projectiles.forEach((pr) => {
+          ctx.strokeStyle = 'rgba(249, 115, 22, 0.9)';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.arc(pr.x, pr.y, pr.isGrenade ? 8 : 4, 0, Math.PI * 2);
+          ctx.stroke();
+        });
+
+        // D) Zona del Estante de Armas (Cian punteado)
+        if (gameMode === 'practice') {
+          ctx.strokeStyle = 'rgba(6, 182, 212, 0.9)';
+          ctx.setLineDash([4, 4]);
+          ctx.strokeRect(95, 430, 90, 75);
+          ctx.setLineDash([]);
+        }
+        ctx.restore();
+      }
+
+      // 14.5. HUD de luchadores gestionado por FighterBar (React HTML sobre el canvas)
+      ctx.restore();
+    };
+
+    let lastTime = performance.now();
+    let accumulator = 0;
+    const FIXED_STEP_MS = 1000 / 60;
+    const MAX_ACCUMULATOR = 100;
+
+    const loop = (now: number) => {
+      const frameTime = Math.min(now - lastTime, MAX_ACCUMULATOR);
+      lastTime = now;
+
+      if (!isPausedRef.current) {
+        accumulator += frameTime;
+        while (accumulator >= FIXED_STEP_MS) {
+          updateGame();
+          accumulator -= FIXED_STEP_MS;
+        }
+      } else {
+        accumulator = 0;
+      }
+
+      renderGame();
+      animId = requestAnimationFrame(loop);
+    };
+
+    animId = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(animId);
+  }, [maxRounds, restartRound]);
+
+  return (
+    <div className="relative w-full h-full flex flex-col items-center justify-center p-2 select-none overflow-hidden bg-neutral-950">
+      {/* HUD Superior: Nombre del Mundo, P1 vs COM central y botón Salir */}
+      <div className="w-full max-w-[1240px] bg-black/90 border-2 border-white border-b-0 px-4 py-2.5 flex items-center justify-between text-[10px] font-pixel shadow-lg">
+        <div className="flex items-center gap-2.5 text-neutral-300">
+          <span className="text-cyan-400 font-bold uppercase tracking-wider">{hudState.worldName}</span>
+          <span className="text-neutral-600">|</span>
+          <span className="text-neutral-300">
+            {hudState.maxRounds >= 999
+              ? `RONDA ${hudState.round} (INFINITO)`
+              : `RONDA ${hudState.round}/${hudState.maxRounds}`}
+          </span>
+        </div>
+
+        {/* Centro de Pantalla: P1 vs COM (o P1 vs P2 / BOTS en multi-bot / Práctica) */}
+        <div className="flex items-center gap-3 font-pixel text-[10px]">
+          {gameMode === 'practice' ? (
+            <div className="flex items-center gap-2">
+              <span className="px-2 py-0.5 bg-neutral-900 border border-white/40 text-cyan-300">
+                P1 (JUGADOR)
+              </span>
+              <span className="text-neutral-500 font-bold">VS</span>
+              <span className="px-2 py-0.5 bg-neutral-900 border border-white/40 text-amber-300">
+                DUMMY ({practiceBotMode === 'adaptive' ? 'FSM ADAPTATIVO' : practiceBotMode === 'quiet' ? 'BOT QUIETO' : 'AGRESIVO'})
+              </span>
+              <button
+                onClick={() => setTutorialVisible((prev) => !prev)}
+                className="ml-2 px-2 py-0.5 bg-yellow-400 hover:bg-yellow-300 text-black font-bold text-[9px] border border-white transition cursor-pointer"
+              >
+                {tutorialVisible ? 'OCULTAR GUÍA (H)' : 'VER GUÍA (H)'}
+              </button>
+            </div>
+          ) : hudState.maxRounds >= 999 ? (
+            /* Modo infinito */
+            <div className="flex items-center gap-3">
+              <span className="text-cyan-400 font-bold">P1 [{hudState.p1Score}]</span>
+              <span className="text-neutral-400 font-bold px-1">VS</span>
+              <span className="text-rose-400 font-bold">
+                [{hudState.botScore}] {gameMode === 'local1v1' ? 'P2' : (hudState.fighters.length > 2 ? `BOTS (${hudState.fighters.length - 1})` : 'COM')}
+              </span>
+            </div>
+          ) : (
+            /* Modo con rondas: casillas = victorias requeridas (floor(maxRounds/2) + 1) */
+            <>
+              <div className="flex items-center gap-1.5">
+                <span className="text-cyan-400 font-bold">P1</span>
+                {Array.from({ length: Math.floor(hudState.maxRounds / 2) + 1 }).map((_, i) => (
+                  <div
+                    key={i}
+                    className={`w-3.5 h-3.5 border border-white flex items-center justify-center ${
+                      i < hudState.p1Score
+                        ? 'bg-yellow-400 text-[8px] font-bold text-black'
+                        : 'bg-neutral-900 text-neutral-600'
+                    }`}
+                  >
+                    {i < hudState.p1Score ? '■' : ''}
+                  </div>
+                ))}
+              </div>
+
+              <span className="text-neutral-400 font-bold px-1">VS</span>
+
+              <div className="flex items-center gap-1.5">
+                {Array.from({ length: Math.floor(hudState.maxRounds / 2) + 1 }).map((_, i) => (
+                  <div
+                    key={i}
+                    className={`w-3.5 h-3.5 border border-white flex items-center justify-center ${
+                      i < hudState.botScore
+                        ? 'bg-yellow-400 text-[8px] font-bold text-black'
+                        : 'bg-neutral-900 text-neutral-600'
+                    }`}
+                  >
+                    {i < hudState.botScore ? '■' : ''}
+                  </div>
+                ))}
+                <span className="text-rose-400 font-bold">
+                  {gameMode === 'local1v1' ? 'P2' : (hudState.fighters.length > 2 ? `BOTS (${hudState.fighters.length - 1})` : 'COM')}
+                </span>
+              </div>
+            </>
+          )}
+        </div>
+
+        <button
+          onClick={() => setIsPaused(true)}
+          className="px-3 py-1 bg-black hover:bg-neutral-800 text-white border-2 border-white text-[9px] font-pixel transition cursor-pointer active:translate-y-0.5 rounded-none"
+        >
+          PAUSA (ESC)
+        </button>
+      </div>
+
+      {/* FASE F2: Barra de Luchadores con Inventario de Ranuras */}
+      <FighterBar fighters={hudState.fighters} />
+
+      {/* Viewport del Canvas Retro (UI-08: ampliado a pantalla completa manteniendo 16:9) */}
+      <div className="relative border-2 border-white bg-black">
+        <canvas
+          ref={canvasRef}
+          width={ARENA_WIDTH}
+          height={ARENA_HEIGHT}
+          onClick={() => sounds.resumeAudio()}
+          tabIndex={0}
+          className="w-full max-w-[1240px] max-h-[75vh] aspect-[16/9] object-contain block focus:outline-none"
+          style={{ imageRendering: 'pixelated' }}
+        />
+
+        {/* Cuadro Tutorial de Pasos Estilo Superfighters */}
+        {gameMode === 'practice' && tutorialVisible && (
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 w-[92%] max-w-[560px] pointer-events-auto">
+            <div className="bg-black/95 border-2 border-white p-4 shadow-[0_4px_25px_rgba(0,0,0,0.95)] flex flex-col items-center text-center">
+              {/* Encabezado */}
+              <div className="flex items-center justify-between w-full border-b border-white/20 pb-1.5 mb-2.5">
+                <span className="text-[9px] text-neutral-400 font-pixel">
+                  PASO {tutorialStep + 1} / {PRACTICE_TUTORIAL_STEPS.length}
+                </span>
+                <span className="text-yellow-400 font-pixel text-xs tracking-widest font-bold uppercase">
+                  {PRACTICE_TUTORIAL_STEPS[tutorialStep]?.title || 'ENTRENAMIENTO'}
+                </span>
+                <button
+                  onClick={() => setTutorialVisible(false)}
+                  className="text-neutral-400 hover:text-white text-[9px] font-pixel px-1.5 py-0.5 border border-white/30 hover:border-white transition cursor-pointer"
+                  title="Ocultar guía (H)"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* Contenido / Instrucciones estilo Superfighters */}
+              <p className="text-white text-[11px] sm:text-xs font-pixel leading-relaxed my-2 max-w-md">
+                {PRACTICE_TUTORIAL_STEPS[tutorialStep]?.description}
+              </p>
+
+              {/* Meta objetivo */}
+              <div className="w-full bg-neutral-900/90 border border-white/20 p-2 my-1.5 text-[10px] font-pixel text-cyan-300 flex items-center justify-center gap-2">
+                <span>🎯 {PRACTICE_TUTORIAL_STEPS[tutorialStep]?.goalText}</span>
+              </div>
+
+              {/* Botones de navegación de pasos */}
+              <div className="flex items-center justify-between w-full mt-2 pt-2 border-t border-white/20 text-[9px] font-pixel">
+                <button
+                  onClick={() => setTutorialStep((prev) => Math.max(0, prev - 1))}
+                  disabled={tutorialStep === 0}
+                  className="px-2.5 py-1 bg-neutral-900 hover:bg-neutral-800 disabled:opacity-30 disabled:pointer-events-none text-white border border-white/50 transition cursor-pointer"
+                >
+                  ◀ ANTERIOR
+                </button>
+
+                <div className="flex items-center gap-1.5">
+                  {PRACTICE_TUTORIAL_STEPS.map((_, idx) => (
+                    <span
+                      key={idx}
+                      onClick={() => setTutorialStep(idx)}
+                      className={`inline-block w-2.5 h-2.5 cursor-pointer border ${
+                        idx === tutorialStep
+                          ? 'bg-yellow-400 border-white'
+                          : idx < tutorialStep
+                          ? 'bg-cyan-500/80 border-cyan-400'
+                          : 'bg-neutral-800 border-neutral-600'
+                      }`}
+                      title={`Paso ${idx + 1}`}
+                    />
+                  ))}
+                </div>
+
+                <button
+                  onClick={() => setTutorialStep((prev) => Math.min(PRACTICE_TUTORIAL_STEPS.length - 1, prev + 1))}
+                  disabled={tutorialStep === PRACTICE_TUTORIAL_STEPS.length - 1}
+                  className="px-2.5 py-1 bg-yellow-400 hover:bg-yellow-300 disabled:opacity-30 disabled:pointer-events-none text-black font-bold border border-white transition cursor-pointer"
+                >
+                  SIGUIENTE ▶
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Botón flotante para mostrar guía si fue ocultada */}
+        {gameMode === 'practice' && !tutorialVisible && (
+          <button
+            onClick={() => setTutorialVisible(true)}
+            className="absolute top-3 right-4 z-20 px-3 py-1.5 bg-black/90 hover:bg-neutral-800 text-yellow-300 border-2 border-white text-[9px] font-pixel shadow-lg transition cursor-pointer"
+          >
+            [ MOSTRAR GUÍA TUTORIAL (H) ]
+          </button>
+        )}
+
+        {/* Modal de Arsenal (Armería de Práctica) para selección de armas con munición infinita */}
+        {showPracticeArsenal && (
+          <div className="absolute inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 md:p-8 animate-in fade-in duration-150">
+            <div className="w-full max-w-5xl h-[85vh] max-h-[85vh] my-auto flex flex-col rounded-2xl overflow-hidden border-2 border-amber-400/90 shadow-[0_0_50px_rgba(245,158,11,0.35)] bg-neutral-950">
+              <ArsenalView
+                onBackToMenu={() => {
+                  setShowPracticeArsenal(false);
+                  if (stateRef.current) {
+                    stateRef.current.keys = {};
+                    stateRef.current.keysJustPressed = {};
+                  }
+                }}
+                isPracticePicker={true}
+                onEquipWeapon={handleEquipPracticeWeapon}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Modal de Pausa Retro Superfighters */}
+        {isPaused && !hudState.isMatchOver && (
+          <div className="absolute inset-0 bg-black/85 flex flex-col items-center justify-center p-4 z-30 font-pixel">
+            <div className="border-2 border-white bg-black p-6 flex flex-col items-center gap-3.5 max-w-sm w-full shadow-[0_0_20px_rgba(0,0,0,0.8)]">
+              <h2 className="text-base font-bold tracking-widest text-yellow-400 text-center uppercase border-b-2 border-white/20 pb-2 w-full">
+                PARTIDA EN PAUSA
+              </h2>
+
+              <button
+                onClick={() => {
+                  if (stateRef.current) {
+                    stateRef.current.keysJustPressed = {};
+                  }
+                  setIsPaused(false);
+                }}
+                className="w-full px-4 py-2.5 bg-neutral-900 hover:bg-white hover:text-black text-white font-pixel text-[10px] border-2 border-white transition cursor-pointer text-center"
+              >
+                [ CONTINUAR ] (ESC)
+              </button>
+
+              {gameMode !== 'practice' && (
+                <button
+                  onClick={() => {
+                    setIsPaused(false);
+                    restartRound(false);
+                  }}
+                  className="w-full px-4 py-2.5 bg-neutral-900 hover:bg-white hover:text-black text-white font-pixel text-[10px] border-2 border-white transition cursor-pointer text-center"
+                >
+                  [ REINICIAR RONDA ]
+                </button>
+              )}
+
+              {/* Opciones exclusivas de MODO PRÁCTICA en el menú de pausa */}
+              {gameMode === 'practice' && (
+                <>
+                  <button
+                    onClick={() => {
+                      const modes: Array<'adaptive' | 'quiet' | 'aggressive'> = ['adaptive', 'quiet', 'aggressive'];
+                      const nextIdx = (modes.indexOf(practiceBotMode) + 1) % modes.length;
+                      setPracticeBotMode(modes[nextIdx]);
+                    }}
+                    className="w-full px-4 py-2 bg-neutral-900 hover:bg-neutral-800 text-neutral-200 font-pixel text-[9px] border border-white/60 transition cursor-pointer flex items-center justify-between"
+                  >
+                    <span>BOT DUMMY:</span>
+                    <span className="text-yellow-400 font-bold uppercase">
+                      [{practiceBotMode === 'adaptive' ? 'ADAPTATIVO' : practiceBotMode === 'quiet' ? 'BOT QUIETO' : 'AGRESIVO'}]
+                    </span>
+                  </button>
+
+                  <button
+                    onClick={() => setShowHitboxes((prev) => !prev)}
+                    className="w-full px-4 py-2 bg-neutral-900 hover:bg-neutral-800 text-neutral-200 font-pixel text-[9px] border border-white/60 transition cursor-pointer flex items-center justify-between"
+                  >
+                    <span>MOSTRAR HITBOXES:</span>
+                    <span className={showHitboxes ? 'text-cyan-400 font-bold' : 'text-neutral-500'}>
+                      [{showHitboxes ? 'ACTIVADAS' : 'DESACTIVADAS'}]
+                    </span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      handleResetDummy();
+                      setIsPaused(false);
+                    }}
+                    className="w-full px-4 py-2 bg-neutral-900 hover:bg-neutral-800 text-emerald-400 font-pixel text-[9px] border border-emerald-500/60 transition cursor-pointer text-center"
+                  >
+                    [ RESTABLECER VIDA Y POSICIÓN DUMMY ]
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setTutorialStep(0);
+                      setTutorialVisible(true);
+                      tutorialInputProgressRef.current = {
+                        moveTicks: 0,
+                        hasJumped: false,
+                        hasRolled: false,
+                        hasMeleeHit: false,
+                        hasOpenedRack: false,
+                        hasShot: false,
+                        hasGrenaded: false,
+                      };
+                      setIsPaused(false);
+                    }}
+                    className="w-full px-4 py-2 bg-neutral-900 hover:bg-neutral-800 text-sky-300 font-pixel text-[9px] border border-sky-500/60 transition cursor-pointer text-center"
+                  >
+                    [ REINICIAR TUTORIAL (PASO 1) ]
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setIsPaused(false);
+                      setShowPracticeArsenal(true);
+                    }}
+                    className="w-full px-4 py-2 bg-amber-950/60 hover:bg-amber-800 text-amber-300 font-pixel text-[9px] border border-amber-500 transition cursor-pointer text-center"
+                  >
+                    [ ABRIR ARMERÍA DE PRÁCTICA ]
+                  </button>
+                </>
+              )}
+
+              {gameMode === 'vsBot' && (
+                <button
+                  onClick={() => {
+                    const nextVal = !botPracticeMode;
+                    setBotPracticeMode(nextVal);
+                    if (stateRef.current) {
+                      stateRef.current.botQuiet = nextVal;
+                    }
+                  }}
+                  className="w-full px-4 py-2 bg-neutral-900 hover:bg-neutral-800 text-neutral-200 font-pixel text-[9px] border border-white/60 transition cursor-pointer flex items-center justify-between"
+                >
+                  <span>MODO PRÁCTICA:</span>
+                  <span className={botPracticeMode ? 'text-cyan-400 font-bold' : 'text-neutral-500'}>
+                    [{botPracticeMode ? 'BOT QUIETO' : 'IA ACTIVA'}]
+                  </span>
+                </button>
+              )}
+
+              <button
+                onClick={() => setShowControlsModal(true)}
+                className="w-full px-4 py-2 bg-neutral-900 hover:bg-neutral-800 text-yellow-300 font-pixel text-[9px] border border-white/60 transition cursor-pointer text-center"
+              >
+                VER CONTROLES
+              </button>
+
+              <button
+                onClick={() => setShowExitConfirm(true)}
+                className="w-full px-4 py-2.5 bg-rose-950/60 hover:bg-rose-600 hover:text-white text-rose-300 font-pixel text-[10px] border-2 border-rose-500/80 transition cursor-pointer text-center mt-2"
+              >
+                SALIR AL MENÚ
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Modal de Confirmación de Salida */}
+        {showExitConfirm && (
+          <div className="absolute inset-0 bg-black/95 flex flex-col items-center justify-center p-4 z-40 font-pixel">
+            <div className="border-2 border-rose-500 bg-black p-6 flex flex-col items-center gap-4 max-w-sm w-full text-center shadow-[0_0_30px_rgba(244,63,94,0.3)]">
+              <span className="text-rose-400 text-xs font-bold uppercase tracking-wider">
+                ¿ABANDONAR PARTIDA?
+              </span>
+              <p className="text-neutral-300 text-[9px] leading-relaxed">
+                El progreso de la partida actual se perderá.
+              </p>
+              <div className="flex gap-3 w-full mt-2">
+                <button
+                  onClick={onExitToMenu}
+                  className="flex-1 px-4 py-2.5 bg-rose-600 hover:bg-rose-500 text-white font-pixel text-[10px] border-2 border-white transition cursor-pointer"
+                >
+                  SÍ, SALIR
+                </button>
+                <button
+                  onClick={() => setShowExitConfirm(false)}
+                  className="flex-1 px-4 py-2.5 bg-neutral-900 hover:bg-neutral-800 text-white font-pixel text-[10px] border-2 border-white transition cursor-pointer"
+                >
+                  CANCELAR
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Modal de Controles */}
+        {showControlsModal && (
+          <div className="absolute inset-0 bg-black/95 flex flex-col items-center justify-center p-4 z-40 font-pixel">
+            <div className="border-2 border-white bg-black p-5 flex flex-col items-center gap-3.5 max-w-md w-full shadow-2xl">
+              <h3 className="text-xs font-bold text-yellow-300 uppercase tracking-widest border-b border-white/20 pb-1.5 w-full text-center">
+                GUÍA DE CONTROLES
+              </h3>
+
+              <div className="w-full space-y-2.5 text-[9px] text-neutral-200">
+                <div className="p-2 border border-white/30 bg-neutral-950">
+                  <div className="text-cyan-400 font-bold mb-1">1 JUGADOR (VS BOT):</div>
+                  <div className="text-neutral-300">{CONTROLS_TEXT.SOLO_MOVE}</div>
+                  <div className="text-neutral-400 text-[8px] mt-0.5">{CONTROLS_TEXT.SOLO_ACTIONS}</div>
+                </div>
+
+                <div className="p-2 border border-white/30 bg-neutral-950">
+                  <div className="text-amber-400 font-bold mb-1">DUELO 1v1 (2 JUGADORES):</div>
+                  <div className="text-neutral-300"><span className="text-cyan-300">J1:</span> {CONTROLS_TEXT.P1_1V1_FULL}</div>
+                  <div className="text-neutral-300 mt-1"><span className="text-amber-300">J2:</span> {CONTROLS_TEXT.P2_1V1_FULL}</div>
+                </div>
+
+                <div className="text-[8px] text-neutral-400 bg-neutral-900/60 p-2 border border-neutral-800">
+                  ⚡ {CONTROLS_TEXT.ROLL_HINT}
+                </div>
+              </div>
+
+              <button
+                onClick={() => setShowControlsModal(false)}
+                className="w-full px-4 py-2 bg-neutral-900 hover:bg-white hover:text-black text-white font-pixel text-[10px] border-2 border-white transition cursor-pointer mt-1"
+              >
+                VOLVER (ESC)
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Modal de Fin de Partida con Revancha (Estilo Retro) */}
+        {hudState.isMatchOver && (
+          <div className="absolute inset-0 bg-black/90 flex flex-col items-center justify-center p-6 gap-5 z-20 font-pixel">
+            <div className="border-2 border-white bg-black/95 p-6 flex flex-col items-center gap-4 max-w-md w-full shadow-2xl">
+              <h2 className="text-2xl sm:text-3xl font-bold tracking-wider text-yellow-400 text-center leading-relaxed">
+                {hudState.matchWinner}
+              </h2>
+              <p className="text-neutral-300 text-xs text-center font-pixel">
+                MARCADOR FINAL: {hudState.p1Score} - {hudState.botScore}
+              </p>
+              <div className="flex flex-col sm:flex-row gap-3 mt-3 w-full">
+                <button
+                  onClick={() => restartRound(true)}
+                  className="flex-1 px-4 py-3 bg-yellow-400 hover:bg-yellow-300 text-black font-pixel text-[10px] border-2 border-white transition cursor-pointer active:translate-y-0.5"
+                >
+                  REVANCHA (R)
+                </button>
+                <button
+                  onClick={onExitToMenu}
+                  className="flex-1 px-4 py-3 bg-neutral-900 hover:bg-neutral-800 text-white font-pixel text-[10px] border-2 border-white transition cursor-pointer active:translate-y-0.5"
+                >
+                  MENÚ
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};

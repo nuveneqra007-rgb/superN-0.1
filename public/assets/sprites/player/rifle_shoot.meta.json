@@ -1,0 +1,81 @@
+{
+  "id": "ninja_rifle_shoot",
+  "image": "/assets/sprites/player/rifle_shoot.png",
+  "cols": 4,
+  "rows": 1,
+  "totalFrames": 4,
+  "width": 1024,
+  "height": 290,
+  "frames": [
+    {
+      "index": 0,
+      "x": 60,
+      "y": 66,
+      "w": 164,
+      "h": 209,
+      "anchorX": 82,
+      "anchorY": 208,
+      "cellX": 0,
+      "cellY": 0,
+      "cellW": 256,
+      "cellH": 290,
+      "groundY": 274,
+      "centerX": 142,
+      "durationTicks": 2
+    },
+    {
+      "index": 1,
+      "x": 314,
+      "y": 63,
+      "w": 164,
+      "h": 212,
+      "anchorX": 82,
+      "anchorY": 211,
+      "cellX": 256,
+      "cellY": 0,
+      "cellW": 256,
+      "cellH": 290,
+      "groundY": 274,
+      "centerX": 396,
+      "durationTicks": 1
+    },
+    {
+      "index": 2,
+      "x": 565,
+      "y": 67,
+      "w": 148,
+      "h": 208,
+      "anchorX": 74,
+      "anchorY": 207,
+      "cellX": 512,
+      "cellY": 0,
+      "cellW": 256,
+      "cellH": 290,
+      "groundY": 274,
+      "centerX": 639,
+      "durationTicks": 3
+    },
+    {
+      "index": 3,
+      "x": 815,
+      "y": 66,
+      "w": 164,
+      "h": 209,
+      "anchorX": 82,
+      "anchorY": 208,
+      "cellX": 768,
+      "cellY": 0,
+      "cellW": 256,
+      "cellH": 290,
+      "groundY": 274,
+      "centerX": 897,
+      "durationTicks": 3
+    }
+  ],
+  "frameDurations": [
+    2,
+    1,
+    3,
+    3
+  ]
+}

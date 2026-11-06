@@ -1,0 +1,81 @@
+{
+  "id": "gymrat_rifle_shoot",
+  "image": "/assets/sprites/player/gymrat_rifle_shoot.png",
+  "cols": 4,
+  "rows": 1,
+  "totalFrames": 4,
+  "width": 1440,
+  "height": 400,
+  "frames": [
+    {
+      "index": 0,
+      "x": 60,
+      "y": 77,
+      "w": 229,
+      "h": 309,
+      "anchorX": 114,
+      "anchorY": 308,
+      "cellX": 0,
+      "cellY": 0,
+      "cellW": 360,
+      "cellH": 400,
+      "groundY": 385,
+      "centerX": 174,
+      "durationTicks": 2
+    },
+    {
+      "index": 1,
+      "x": 420,
+      "y": 77,
+      "w": 280,
+      "h": 309,
+      "anchorX": 140,
+      "anchorY": 308,
+      "cellX": 360,
+      "cellY": 0,
+      "cellW": 360,
+      "cellH": 400,
+      "groundY": 385,
+      "centerX": 560,
+      "durationTicks": 1
+    },
+    {
+      "index": 2,
+      "x": 774,
+      "y": 77,
+      "w": 224,
+      "h": 309,
+      "anchorX": 112,
+      "anchorY": 308,
+      "cellX": 720,
+      "cellY": 0,
+      "cellW": 360,
+      "cellH": 400,
+      "groundY": 385,
+      "centerX": 886,
+      "durationTicks": 3
+    },
+    {
+      "index": 3,
+      "x": 1140,
+      "y": 77,
+      "w": 223,
+      "h": 309,
+      "anchorX": 111,
+      "anchorY": 308,
+      "cellX": 1080,
+      "cellY": 0,
+      "cellW": 360,
+      "cellH": 400,
+      "groundY": 385,
+      "centerX": 1251,
+      "durationTicks": 4
+    }
+  ],
+  "frameDurations": [
+    2,
+    1,
+    3,
+    4
+  ]
+}

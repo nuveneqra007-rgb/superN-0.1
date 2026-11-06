@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+.pnp/
+.pnp.js
+
+# Build & Output
+dist/
+dist-ssr/
+build/
+*.local
+
+# AI Studio & Art Source (Repo cleanup)
+.aistudio/
+art-source/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Environment
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# OS & Editor
+.DS_Store
+Thumbs.db
+*~
+.vscode/
+.idea/
+*.swp

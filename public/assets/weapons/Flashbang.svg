@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 50 30" width="50" height="30">
+  <!-- Stun / Flashbang Grenade (Tactical Metal Cylinder with Vent Holes) -->
+  <defs>
+    <linearGradient id="flashBody" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#3b82f6" />
+      <stop offset="25%" stop-color="#60a5fa" />
+      <stop offset="60%" stop-color="#2563eb" />
+      <stop offset="100%" stop-color="#1d4ed8" />
+    </linearGradient>
+  </defs>
+  <!-- Main cylindrical body -->
+  <rect x="18" y="7" width="14" height="19" rx="3" fill="url(#flashBody)" stroke="#0f172a" stroke-width="1.5" />
+  <!-- Fluorescent yellow warning stripe -->
+  <rect x="18" y="14" width="14" height="4" fill="#facc15" stroke="#ca8a04" stroke-width="0.8" />
+  <!-- Top cap and assembly -->
+  <rect x="22" y="4" width="6" height="3" fill="#64748b" stroke="#0f172a" stroke-width="1" />
+  <!-- Lever / spoon -->
+  <path d="M22 5 L16 8 L16 19" fill="none" stroke="#94a3b8" stroke-width="1.8" stroke-linecap="round" />
+  <!-- Pull ring -->
+  <circle cx="28" cy="5" r="2.2" fill="none" stroke="#fef08a" stroke-width="1.2" />
+  <!-- Multi-port flash holes -->
+  <circle cx="22" cy="10" r="1.1" fill="#0f172a" />
+  <circle cx="28" cy="10" r="1.1" fill="#0f172a" />
+  <circle cx="22" cy="21" r="1.1" fill="#0f172a" />
+  <circle cx="28" cy="21" r="1.1" fill="#0f172a" />
+</svg>

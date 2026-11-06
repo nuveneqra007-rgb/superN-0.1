@@ -1,0 +1,8 @@
+{
+  "name": "superN — 2D Platform Fighter",
+  "description": "Un clon de Superfighters Deluxe en 2D con física a 60Hz, 13 armas, 21 estados de combate, sistema de bots con múltiples arquetipos y multironda.",
+  "permissions": [],
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

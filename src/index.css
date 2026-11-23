@@ -138,3 +138,19 @@
   animation: windowFlicker 4.5s infinite;
 }
 
+@keyframes playPulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.55;
+    transform: scale(1.06);
+  }
+}
+
+.animate-play-pulse {
+  animation: playPulse 1.4s ease-in-out infinite;
+}
+
+

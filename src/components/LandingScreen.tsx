@@ -43,13 +43,6 @@ export const LandingScreen: React.FC<LandingScreenProps> = ({ onEnter }) => {
       {/* Portada principal en modo "contain" sobre fondo negro sólido (sin recortes) */}
       <img
         src="/assets/aistudio/image_8637b8d4.png"
-        onError={(e) => {
-          const img = e.currentTarget;
-          if (!img.dataset.fallback) {
-            img.dataset.fallback = '1';
-            img.src = '/assets/cover_super_n_final.jpg';
-          }
-        }}
         alt="SUPER N — Portada Principal"
         referrerPolicy="no-referrer"
         className="w-full h-full object-contain pointer-events-none select-none"

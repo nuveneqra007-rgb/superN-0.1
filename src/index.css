@@ -153,4 +153,43 @@
   animation: playPulse 1.4s ease-in-out infinite;
 }
 
+@keyframes logoFloat {
+  0%, 100% {
+    opacity: 1;
+    transform: translateY(-6px);
+  }
+  50% {
+    opacity: 0.8;
+    transform: translateY(6px);
+  }
+}
+
+.animate-logo-float {
+  animation: logoFloat 3.2s ease-in-out infinite;
+}
+
+@keyframes lampFlickerA {
+  0%, 100% { opacity: 0.72; transform: translate(-50%, -50%) scale(1); }
+  22% { opacity: 0.42; transform: translate(-50%, -50%) scale(0.92); }
+  45% { opacity: 0.80; transform: translate(-50%, -50%) scale(1.06); }
+  70% { opacity: 0.35; transform: translate(-50%, -50%) scale(0.88); }
+  85% { opacity: 0.75; transform: translate(-50%, -50%) scale(1.02); }
+}
+
+@keyframes lampFlickerB {
+  0%, 100% { opacity: 0.55; transform: translate(-50%, -50%) scale(0.95); }
+  30% { opacity: 0.82; transform: translate(-50%, -50%) scale(1.08); }
+  55% { opacity: 0.38; transform: translate(-50%, -50%) scale(0.88); }
+  80% { opacity: 0.70; transform: translate(-50%, -50%) scale(1.03); }
+}
+
+.animate-lamp-a {
+  animation: lampFlickerA 2.4s ease-in-out infinite;
+}
+
+.animate-lamp-b {
+  animation: lampFlickerB 1.9s ease-in-out infinite;
+}
+
+
 

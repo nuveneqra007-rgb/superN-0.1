@@ -540,79 +540,117 @@ export class PlayerController {
     const halfWidth = this.currentHitboxWidth / 2;
     const halfHeight = this.currentHitboxHeight / 2;
 
-    // 1. Movimiento horizontal
-    const prevX = this.x;
-    this.x += this.vx * dt;
+    // Sub-stepping: evita tunneling en caídas rápidas o knockbacks fuertes
+    const totalDx = Math.abs(this.vx * dt);
+    const totalDy = Math.abs(this.vy * dt);
+    const steps = Math.min(10, Math.max(1, Math.ceil(Math.max(totalDx, totalDy) / 8)));
+    const stepDt = dt / steps;
 
-    // Colisión horizontal: SÓLO con paredes sólidas (nunca suelo ni techos)
-    for (const plat of platforms) {
-      if (plat.isOneWay) continue;
-
-      const platRight = plat.x + plat.w;
-      const platBottom = plat.y + plat.h;
-
-      const feetY = this.y + halfHeight;
-      const headY = this.y - halfHeight;
-
-      // Si los pies están a nivel o por encima de la superficie, o la cabeza por debajo de la base,
-      // NO es una pared lateral — es suelo o techo
-      if (feetY <= plat.y + 4 || headY >= platBottom - 4) {
-        continue;
-      }
-
-      // Colisión contra pared izquierda de plataforma (moviéndose hacia la derecha)
-      if (this.vx > 0 && prevX + halfWidth <= plat.x + 2 && this.x + halfWidth > plat.x) {
-        this.x = plat.x - halfWidth;
-        this.vx = 0;
-      }
-      // Colisión contra pared derecha de plataforma (moviéndose hacia la izquierda)
-      else if (this.vx < 0 && prevX - halfWidth >= platRight - 2 && this.x - halfWidth < platRight) {
-        this.x = platRight + halfWidth;
-        this.vx = 0;
-      }
-    }
-
-    // 2. Movimiento vertical
-    const prevY = this.y;
-    this.y += this.vy * dt;
     this.isOnFloor = false;
 
-    // Colisión vertical
-    for (const plat of platforms) {
-      const isOneWay = !!plat.isOneWay;
-      if (isOneWay && this.dropThroughTimer > 0) continue;
+    for (let step = 0; step < steps; step++) {
+      // 1. Movimiento horizontal
+      const prevX = this.x;
+      this.x += this.vx * stepDt;
 
-      const platRight = plat.x + plat.w;
-      const platBottom = plat.y + plat.h;
+      // Colisión horizontal: SÓLO con paredes sólidas (nunca suelo ni techos)
+      for (const plat of platforms) {
+        if (plat.isOneWay) continue;
 
-      // Debe haber solapamiento horizontal
-      const overlapX = (this.x + halfWidth > plat.x + 2) && (this.x - halfWidth < platRight - 2);
-      if (!overlapX) continue;
+        const platRight = plat.x + plat.w;
+        const platBottom = plat.y + plat.h;
 
-      const prevFeet = prevY + halfHeight;
-      const currentFeet = this.y + halfHeight;
-      const prevHead = prevY - halfHeight;
-      const currentHead = this.y - halfHeight;
+        const feetY = this.y + halfHeight;
+        const headY = this.y - halfHeight;
 
-      if (isOneWay) {
-        // Plataformas one-way: aterrizaje sólo desde arriba cayendo
-        if (this.vy >= 0 && prevFeet <= plat.y + 8 && currentFeet >= plat.y) {
-          this.y = plat.y - halfHeight;
-          this.vy = 0;
-          this.isOnFloor = true;
+        // Si los pies están a nivel o por encima de la superficie, o la cabeza por debajo de la base,
+        // NO es una pared lateral — es suelo o techo
+        if (feetY <= plat.y + 4 || headY >= platBottom - 4) {
+          continue;
         }
-      } else {
-        // Plataforma sólida
-        // Aterrizaje en el suelo
-        if (this.vy >= 0 && prevFeet <= plat.y + 12 && currentFeet >= plat.y) {
-          this.y = plat.y - halfHeight;
-          this.vy = 0;
-          this.isOnFloor = true;
+
+        // Colisión contra pared izquierda de plataforma (moviéndose hacia la derecha)
+        if (this.vx > 0 && prevX + halfWidth <= plat.x + 2 && this.x + halfWidth > plat.x) {
+          this.x = plat.x - halfWidth;
+          this.vx = 0;
         }
-        // Golpe contra techo
-        else if (this.vy < 0 && prevHead >= platBottom - 12 && currentHead <= platBottom) {
-          this.y = platBottom + halfHeight;
-          this.vy = 0;
+        // Colisión contra pared derecha de plataforma (moviéndose hacia la izquierda)
+        else if (this.vx < 0 && prevX - halfWidth >= platRight - 2 && this.x - halfWidth < platRight) {
+          this.x = platRight + halfWidth;
+          this.vx = 0;
+        }
+      }
+
+      // 2. Movimiento vertical
+      const prevY = this.y;
+      this.y += this.vy * stepDt;
+
+      // Colisión vertical
+      for (const plat of platforms) {
+        const isOneWay = !!plat.isOneWay;
+        if (isOneWay && this.dropThroughTimer > 0) continue;
+
+        const platRight = plat.x + plat.w;
+        const platBottom = plat.y + plat.h;
+
+        // Debe haber solapamiento horizontal
+        const overlapX = (this.x + halfWidth > plat.x + 2) && (this.x - halfWidth < platRight - 2);
+        if (!overlapX) continue;
+
+        const prevFeet = prevY + halfHeight;
+        const currentFeet = this.y + halfHeight;
+        const prevHead = prevY - halfHeight;
+        const currentHead = this.y - halfHeight;
+
+        if (isOneWay) {
+          // Plataformas one-way: aterrizaje sólo desde arriba cayendo
+          if (this.vy >= 0 && prevFeet <= plat.y + 8 && currentFeet >= plat.y) {
+            this.y = plat.y - halfHeight;
+            this.vy = 0;
+            this.isOnFloor = true;
+          }
+        } else {
+          // Plataforma sólida
+          // Aterrizaje en el suelo
+          if (this.vy >= 0 && prevFeet <= plat.y + 12 && currentFeet >= plat.y) {
+            this.y = plat.y - halfHeight;
+            this.vy = 0;
+            this.isOnFloor = true;
+          }
+          // Golpe contra techo
+          else if (this.vy < 0 && prevHead >= platBottom - 12 && currentHead <= platBottom) {
+            this.y = platBottom + halfHeight;
+            this.vy = 0;
+          }
+          // Resolución de penetración AABB (MTV) para evitar atravesar bloques sólidos
+          else if (currentFeet > plat.y && currentHead < platBottom) {
+            const overlapTop = currentFeet - plat.y;
+            const overlapBottom = platBottom - currentHead;
+            const overlapLeft = this.x + halfWidth - plat.x;
+            const overlapRight = platRight - (this.x - halfWidth);
+
+            if (this.vy >= 0 && overlapTop <= halfHeight + 8 && overlapTop <= overlapBottom) {
+              this.y = plat.y - halfHeight;
+              this.vy = 0;
+              this.isOnFloor = true;
+            } else {
+              const minOverlap = Math.min(overlapTop, overlapBottom, overlapLeft, overlapRight);
+              if (minOverlap === overlapTop) {
+                this.y = plat.y - halfHeight;
+                if (this.vy > 0) this.vy = 0;
+                this.isOnFloor = true;
+              } else if (minOverlap === overlapBottom) {
+                this.y = platBottom + halfHeight;
+                if (this.vy < 0) this.vy = 0;
+              } else if (minOverlap === overlapLeft) {
+                this.x = plat.x - halfWidth;
+                if (this.vx > 0) this.vx = 0;
+              } else {
+                this.x = platRight + halfWidth;
+                if (this.vx < 0) this.vx = 0;
+              }
+            }
+          }
         }
       }
     }

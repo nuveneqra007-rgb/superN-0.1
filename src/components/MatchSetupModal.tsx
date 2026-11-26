@@ -12,7 +12,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { sounds } from '../game/SoundEffects';
-import { WORLDS } from '../game/WorldData';
+import { BATTLE_WORLDS } from '../game/WorldData';
 
 export type GameModeOption = 'INFINITE' | '5 ROUNDS' | '3 ROUNDS' | '7 ROUNDS' | '1 ROUND';
 
@@ -31,7 +31,6 @@ const MAP_OPTIONS: MapOption[] = [
   { id: 'toxico', name: 'LAB TOXICO', previewUrl: '/assets/aistudio/image_6f961c12.png' },
   { id: 'foso', name: 'FOSO БОЙ', previewUrl: '/assets/aistudio/image_3d8d2fc4.png' },
   { id: 'azotea', name: 'AZOTEA HOTEL', previewUrl: '/assets/aistudio/image_e12875f3.png' },
-  { id: 'training', name: 'EL GIMNASIO', previewUrl: '/assets/backgrounds/warehouse.jpg' },
 ];
 
 const GAME_MODE_OPTIONS: GameModeOption[] = [
@@ -88,7 +87,7 @@ export const MatchSetupModal: React.FC<MatchSetupModalProps> = ({
 
     let finalWorldId = currentMap.id;
     if (finalWorldId === 'RANDOM') {
-      const playableWorlds = WORLDS.map((w) => w.id);
+      const playableWorlds = BATTLE_WORLDS.map((w) => w.id);
       finalWorldId = playableWorlds[Math.floor(Math.random() * playableWorlds.length)];
     }
 

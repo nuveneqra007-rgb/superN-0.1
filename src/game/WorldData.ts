@@ -582,7 +582,7 @@ const trainingWorld: WorldConfig = {
   ambientSound: 'warehouse',
 };
 
-export const WORLDS: WorldConfig[] = [
+export const BATTLE_WORLDS: WorldConfig[] = [
   classicWorld,
   puertoWorld,
   fundicionWorld,
@@ -590,7 +590,15 @@ export const WORLDS: WorldConfig[] = [
   toxicoWorld,
   fosoWorld,
   azoteaWorld,
+];
+
+export const PRACTICE_WORLDS: WorldConfig[] = [
   trainingWorld,
+];
+
+export const WORLDS: WorldConfig[] = [
+  ...BATTLE_WORLDS,
+  ...PRACTICE_WORLDS,
 ];
 
 export function getWorldConfig(id: string): WorldConfig {

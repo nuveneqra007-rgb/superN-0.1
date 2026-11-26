@@ -5,7 +5,7 @@
 
 import React from 'react';
 import { ArrowLeft, Play, CheckCircle2, ShieldAlert, Sparkles, Box, Flame, Cog } from 'lucide-react';
-import { WORLDS, WorldConfig } from '../game/WorldData';
+import { BATTLE_WORLDS, WorldConfig } from '../game/WorldData';
 import { sounds } from '../game/SoundEffects';
 
 interface WorldSelectScreenProps {
@@ -58,7 +58,7 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
   botFactionName,
   rounds,
 }) => {
-  const selectedWorld = WORLDS.find((w) => w.id === selectedWorldId);
+  const selectedWorld = BATTLE_WORLDS.find((w) => w.id === selectedWorldId);
 
   const handleSelect = (world: WorldConfig) => {
     sounds.playPickup();
@@ -128,7 +128,7 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
 
       {/* Grilla de 3 tarjetas de mundos */}
       <div className="w-full max-w-5xl grid grid-cols-1 md:grid-cols-3 gap-4 my-auto py-2">
-        {WORLDS.map((world) => {
+        {BATTLE_WORLDS.map((world) => {
           const isSelected = world.id === selectedWorldId;
           return (
             <div

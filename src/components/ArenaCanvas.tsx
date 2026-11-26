@@ -3391,7 +3391,6 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           // 1 Mano: Katana, Machete, Knife, Baton, ShockBaton, Whip, CueStick.
           // 2 Manos: Axe, Bat, LeadPipe, Hammer, Chair, Pipe, Bottle, Teapot, Pillow.
           // FALLBACK: Si el personaje no posee el spritesheet para ese agarre, usa animación Melee de puños sin crashear.
-          const p1IsNinja = (playerFaction || BotFaction.Ninja) === BotFaction.Ninja || p1.name.toUpperCase().includes('NINJA');
           const hasTwoHandSheet = !!(s.p1TwoHandSheet && s.p1TwoHandSheet.complete && s.p1TwoHandSheet.naturalWidth > 0) || !!s.p1SheetConfig?.hasTwoHandAttackSheet;
           const hasOneHandSheet = !!(s.p1OneHandSheet && s.p1OneHandSheet.complete && s.p1OneHandSheet.naturalWidth > 0) || !!s.p1SheetConfig?.hasOneHandAttackSheet;
 
@@ -3414,48 +3413,8 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                 sounds.playPunch();
               }
             }
-          } else if (p1IsNinja && isSwordWeapon(p1.equippedWeapon)) {
-            // Combo exclusivo de Katana/Espada del Ninja (3 tajos encadenados)
-            if (p1.isSwordAttacking) {
-              if ((p1.swordComboStep || 0) < 2) {
-                p1.swordComboBuffered = true;
-                p1.swordComboWindowTicks = 32;
-
-                if ((p1.swordAnimFrame || 0) >= 3) {
-                  p1.swordComboStep = (p1.swordComboStep || 0) + 1;
-                  p1.swordAnimFrame = 0;
-                  p1.swordAnimTimer = 0;
-                  p1.swordHasHit = false;
-                  p1.swordComboBuffered = false;
-                  p1.swordComboWindowTicks = 32;
-                  sounds.playSwordSwing();
-                }
-              }
-            } else {
-              let nextStep = 0;
-              if ((p1.swordComboWindowTicks || 0) > 0 && (p1.swordComboStep || 0) > 0 && (p1.swordComboStep || 0) <= 2) {
-                nextStep = p1.swordComboStep || 0;
-              } else {
-                nextStep = 0;
-              }
-
-              p1.isSwordAttacking = true;
-              p1.swordComboStep = nextStep;
-              p1.swordAnimFrame = 0;
-              p1.swordAnimTimer = 0;
-              p1.swordHasHit = false;
-              p1.swordComboBuffered = false;
-              p1.swordComboWindowTicks = 32;
-
-              p1.velocityX = 0;
-              s.p1Controller.vx = 0;
-              s.p1Controller.state = ControllerState.Idle;
-              PlayerFSM.tryTransition(p1, PlayerFSMState.MeleeAttack);
-
-              sounds.playSwordSwing();
-            }
           } else if (isOneHandWeapon(p1.equippedWeapon) && p1.equippedWeapon !== WeaponType.Fists && hasOneHandSheet) {
-            // Ataque a una mano (one_hand_attack)
+            // Agarre a una mano (Corte/Impacto rápido): Katana, Machete, Knife, Baton, ShockBaton, Whip, CueStick (+ Sword)
             if (!p1.isOneHandAttacking) {
               p1.isOneHandAttacking = true;
               p1.oneHandAnimFrame = 0;
@@ -5603,7 +5562,6 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             !bot.isThrowing
           ) {
             // ── FASE 4: SISTEMA DE AGARRE DE ARMAS (P2) ──
-            const botIsNinja = bot.faction === BotFaction.Ninja || bot.name.toUpperCase().includes('NINJA');
             const hasTwoHandBot = !!(s.botTwoHandSheet && s.botTwoHandSheet.complete && s.botTwoHandSheet.naturalWidth > 0) || !!s.botSheetConfig?.hasTwoHandAttackSheet;
             const hasOneHandBot = !!(s.botOneHandSheet && s.botOneHandSheet.complete && s.botOneHandSheet.naturalWidth > 0) || !!s.botSheetConfig?.hasOneHandAttackSheet;
 
@@ -5624,45 +5582,6 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                 } else {
                   sounds.playPunch();
                 }
-              }
-            } else if (botIsNinja && isSwordWeapon(bot.equippedWeapon)) {
-              if (bot.isSwordAttacking) {
-                if ((bot.swordComboStep || 0) < 2) {
-                  bot.swordComboBuffered = true;
-                  bot.swordComboWindowTicks = 32;
-
-                  if ((bot.swordAnimFrame || 0) >= 3) {
-                    bot.swordComboStep = (bot.swordComboStep || 0) + 1;
-                    bot.swordAnimFrame = 0;
-                    bot.swordAnimTimer = 0;
-                    bot.swordHasHit = false;
-                    bot.swordComboBuffered = false;
-                    bot.swordComboWindowTicks = 32;
-                    sounds.playSwordSwing();
-                  }
-                }
-              } else {
-                let nextStep = 0;
-                if ((bot.swordComboWindowTicks || 0) > 0 && (bot.swordComboStep || 0) > 0 && (bot.swordComboStep || 0) <= 2) {
-                  nextStep = bot.swordComboStep || 0;
-                } else {
-                  nextStep = 0;
-                }
-
-                bot.isSwordAttacking = true;
-                bot.swordComboStep = nextStep;
-                bot.swordAnimFrame = 0;
-                bot.swordAnimTimer = 0;
-                bot.swordHasHit = false;
-                bot.swordComboBuffered = false;
-                bot.swordComboWindowTicks = 32;
-
-                bot.velocityX = 0;
-                s.p2Controller.vx = 0;
-                s.p2Controller.state = ControllerState.Idle;
-                PlayerFSM.tryTransition(bot, PlayerFSMState.MeleeAttack);
-
-                sounds.playSwordSwing();
               }
             } else if (isOneHandWeapon(bot.equippedWeapon) && bot.equippedWeapon !== WeaponType.Fists && hasOneHandBot) {
               if (!bot.isOneHandAttacking) {
@@ -10060,6 +9979,8 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         const isBlade = isBladeWeapon(p.equippedWeapon);
         const isBladeAttacking =
           isBlade &&
+          !p.isOneHandAttacking &&
+          !p.isTwoHandAttacking &&
           (p.fsm === PlayerFSMState.MeleeAttack || p.isSliding || p.isChargingHeavy);
 
         // -2. Animación de Lanzamiento (throw_up - 5 frames)
@@ -10339,22 +10260,31 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             ctx.drawImage(idleImg, drawX, drawY, charW, charH);
           }
 
-          // Estela dinámica de corte/impacto veloz en frames activos (frames 1, 2, 3)
+          // Estela dinámica de corte/impacto rápido en frames activos (frames 1, 2, 3)
           if ((p.oneHandAnimFrame || 0) >= 1 && (p.oneHandAnimFrame || 0) <= 3) {
             const isGymratFighter =
               p.name.toUpperCase().includes('GYMRAT') ||
               (isP1 && (playerFaction || BotFaction.Ninja) === BotFaction.Gymrat);
+            const isBladeCut = isOneHandBladeWeapon(p.equippedWeapon);
+            const isShockWeapon = p.equippedWeapon === WeaponType.ShockBaton;
+            const trailColor = isGymratFighter
+              ? '#f97316'
+              : isBladeCut
+              ? '#38bdf8'
+              : isShockWeapon
+              ? '#60a5fa'
+              : '#f59e0b';
             ctx.save();
-            ctx.lineWidth = isGymratFighter ? 4.2 : 3.5;
-            ctx.strokeStyle = isGymratFighter ? '#f97316' : '#38bdf8';
-            ctx.shadowColor = isGymratFighter ? '#fb923c' : '#38bdf8';
-            ctx.shadowBlur = 14;
+            ctx.lineWidth = isGymratFighter ? 4.2 : (isBladeCut ? 3.5 : 3.2);
+            ctx.strokeStyle = trailColor;
+            ctx.shadowColor = isGymratFighter ? '#fb923c' : trailColor;
+            ctx.shadowBlur = isShockWeapon ? 18 : 14;
             ctx.beginPath();
             if (isGymratFighter && (p.oneHandAnimFrame || 0) === 2) {
               ctx.moveTo(14, -4);
               ctx.lineTo(48, -4);
             } else {
-              ctx.arc(12, -4, 38, -Math.PI * 0.35, Math.PI * 0.25, false);
+              ctx.arc(12, -4, isBladeCut ? 40 : 36, -Math.PI * 0.35, Math.PI * 0.25, false);
             }
             ctx.stroke();
             ctx.restore();

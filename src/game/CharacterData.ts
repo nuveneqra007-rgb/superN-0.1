@@ -678,6 +678,12 @@ export const UNIFORM_SCALE_MAP: Record<string, UniformScaleAnchor> = {
     feetYRatio: 271 / 290,
     feetCenterXInCell: 85,
   },
+  // One-hand attack: 234px de alto sobre celda de 290 (groundY = 274, escala uniforme = 249 / 234)
+  ninja_one_hand_attack: {
+    scaleFactor: 249 / 234,
+    feetYRatio: 274 / 290,
+    feetCenterXInCell: 110,
+  },
 };
 
 export function getUniformScaleConfig(sheetId: string): UniformScaleAnchor | null {

@@ -1098,7 +1098,7 @@ export function isOneHandBladeWeapon(type: WeaponType): boolean {
 
 /**
  * Armas contundentes de una mano (Bastón/Baton, Porra eléctrica/ShockBaton, Látigo/Whip, Taco de billar/CueStick):
- * No cortan el aire; utilizan la animación de golpe cuerpo a cuerpo (Melee) con balanceo e impacto seco.
+ * Utilizan el set oficial de animación 'one_hand_attack' (5 frames de impacto rápido) con estela de impacto seco/eléctrico.
  */
 export const ONE_HAND_BLUNT_WEAPONS: ReadonlySet<WeaponType> = new Set([
   WeaponType.Baton,

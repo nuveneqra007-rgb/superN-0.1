@@ -22,8 +22,7 @@ export const PhysicsStep = {
 
   tick(p: PlayerState, platforms: PhysicsRect[], arenaWidth: number = 960): void {
     this.applyGravity(p);
-    this.applyMovement(p);
-    this.resolveCollisions(p, platforms);
+    this.integrateAndResolve(p, platforms);
     this.clampToBounds(p, arenaWidth);
   },
 
@@ -43,7 +42,7 @@ export const PhysicsStep = {
     }
   },
 
-  applyMovement(p: PlayerState): void {
+  integrateAndResolve(p: PlayerState, platforms: PhysicsRect[]): void {
     if (p.onGround) {
       p.velocityX *= GameConstants.GroundFriction;
     } else {
@@ -59,11 +58,6 @@ export const PhysicsStep = {
       p.velocityX = dir * PLAYER_CONFIG.ROLL_SPEED;
     }
 
-    p.x += p.velocityX * this.deltaTime;
-    p.y += p.velocityY * this.deltaTime;
-  },
-
-  resolveCollisions(p: PlayerState, platforms: PhysicsRect[]): void {
     const hw = GameConstants.HitboxStand.x / 2;
     const isCrouched =
       p.fsm === PlayerFSMState.Crouch ||
@@ -71,57 +65,68 @@ export const PhysicsStep = {
       p.fsm === PlayerFSMState.CrouchSlide;
     const hh = (isCrouched ? GameConstants.HitboxCrouch.y : GameConstants.HitboxStand.y) / 2;
 
-    p.onGround = false;
-
     if (p.platformDropTicks > 0) {
       p.platformDropTicks--;
     }
 
+    // 1. Movimiento horizontal + colisión sólo contra paredes sólidas (evita corner snags)
+    const prevX = p.x;
+    p.x += p.velocityX * this.deltaTime;
+
     for (const plat of platforms) {
-      const isOneWay = plat.isOneWay || plat.h <= 14;
+      if (plat.isOneWay) continue;
+      const platRight = plat.x + plat.w;
+      const platBottom = plat.y + plat.h;
+      const feetY = p.y + hh;
+      const headY = p.y - hh;
+
+      if (feetY <= plat.y + 4 || headY >= platBottom - 4) continue;
+
+      if (p.velocityX > 0 && prevX + hw <= plat.x + 2 && p.x + hw > plat.x) {
+        p.x = plat.x - hw;
+        p.velocityX = 0;
+      } else if (p.velocityX < 0 && prevX - hw >= platRight - 2 && p.x - hw < platRight) {
+        p.x = platRight + hw;
+        p.velocityX = 0;
+      }
+    }
+
+    // 2. Movimiento vertical + colisión con plataformas (paridad con PlayerController)
+    const prevY = p.y;
+    p.y += p.velocityY * this.deltaTime;
+    p.onGround = false;
+
+    for (const plat of platforms) {
+      const isOneWay = !!plat.isOneWay;
       if (isOneWay && p.platformDropTicks > 0) continue;
 
       const platRight = plat.x + plat.w;
       const platBottom = plat.y + plat.h;
+      const overlapX = p.x + hw > plat.x + 2 && p.x - hw < platRight - 2;
+      if (!overlapX) continue;
 
-      const overlapX = p.x + hw > plat.x && p.x - hw < platRight;
-      const overlapY = p.y + hh > plat.y && p.y - hh < platBottom;
+      const prevFeet = prevY + hh;
+      const currentFeet = p.y + hh;
+      const prevHead = prevY - hh;
+      const currentHead = p.y - hh;
 
-      if (!overlapX || !overlapY) continue;
-
-      const penLeft = p.x + hw - plat.x;
-      const penRight = platRight - (p.x - hw);
-      const penTop = p.y + hh - plat.y;
-      const penBottom = platBottom - (p.y - hh);
-
-      // One-way: sólo colisión desde arriba cuando cae
       if (isOneWay) {
-        if (p.velocityY >= 0 && penTop <= 16 && p.y - p.velocityY * this.deltaTime + hh <= plat.y + 4) {
+        if (p.velocityY >= 0 && prevFeet <= plat.y + 8 && currentFeet >= plat.y) {
           p.y = plat.y - hh;
           p.velocityY = 0;
           p.onGround = true;
           p.coyoteTicks = 6;
         }
-        continue;
-      }
-
-      // Plataforma sólida — resolver eje con menor penetración
-      const minPen = Math.min(penLeft, penRight, penTop, penBottom);
-
-      if (minPen === penTop && p.velocityY >= 0) {
-        p.y = plat.y - hh;
-        p.velocityY = 0;
-        p.onGround = true;
-        p.coyoteTicks = 6;
-      } else if (minPen === penBottom && p.velocityY < 0) {
-        p.y = platBottom + hh;
-        p.velocityY = 0;
-      } else if (minPen === penLeft) {
-        p.x = plat.x - hw;
-        p.velocityX = 0;
-      } else if (minPen === penRight) {
-        p.x = platRight + hw;
-        p.velocityX = 0;
+      } else {
+        if (p.velocityY >= 0 && prevFeet <= plat.y + 12 && currentFeet >= plat.y) {
+          p.y = plat.y - hh;
+          p.velocityY = 0;
+          p.onGround = true;
+          p.coyoteTicks = 6;
+        } else if (p.velocityY < 0 && prevHead >= platBottom - 12 && currentHead <= platBottom) {
+          p.y = platBottom + hh;
+          p.velocityY = 0;
+        }
       }
     }
 
@@ -132,11 +137,13 @@ export const PhysicsStep = {
 
   clampToBounds(p: PlayerState, arenaWidth: number = 960): void {
     const hw = GameConstants.HitboxStand.x / 2;
-    if (p.x < hw) {
-      p.x = hw;
+    const minX = hw + 10;
+    const maxX = arenaWidth - hw - 10;
+    if (p.x < minX) {
+      p.x = minX;
       p.velocityX = 0;
-    } else if (p.x > arenaWidth - hw) {
-      p.x = arenaWidth - hw;
+    } else if (p.x > maxX) {
+      p.x = maxX;
       p.velocityX = 0;
     }
 

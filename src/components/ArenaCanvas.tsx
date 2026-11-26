@@ -1049,18 +1049,27 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       if (!target.isAlive || target.isGrabbed) continue;
 
       const isInvuln =
-        target.id === s.p1.id
+        (target.invulnerabilityTicks || 0) > 0 ||
+        (target.id === s.p1.id
           ? s.p1Controller.isInvulnerable
           : target.id === 2 && (gameMode === 'local1v1' || gameMode === 'coop')
           ? s.p2Controller.isInvulnerable
-          : target.fsm === PlayerFSMState.Roll;
+          : target.fsm === PlayerFSMState.Roll);
 
       if (isInvuln) continue;
 
+      const isTargetLow =
+        target.fsm === PlayerFSMState.Crouch ||
+        target.fsm === PlayerFSMState.Roll ||
+        target.fsm === PlayerFSMState.CrouchSlide ||
+        target.fsm === PlayerFSMState.KnockedDown;
+      const targetHalfH = (isTargetLow ? GameConstants.HitboxCrouch.y : GameConstants.HitboxStand.y) / 2;
       const inReachX =
         (facingDir > 0 && target.x >= attacker.x - 15 && target.x <= attacker.x + options.reachX) ||
         (facingDir < 0 && target.x <= attacker.x + 15 && target.x >= attacker.x - options.reachX);
-      const inReachY = Math.abs(target.y - attacker.y) < options.reachY;
+      const inReachY =
+        target.y + targetHalfH >= attacker.y - options.reachY * 0.85 &&
+        target.y - targetHalfH <= attacker.y + options.reachY * 0.85;
 
       if (inReachX && inReachY) {
         didHitAny = true;
@@ -2316,8 +2325,11 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       const code = e.code;
       stateRef.current.keys[code] = false;
       stateRef.current.keys[key] = false;
-      delete stateRef.current.keysJustPressed[code];
-      delete stateRef.current.keysJustPressed[key];
+      // Preservar pulsaciones rápidas (edge) durante hit-stop para no perder combos ni dropThrough
+      if (stateRef.current.hitStopTicks <= 0) {
+        delete stateRef.current.keysJustPressed[code];
+        delete stateRef.current.keysJustPressed[key];
+      }
     };
 
     // Prevenir teclas pegadas al cambiar de pestaña o perder foco de ventana
@@ -2630,9 +2642,13 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       if (!s) return;
       const updateStart = performance.now();
 
-      // B-09 HIT-STOP: Congela la simulación durante el impacto mientras el shake continúa
+      // B-09 HIT-STOP: Congela la física de impacto manteniendo shake, hit-flash e inputs en buffer
       if (s.hitStopTicks > 0) {
         s.hitStopTicks--;
+        if (s.p1.hitFlashTicks > 0) s.p1.hitFlashTicks--;
+        for (const inst of s.bots) {
+          if (inst.state.hitFlashTicks > 0) inst.state.hitFlashTicks--;
+        }
         if (s.screenShake > 0) {
           s.screenShake *= 0.88;
           if (s.screenShake < 0.1) s.screenShake = 0;

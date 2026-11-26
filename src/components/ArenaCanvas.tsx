@@ -19,7 +19,7 @@ import { getWorldConfig, WorldConfig, HazardCfg, PlatformRect } from '../game/Wo
 import { GameMode } from './ModeSelectScreen';
 import { FighterBar, FighterBarData, FighterSlotInfo, SHOW_ENERGY_BAR } from './FighterBar';
 import { getFighterSheetConfig, FighterSheetConfig, getCharacterDefByFaction, getUniformScaleConfig, UniformScaleAnchor, frameMetaData, getCharacterHandProfile } from '../game/CharacterData';
-import { renderEquippedWeaponIdle } from '../game/WeaponRenderer';
+import { renderEquippedWeaponIdle, renderWeaponAtHand } from '../game/WeaponRenderer';
 import {
   GrenadeType,
   GrenadeConfig,
@@ -10065,26 +10065,29 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           if (!hasBuiltInGun) {
             const wImg = s.weaponImages[p.equippedWeapon];
             if (wImg && wImg.complete && wImg.naturalWidth > 0) {
-              ctx.save();
-              if (currentF === 0) {
-                // Frame 1: Apuntado frontal
-                ctx.translate(22, 0);
-                ctx.rotate(-0.02);
-              } else if (currentF === 1) {
-                // Frame 2: Disparo con fogonazo frontal
-                ctx.translate(22, -1);
-                ctx.rotate(-0.05);
+              const handProfile = getCharacterHandProfile(
+                isGymratFighter ? 'gymrat' : isSantaFighter ? 'santaclo' : 'ninja',
+                p.name
+              );
+              let rx = 18;
+              let ry = 1;
+              let rAngle = -0.02;
+              if (currentF === 1) {
+                rx = 18;
+                ry = 0;
+                rAngle = -0.05;
               } else if (currentF === 2) {
-                // Frame 3: Fuerte retroceso / sacudida hacia atrás
-                ctx.translate(14, -18);
-                ctx.rotate(-0.65);
-              } else {
-                // Frame 4: Recuperación y re-alineación
-                ctx.translate(22, -2);
-                ctx.rotate(-0.05);
+                rx = 12;
+                ry = -14;
+                rAngle = -0.58;
+              } else if (currentF >= 3) {
+                rx = 18;
+                ry = -1;
+                rAngle = -0.05;
               }
-              ctx.drawImage(wImg, -6, -8, 36, 18);
-              ctx.restore();
+              renderWeaponAtHand(ctx, wImg, p.equippedWeapon, handProfile, rx, ry, rAngle, {
+                includeForegrip: true,
+              });
             }
           }
 
@@ -10129,26 +10132,29 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             // Para Ninja: Arma equipada en la mano orientada y posicionada según el frame
             const wImg = s.weaponImages[p.equippedWeapon];
             if (wImg && wImg.complete && wImg.naturalWidth > 0) {
-              ctx.save();
-              if (currentF === 0) {
-                // Apuntado horizontal directo
-                ctx.translate(22, -3);
-                ctx.rotate(0);
-              } else if (currentF === 1) {
-                // Comienzo de retroceso
-                ctx.translate(23, -5);
-                ctx.rotate(-0.15);
+              const handProfile = getCharacterHandProfile(
+                isGymratFighter ? 'gymrat' : isSantaFighter ? 'santaclo' : 'ninja',
+                p.name
+              );
+              let px = 20;
+              let py = -1;
+              let pAngle = 0;
+              if (currentF === 1) {
+                px = 21;
+                py = -3;
+                pAngle = -0.15;
               } else if (currentF === 2) {
-                // Frame 3 (donde levanta la mano): retroceso/recarga hacia arriba
-                ctx.translate(20, -18);
-                ctx.rotate(-0.75);
-              } else {
-                // Frame 4: recuperación y retorno al apuntado
-                ctx.translate(22, -3);
-                ctx.rotate(-0.05);
+                px = 18;
+                py = -14;
+                pAngle = -0.7;
+              } else if (currentF >= 3) {
+                px = 20;
+                py = -1;
+                pAngle = -0.05;
               }
-              ctx.drawImage(wImg, -4, -6, 24, 14);
-              ctx.restore();
+              renderWeaponAtHand(ctx, wImg, p.equippedWeapon, handProfile, px, py, pAngle, {
+                includeForegrip: false,
+              });
             }
 
             // Fogonazo / Destello frontal (Muzzle Flash) en el primer frame para Ninja
@@ -10214,30 +10220,27 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           // Arma pesada equipada orientada según el fotograma del golpe a dos manos
           const wImg = s.weaponImages[p.equippedWeapon];
           if (wImg && wImg.complete && wImg.naturalWidth > 0) {
-            ctx.save();
+            const handProfile = getCharacterHandProfile(
+              isGymratFighter ? 'gymrat' : isSantaFighter ? 'santaclo' : 'ninja',
+              p.name
+            );
+            let tx = 14;
+            let ty = 0;
+            let tAngle = 0.1;
             if (currentF === 0) {
-              ctx.translate(14, -2);
-              ctx.rotate(-0.3);
+              tx = 14; ty = -2; tAngle = -0.3;
             } else if (currentF === 1) {
-              ctx.translate(10, -28);
-              ctx.rotate(-1.2);
+              tx = 10; ty = -26; tAngle = -1.2;
             } else if (currentF === 2) {
-              ctx.translate(14, -30);
-              ctx.rotate(-1.4);
+              tx = 14; ty = -28; tAngle = -1.4;
             } else if (currentF === 3) {
-              // Golpe contra el suelo
-              ctx.translate(26, 18);
-              ctx.rotate(1.15);
+              tx = 24; ty = 16; tAngle = 1.15;
             } else if (currentF === 4) {
-              ctx.translate(18, 6);
-              ctx.rotate(0.5);
-            } else {
-              ctx.translate(14, 0);
-              ctx.rotate(0.1);
+              tx = 18; ty = 6; tAngle = 0.5;
             }
-            // Armas pesadas se dibujan con mayor tamaño y peso visual
-            ctx.drawImage(wImg, -6, -9, 34, 18);
-            ctx.restore();
+            renderWeaponAtHand(ctx, wImg, p.equippedWeapon, handProfile, tx, ty, tAngle, {
+              includeForegrip: true,
+            });
           }
         } else if (p.isOneHandAttacking) {
           const sheetToUse = (activeOneHandSheet && activeOneHandSheet.complete && activeOneHandSheet.naturalWidth > 0)
@@ -10288,26 +10291,26 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           // Arma equipada en la mano orientada y posicionada según el fotograma del swing
           const wImg = s.weaponImages[p.equippedWeapon];
           if (wImg && wImg.complete && wImg.naturalWidth > 0) {
-            ctx.save();
+            const handProfile = getCharacterHandProfile(
+              isGymratFighter ? 'gymrat' : isSantaFighter ? 'santaclo' : 'ninja',
+              p.name
+            );
             const frame = p.oneHandAnimFrame || 0;
+            let ox = 16;
+            let oy = 2;
+            let oAngle = 0.1;
             if (frame === 0) {
-              ctx.translate(12, -2);
-              ctx.rotate(-0.25);
+              ox = 12; oy = -2; oAngle = -0.25;
             } else if (frame === 1) {
-              ctx.translate(18, -14);
-              ctx.rotate(-0.7);
+              ox = 18; oy = -14; oAngle = -0.7;
             } else if (frame === 2) {
-              ctx.translate(26, -2);
-              ctx.rotate(0.2);
+              ox = 26; oy = -2; oAngle = 0.2;
             } else if (frame === 3) {
-              ctx.translate(22, 8);
-              ctx.rotate(0.65);
-            } else {
-              ctx.translate(16, 2);
-              ctx.rotate(0.1);
+              ox = 22; oy = 8; oAngle = 0.65;
             }
-            ctx.drawImage(wImg, -4, -8, 28, 14);
-            ctx.restore();
+            renderWeaponAtHand(ctx, wImg, p.equippedWeapon, handProfile, ox, oy, oAngle, {
+              includeForegrip: false,
+            });
           }
         } else if (
           p.isMeleeComboAttacking &&
@@ -10369,23 +10372,21 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             if (isOneHandBluntWeapon(p.equippedWeapon)) {
               const wImg = s.weaponImages[p.equippedWeapon];
               if (wImg && wImg.complete && wImg.naturalWidth > 0) {
-                ctx.save();
+                const handProfile = getCharacterHandProfile('gymrat', p.name);
                 const f = p.meleeAnimFrame;
+                let mx = 14;
+                let my = -2;
+                let mAngle = 0;
                 if (f === 0) {
-                  ctx.translate(10, -6);
-                  ctx.rotate(-0.35);
+                  mx = 10; my = -6; mAngle = -0.35;
                 } else if (f === 1 || f === 2) {
-                  ctx.translate(26, -8);
-                  ctx.rotate(0.2);
+                  mx = 26; my = -8; mAngle = 0.2;
                 } else if (f === 3 || f === 4) {
-                  ctx.translate(24, 2);
-                  ctx.rotate(0.45);
-                } else {
-                  ctx.translate(14, -2);
-                  ctx.rotate(0.0);
+                  mx = 24; my = 2; mAngle = 0.45;
                 }
-                ctx.drawImage(wImg, -4, -8, 28, 14);
-                ctx.restore();
+                renderWeaponAtHand(ctx, wImg, p.equippedWeapon, handProfile, mx, my, mAngle, {
+                  includeForegrip: false,
+                });
               }
             }
           } else if (isSantaFighter) {
@@ -10404,23 +10405,21 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             if (isOneHandBluntWeapon(p.equippedWeapon)) {
               const wImg = s.weaponImages[p.equippedWeapon];
               if (wImg && wImg.complete && wImg.naturalWidth > 0) {
-                ctx.save();
+                const handProfile = getCharacterHandProfile(isSantaFighter ? 'santaclo' : 'ninja', p.name);
                 const f = p.meleeAnimFrame;
+                let mx = 14;
+                let my = -2;
+                let mAngle = 0;
                 if (f === 0) {
-                  ctx.translate(10, -6);
-                  ctx.rotate(-0.35);
+                  mx = 10; my = -6; mAngle = -0.35;
                 } else if (f === 1 || f === 2) {
-                  ctx.translate(26, -8);
-                  ctx.rotate(0.2);
+                  mx = 26; my = -8; mAngle = 0.2;
                 } else if (f === 3 || f === 4) {
-                  ctx.translate(24, 2);
-                  ctx.rotate(0.45);
-                } else {
-                  ctx.translate(14, -2);
-                  ctx.rotate(0.0);
+                  mx = 24; my = 2; mAngle = 0.45;
                 }
-                ctx.drawImage(wImg, -4, -8, 28, 14);
-                ctx.restore();
+                renderWeaponAtHand(ctx, wImg, p.equippedWeapon, handProfile, mx, my, mAngle, {
+                  includeForegrip: false,
+                });
               }
             }
 

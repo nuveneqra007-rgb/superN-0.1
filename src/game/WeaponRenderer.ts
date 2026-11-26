@@ -7,7 +7,7 @@
 import { CharacterHandProfile, CharacterHandStyle, HandAnchor } from './CharacterData';
 import { PlayerFSMState } from './PlayerState';
 import { WeaponType } from './WeaponData';
-import { getWeaponGripConfig } from './WeaponGripData';
+import { CarryPose, getWeaponGripConfig } from './WeaponGripData';
 
 export interface WeaponRenderPose {
   fsm: PlayerFSMState;
@@ -20,7 +20,17 @@ export interface WeaponRenderPose {
   isCrouching: boolean;
   getUpTicks?: number;
   pickupAnimTicks?: number;
+  debugGrip?: boolean;
 }
+
+const POSE_OFFSET_BY_CARRY: Record<CarryPose, { x: number; y: number }> = {
+  one_hand_blade: { x: 0, y: 0 },
+  one_hand_blunt: { x: 0, y: 1 },
+  two_hand_heavy: { x: -1, y: 1 },
+  pistol: { x: 1, y: -1 },
+  rifle: { x: -2, y: 2 },
+  throwable: { x: -1, y: 2 },
+};
 
 /**
  * Resuelve la posición y ángulo de la mano principal según el perfil del personaje y su pose.
@@ -112,6 +122,64 @@ export function drawGripHand(
 }
 
 /**
+ * Dibuja un arma en una coordenada/ángulo específico usando su pivote real (gripX, gripY),
+ * su escala proporcional y el puño envolvente propio del protagonista.
+ * Reutilizable tanto en reposo/caminata como en frames de ataque o disparo.
+ */
+export function renderWeaponAtHand(
+  ctx: CanvasRenderingContext2D,
+  weaponImg: HTMLImageElement,
+  weaponType: WeaponType,
+  profile: CharacterHandProfile,
+  handX: number,
+  handY: number,
+  angle: number,
+  options?: {
+    scale?: number;
+    includeForegrip?: boolean;
+    debugGrip?: boolean;
+  }
+): void {
+  const grip = getWeaponGripConfig(weaponType);
+  const offsetX = -grip.gripX * grip.drawW;
+  const offsetY = -grip.gripY * grip.drawH;
+  const scale = options?.scale ?? 1;
+
+  ctx.save();
+  ctx.translate(handX, handY);
+  ctx.rotate(angle);
+  if (scale !== 1) {
+    ctx.scale(scale, scale);
+  }
+
+  // Capa 2: Sprite del arma alineado por su empuñadura
+  ctx.drawImage(weaponImg, offsetX, offsetY, grip.drawW, grip.drawH);
+
+  // Capa 3a: Mano principal envolviendo la empuñadura
+  drawGripHand(ctx, 0, 0, profile.handStyle, 1);
+
+  // Capa 3b: Mano de apoyo en rifles y armas pesadas a dos manos
+  const showForegrip = options?.includeForegrip ?? true;
+  if (showForegrip && grip.foregripX !== undefined && grip.foregripY !== undefined) {
+    const fx = (grip.foregripX - grip.gripX) * grip.drawW;
+    const fy = (grip.foregripY - grip.gripY) * grip.drawH;
+    drawGripHand(ctx, fx, fy, profile.handStyle, 0.86);
+
+    if (options?.debugGrip) {
+      ctx.fillStyle = '#22d3ee';
+      ctx.fillRect(fx - 1.5, fy - 1.5, 3, 3);
+    }
+  }
+
+  if (options?.debugGrip) {
+    ctx.fillStyle = '#22c55e';
+    ctx.fillRect(-1.5, -1.5, 3, 3);
+  }
+
+  ctx.restore();
+}
+
+/**
  * Dibuja el arma equipada anclada por su empuñadura a la mano del protagonista,
  * con puño envolvente, segunda mano en armas largas y feedback al recoger.
  */
@@ -126,33 +194,25 @@ export function renderEquippedWeaponIdle(
   if (!anchor) return;
 
   const grip = getWeaponGripConfig(weaponType);
-  const offsetX = -grip.gripX * grip.drawW;
-  const offsetY = -grip.gripY * grip.drawH;
+  const carryOffset = POSE_OFFSET_BY_CARRY[grip.carryPose];
 
   // Tween corto de 6 ticks al recoger o cambiar de arma
   const pickupT = Math.min(1, Math.max(0, (pose.pickupAnimTicks || 0) / 6));
   const pickupScale = 1 + 0.18 * pickupT;
   const pickupAngle = -0.32 * pickupT;
 
-  ctx.save();
-  ctx.translate(anchor.x, anchor.y);
-  ctx.rotate(anchor.angle + grip.idleAngle + pickupAngle);
-  if (pickupT > 0) {
-    ctx.scale(pickupScale, pickupScale);
-  }
-
-  // Capa 2: Sprite del arma alineado por su empuñadura
-  ctx.drawImage(weaponImg, offsetX, offsetY, grip.drawW, grip.drawH);
-
-  // Capa 3a: Mano principal envolviendo la empuñadura
-  drawGripHand(ctx, 0, 0, profile.handStyle, 1);
-
-  // Capa 3b: Mano de apoyo en rifles y armas pesadas a dos manos
-  if (grip.foregripX !== undefined && grip.foregripY !== undefined) {
-    const fx = (grip.foregripX - grip.gripX) * grip.drawW;
-    const fy = (grip.foregripY - grip.gripY) * grip.drawH;
-    drawGripHand(ctx, fx, fy, profile.handStyle, 0.86);
-  }
-
-  ctx.restore();
+  renderWeaponAtHand(
+    ctx,
+    weaponImg,
+    weaponType,
+    profile,
+    anchor.x + carryOffset.x,
+    anchor.y + carryOffset.y,
+    anchor.angle + grip.idleAngle + pickupAngle,
+    {
+      scale: pickupScale,
+      includeForegrip: true,
+      debugGrip: pose.debugGrip,
+    }
+  );
 }

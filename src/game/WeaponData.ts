@@ -1395,4 +1395,167 @@ export function slotForWeapon(type: WeaponType): WeaponSlot | 'powerup' | null {
   return null;
 }
 
+export type WeaponBallisticType =
+  | 'none'
+  | 'bullet'
+  | 'silenced_bullet'
+  | 'pellet_spread'
+  | 'sniper_pierce'
+  | 'rocket'
+  | 'grenade_launcher'
+  | 'flame_stream'
+  | 'laser_beam'
+  | 'arrow';
+
+export type WeaponSoundProfile =
+  | 'fist'
+  | 'knife'
+  | 'blade_heavy'
+  | 'blunt_wood'
+  | 'blunt_metal'
+  | 'shock'
+  | 'chainsaw'
+  | 'pistol'
+  | 'silenced'
+  | 'magnum'
+  | 'smg'
+  | 'rifle'
+  | 'shotgun'
+  | 'sniper'
+  | 'bazooka'
+  | 'glauncher'
+  | 'flamethrower'
+  | 'lazer'
+  | 'bow'
+  | 'throwable';
+
+const WEAPON_BALLISTIC_MAP: Record<WeaponType, WeaponBallisticType> = {
+  // Melee & Powerups
+  [WeaponType.Fists]: 'none',
+  [WeaponType.Knife]: 'none',
+  [WeaponType.Machete]: 'none',
+  [WeaponType.Axe]: 'none',
+  [WeaponType.Sword]: 'none',
+  [WeaponType.Katana]: 'none',
+  [WeaponType.Bat]: 'none',
+  [WeaponType.Baton]: 'none',
+  [WeaponType.ShockBaton]: 'none',
+  [WeaponType.LeadPipe]: 'none',
+  [WeaponType.Pipe]: 'none',
+  [WeaponType.Chainsaw]: 'none',
+  [WeaponType.Hammer]: 'none',
+  [WeaponType.Chair]: 'none',
+  [WeaponType.Bottle]: 'none',
+  [WeaponType.Chain]: 'none',
+  [WeaponType.Whip]: 'none',
+  [WeaponType.CueStick]: 'none',
+  [WeaponType.Teapot]: 'none',
+  [WeaponType.Pillow]: 'none',
+  [WeaponType.Flagpole]: 'none',
+  [WeaponType.StrengthBoost]: 'none',
+  [WeaponType.SloMo10]: 'none',
+  [WeaponType.Grenade]: 'none',
+  [WeaponType.Molotov]: 'none',
+  [WeaponType.C4]: 'none',
+  [WeaponType.Mine]: 'none',
+  [WeaponType.Baseball]: 'none',
+
+  // Firearms & Special
+  [WeaponType.Pistol]: 'bullet',
+  [WeaponType.Pistol45]: 'bullet',
+  [WeaponType.SilencedPistol]: 'silenced_bullet',
+  [WeaponType.Magnum]: 'bullet',
+  [WeaponType.Revolver]: 'bullet',
+  [WeaponType.MachinePistol]: 'bullet',
+  [WeaponType.Uzi]: 'bullet',
+  [WeaponType.SilencedUzi]: 'silenced_bullet',
+  [WeaponType.TommyGun]: 'bullet',
+  [WeaponType.SMG]: 'bullet',
+  [WeaponType.MP50]: 'bullet',
+  [WeaponType.Rifle]: 'bullet',
+  [WeaponType.Assault]: 'bullet',
+  [WeaponType.Carbine]: 'bullet',
+  [WeaponType.M60]: 'bullet',
+  [WeaponType.Shotgun]: 'pellet_spread',
+  [WeaponType.SawedOff]: 'pellet_spread',
+  [WeaponType.DarkShotgun]: 'pellet_spread',
+  [WeaponType.Sniper]: 'sniper_pierce',
+  [WeaponType.Bazooka]: 'rocket',
+  [WeaponType.GLauncher]: 'grenade_launcher',
+  [WeaponType.Flamethrower]: 'flame_stream',
+  [WeaponType.FlareGun]: 'bullet',
+  [WeaponType.Lazer]: 'laser_beam',
+  [WeaponType.Bow]: 'arrow',
+};
+
+const WEAPON_SOUND_PROFILE_MAP: Record<WeaponType, WeaponSoundProfile> = {
+  // Melee
+  [WeaponType.Fists]: 'fist',
+  [WeaponType.Knife]: 'knife',
+  [WeaponType.Machete]: 'blade_heavy',
+  [WeaponType.Axe]: 'blade_heavy',
+  [WeaponType.Sword]: 'blade_heavy',
+  [WeaponType.Katana]: 'blade_heavy',
+  [WeaponType.Bat]: 'blunt_wood',
+  [WeaponType.Baton]: 'blunt_metal',
+  [WeaponType.ShockBaton]: 'shock',
+  [WeaponType.LeadPipe]: 'blunt_metal',
+  [WeaponType.Pipe]: 'blunt_metal',
+  [WeaponType.Chainsaw]: 'chainsaw',
+  [WeaponType.Hammer]: 'blunt_metal',
+  [WeaponType.Chair]: 'blunt_wood',
+  [WeaponType.Bottle]: 'blunt_wood',
+  [WeaponType.Chain]: 'blunt_metal',
+  [WeaponType.Whip]: 'knife',
+  [WeaponType.CueStick]: 'blunt_wood',
+  [WeaponType.Teapot]: 'blunt_metal',
+  [WeaponType.Pillow]: 'fist',
+  [WeaponType.Flagpole]: 'blunt_wood',
+
+  // Firearms & Special
+  [WeaponType.Pistol]: 'pistol',
+  [WeaponType.Pistol45]: 'pistol',
+  [WeaponType.SilencedPistol]: 'silenced',
+  [WeaponType.Magnum]: 'magnum',
+  [WeaponType.Revolver]: 'magnum',
+  [WeaponType.MachinePistol]: 'smg',
+  [WeaponType.Uzi]: 'smg',
+  [WeaponType.SilencedUzi]: 'silenced',
+  [WeaponType.TommyGun]: 'smg',
+  [WeaponType.SMG]: 'smg',
+  [WeaponType.MP50]: 'smg',
+  [WeaponType.Rifle]: 'rifle',
+  [WeaponType.Assault]: 'rifle',
+  [WeaponType.Carbine]: 'rifle',
+  [WeaponType.M60]: 'rifle',
+  [WeaponType.Shotgun]: 'shotgun',
+  [WeaponType.SawedOff]: 'shotgun',
+  [WeaponType.DarkShotgun]: 'shotgun',
+  [WeaponType.Sniper]: 'sniper',
+  [WeaponType.Bazooka]: 'bazooka',
+  [WeaponType.GLauncher]: 'glauncher',
+  [WeaponType.Flamethrower]: 'flamethrower',
+  [WeaponType.FlareGun]: 'pistol',
+  [WeaponType.Lazer]: 'lazer',
+  [WeaponType.Bow]: 'bow',
+
+  // Throwables & Powerups
+  [WeaponType.Grenade]: 'throwable',
+  [WeaponType.Molotov]: 'throwable',
+  [WeaponType.C4]: 'throwable',
+  [WeaponType.Mine]: 'throwable',
+  [WeaponType.Baseball]: 'throwable',
+  [WeaponType.StrengthBoost]: 'throwable',
+  [WeaponType.SloMo10]: 'throwable',
+};
+
+export function getWeaponBallisticType(type: WeaponType): WeaponBallisticType {
+  return WEAPON_BALLISTIC_MAP[type] || 'bullet';
+}
+
+export function getWeaponSoundProfile(type: WeaponType): WeaponSoundProfile {
+  return WEAPON_SOUND_PROFILE_MAP[type] || 'fist';
+}
+
+
 

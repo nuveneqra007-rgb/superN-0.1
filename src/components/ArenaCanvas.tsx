@@ -2165,11 +2165,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     }
   }, []);
 
-  // Manejador para reiniciar vida y posición del Dummy en el gimnasio
-  const handleResetDummy = useCallback(() => {
-    const s = stateRef.current;
-    if (!s || s.bots.length === 0) return;
-    const dummy = s.bots[0].state;
+  const resetDummyState = (dummy: PlayerState) => {
     dummy.health = dummy.maxHealth;
     dummy.isAlive = true;
     dummy.fsm = PlayerFSMState.Idle;
@@ -2177,6 +2173,26 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     dummy.y = 450;
     dummy.velocityX = 0;
     dummy.velocityY = 0;
+    dummy.hitstunTicks = 0;
+    dummy.knockdownTicks = 0;
+    dummy.getUpTicks = 0;
+    dummy.invulnerabilityTicks = 0;
+    dummy.isGrabbed = false;
+    dummy.isOnFire = false;
+    dummy.fireTicks = 0;
+    dummy.isMeleeComboAttacking = false;
+    dummy.isOneHandAttacking = false;
+    dummy.isTwoHandAttacking = false;
+    dummy.isSwordAttacking = false;
+    dummy.isChargingHeavy = false;
+    dummy.heavyChargeTicks = 0;
+  };
+
+  // Manejador para reiniciar vida y posición del Dummy en el gimnasio
+  const handleResetDummy = useCallback(() => {
+    const s = stateRef.current;
+    if (!s || s.bots.length === 0) return;
+    resetDummyState(s.bots[0].state);
     s.floatingTexts.push({
       id: s.nextEntityId++,
       text: '¡DUMMY RESTABLECIDO! (100 HP)',
@@ -2250,6 +2266,8 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         if (s && s.p1) {
           const distToRack = Math.hypot(s.p1.x - 140, s.p1.y - 470);
           if (distToRack < 95) {
+            s.keys = {};
+            s.keysJustPressed = {};
             setShowPracticeArsenal((prev) => !prev);
             tutorialInputProgressRef.current.hasOpenedRack = true;
             if (tutorialStepRef.current === 4) {
@@ -2718,13 +2736,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         for (const inst of s.bots) {
           const b = inst.state;
           if (b.health <= 0 || b.y > 530) {
-            b.health = b.maxHealth;
-            b.isAlive = true;
-            b.fsm = PlayerFSMState.Idle;
-            b.x = 620;
-            b.y = 450;
-            b.velocityX = 0;
-            b.velocityY = 0;
+            resetDummyState(b);
             s.floatingTexts.push({
               id: s.nextEntityId++,
               text: '¡DUMMY RESTABLECIDO! (+100 HP)',
@@ -2739,15 +2751,15 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           }
         }
       } else {
-        // Comprobar muerte automática convencional si la salud llega a 0 o menos por cualquier daño
-        if (p1.isAlive && p1.health <= 0) {
+        // Comprobar muerte por caída al vacío/agua (y > 580) o salud <= 0
+        if (p1.isAlive && (p1.health <= 0 || p1.y > 580)) {
           p1.health = 0;
           p1.isAlive = false;
           PlayerFSM.tryTransition(p1, PlayerFSMState.Dead);
         }
         for (const inst of s.bots) {
           const b = inst.state;
-          if (b.isAlive && b.health <= 0) {
+          if (b.isAlive && (b.health <= 0 || b.y > 580)) {
             b.health = 0;
             b.isAlive = false;
             PlayerFSM.tryTransition(b, PlayerFSMState.Dead);
@@ -7527,50 +7539,56 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       // 4. MECÁNICAS DE MUNDO INTERACTIVAS
       // ─────────────────────────────────────────────────────────
 
-      // 4.1. CINTA TRANSPORTADORA (ZONA INDUSTRIAL)
+      // 4.1. CINTA TRANSPORTADORA (ZONA INDUSTRIAL / FUNDICIÓN)
       s.conveyors.forEach((conv) => {
         const dirMult = conv.direction === 'left' ? -1 : 1;
         const pushAmount = conv.speed * dirMult;
+        const minArenaX = GameConstants.HitboxStand.x / 2 + 20;
+        const maxArenaX = 960 - GameConstants.HitboxStand.x / 2 - 20;
 
-        // Empujar P1 si está sobre la cinta
-        if (
-          p1.isAlive &&
-          p1.x >= conv.x - 10 &&
-          p1.x <= conv.x + conv.w + 10 &&
-          p1.y >= conv.y - 12 &&
-          p1.y <= conv.y + conv.h + 8
-        ) {
-          s.p1Controller.x += pushAmount;
-          p1.x += pushAmount;
+        const isStandingOnConveyor = (f: PlayerState): boolean => {
+          if (!f.isAlive || !f.onGround) return false;
+          const isLow =
+            f.fsm === PlayerFSMState.Crouch ||
+            f.fsm === PlayerFSMState.Roll ||
+            f.fsm === PlayerFSMState.CrouchSlide;
+          const feetY = f.y + (isLow ? GameConstants.HitboxCrouch.y : GameConstants.HitboxStand.y) / 2;
+          return (
+            f.x >= conv.x - 10 &&
+            f.x <= conv.x + conv.w + 10 &&
+            Math.abs(feetY - conv.y) <= 8
+          );
+        };
+
+        // Empujar P1 si está parado sobre la cinta (respetando muros)
+        if (isStandingOnConveyor(p1)) {
+          const nextX = Math.max(minArenaX, Math.min(maxArenaX, p1.x + pushAmount));
+          p1.x = nextX;
+          s.p1Controller.x = nextX;
         }
 
-        // Empujar bots si están sobre la cinta
+        // Empujar bots y P2 si están parados sobre la cinta
         for (const inst of s.bots) {
           const b = inst.state;
-          if (
-            b.isAlive &&
-            b.x >= conv.x - 10 &&
-            b.x <= conv.x + conv.w + 10 &&
-            b.y >= conv.y - 12 &&
-            b.y <= conv.y + conv.h + 8
-          ) {
-            b.x += pushAmount;
-            if (inst.controller && gameMode === 'local1v1') {
-              inst.controller.x += pushAmount;
+          if (isStandingOnConveyor(b)) {
+            const nextX = Math.max(minArenaX, Math.min(maxArenaX, b.x + pushAmount));
+            b.x = nextX;
+            if (inst.controller && (gameMode === 'local1v1' || gameMode === 'coop')) {
+              inst.controller.x = nextX;
             }
           }
         }
 
-        // Empujar armas y medkits que caigan sobre la cinta
+        // Empujar armas y medkits dentro de los límites de la cinta para que no floten en el vacío
         s.worldWeapons.forEach((w) => {
-          if (w.x >= conv.x && w.x <= conv.x + conv.w && Math.abs(w.baseY - (conv.y - 10)) < 20) {
-            w.x += pushAmount;
+          if (w.x >= conv.x && w.x <= conv.x + conv.w && Math.abs(w.baseY - (conv.y - 10)) < 24) {
+            w.x = Math.max(conv.x + 12, Math.min(conv.x + conv.w - 12, w.x + pushAmount));
           }
         });
 
         s.medkits.forEach((m) => {
-          if (m.x >= conv.x && m.x <= conv.x + conv.w && Math.abs(m.baseY - (conv.y - 10)) < 20) {
-            m.x += pushAmount;
+          if (m.x >= conv.x && m.x <= conv.x + conv.w && Math.abs(m.baseY - (conv.y - 10)) < 24) {
+            m.x = Math.max(conv.x + 12, Math.min(conv.x + conv.w - 12, m.x + pushAmount));
           }
         });
       });

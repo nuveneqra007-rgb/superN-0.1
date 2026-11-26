@@ -647,10 +647,9 @@ export class PlayerController {
       this.vx = 0;
     }
 
-    if (this.y > 600) {
-      this.y = 500 - halfHeight;
-      this.vy = 0;
-      this.isOnFloor = true;
+    if (this.y < halfHeight) {
+      this.y = halfHeight;
+      if (this.vy < 0) this.vy = 0;
     }
   }
 

@@ -310,14 +310,14 @@ const cyberpunkWorld: WorldConfig = {
     { x: 70, y: 505, w: 820, h: 32, isOneWay: false, theme: 'warehouse' },
     // Plataforma central flotante
     { x: 360, y: 235, w: 240, h: 22, isOneWay: true, theme: 'warehouse' },
-    // Bloques escalonados a la izquierda
-    { x: 105, y: 215, w: 42, h: 42, isOneWay: true, theme: 'warehouse' },
-    { x: 185, y: 300, w: 42, h: 42, isOneWay: true, theme: 'warehouse' },
-    { x: 185, y: 405, w: 42, h: 42, isOneWay: true, theme: 'warehouse' },
+    // Bloques escalonados a la izquierda (ensanchados a 64x22 para pisada estable)
+    { x: 94, y: 215, w: 64, h: 22, isOneWay: true, theme: 'warehouse' },
+    { x: 174, y: 300, w: 64, h: 22, isOneWay: true, theme: 'warehouse' },
+    { x: 174, y: 405, w: 64, h: 22, isOneWay: true, theme: 'warehouse' },
     // Bloques escalonados a la derecha
-    { x: 815, y: 215, w: 42, h: 42, isOneWay: true, theme: 'warehouse' },
-    { x: 735, y: 300, w: 42, h: 42, isOneWay: true, theme: 'warehouse' },
-    { x: 735, y: 405, w: 42, h: 42, isOneWay: true, theme: 'warehouse' },
+    { x: 804, y: 215, w: 64, h: 22, isOneWay: true, theme: 'warehouse' },
+    { x: 724, y: 300, w: 64, h: 22, isOneWay: true, theme: 'warehouse' },
+    { x: 724, y: 405, w: 64, h: 22, isOneWay: true, theme: 'warehouse' },
     // Muros laterales
     { x: 0, y: 0, w: 20, h: 540, isOneWay: false, theme: 'warehouse' },
     { x: 940, y: 0, w: 20, h: 540, isOneWay: false, theme: 'warehouse' },
@@ -495,6 +495,9 @@ const azoteaWorld: WorldConfig = {
   platforms: [
     // Puente central metálico sobre el letrero HOTEL
     { x: 235, y: 345, w: 490, h: 28, isOneWay: false, theme: 'warehouse' },
+    // Plataformas de retorno desde el suelo inferior hacia el puente
+    { x: 110, y: 430, w: 100, h: 16, isOneWay: true, theme: 'warehouse' },
+    { x: 750, y: 430, w: 100, h: 16, isOneWay: true, theme: 'warehouse' },
     // Elevador lateral izquierdo
     { x: 195, y: 275, w: 85, h: 18, isOneWay: true, theme: 'warehouse' },
     // Elevador lateral derecho

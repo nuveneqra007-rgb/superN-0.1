@@ -137,6 +137,11 @@ export const PhysicsStep = {
 
   clampToBounds(p: PlayerState, arenaWidth: number = 960): void {
     const hw = GameConstants.HitboxStand.x / 2;
+    const isCrouched =
+      p.fsm === PlayerFSMState.Crouch ||
+      p.fsm === PlayerFSMState.Roll ||
+      p.fsm === PlayerFSMState.CrouchSlide;
+    const hh = (isCrouched ? GameConstants.HitboxCrouch.y : GameConstants.HitboxStand.y) / 2;
     const minX = hw + 10;
     const maxX = arenaWidth - hw - 10;
     if (p.x < minX) {
@@ -147,7 +152,12 @@ export const PhysicsStep = {
       p.velocityX = 0;
     }
 
-    const killY = 700;
+    if (p.y < hh) {
+      p.y = hh;
+      if (p.velocityY < 0) p.velocityY = 0;
+    }
+
+    const killY = 580;
     if (p.y > killY && p.isAlive) {
       p.health = 0;
       p.isAlive = false;

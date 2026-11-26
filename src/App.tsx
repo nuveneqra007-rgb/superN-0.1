@@ -40,8 +40,9 @@ export const App: React.FC = () => {
     transitionTo('landing');
   };
 
-  const handleConfirmMode = () => {
-    if (gameMode === 'practice') {
+  const handleConfirmMode = (mode: GameMode) => {
+    setGameMode(mode);
+    if (mode === 'practice') {
       setSelectedWorldId('training');
       setRounds(999);
       setPlayerFaction(BotFaction.Ninja);
@@ -49,6 +50,12 @@ export const App: React.FC = () => {
       setBotSlots([{ faction: BotFaction.Thug, difficulty: 'normal', team: 'independent' }]);
       transitionTo('arena');
       return;
+    }
+    if (selectedWorldId === 'training') {
+      setSelectedWorldId(null);
+    }
+    if (rounds === 999) {
+      setRounds(5);
     }
     transitionTo('select');
   };
@@ -93,6 +100,7 @@ export const App: React.FC = () => {
 
   const handleExitToWorldSelect = () => {
     if (gameMode === 'practice') {
+      setSelectedWorldId(null);
       transitionTo('mode');
       return;
     }

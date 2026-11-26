@@ -19,7 +19,7 @@ export type GameMode = 'vsBot' | 'local1v1' | 'practice' | 'coop';
 interface ModeSelectScreenProps {
   selectedMode: GameMode;
   onSelectMode: (mode: GameMode) => void;
-  onConfirmMode: () => void;
+  onConfirmMode: (mode: GameMode) => void;
   onBackToLanding: () => void;
 }
 
@@ -59,28 +59,28 @@ export const ModeSelectScreen: React.FC<ModeSelectScreenProps> = ({
   const startSolo = useCallback(() => {
     sounds.playPickup();
     onSelectMode('vsBot');
-    onConfirmMode();
+    onConfirmMode('vsBot');
   }, [onSelectMode, onConfirmMode]);
 
   // Ejecutar modo Práctica (Gimnasio)
   const startPractice = useCallback(() => {
     sounds.playPickup();
     onSelectMode('practice');
-    onConfirmMode();
+    onConfirmMode('practice');
   }, [onSelectMode, onConfirmMode]);
 
   // Ejecutar modo 2 Jugadores 1v1
   const startVersus = useCallback(() => {
     sounds.playPickup();
     onSelectMode('local1v1');
-    onConfirmMode();
+    onConfirmMode('local1v1');
   }, [onSelectMode, onConfirmMode]);
 
   // Ejecutar modo 2 Jugadores Cooperativo Supervivencia (Horda)
   const startCoop = useCallback(() => {
     sounds.playPickup();
     onSelectMode('coop');
-    onConfirmMode();
+    onConfirmMode('coop');
   }, [onSelectMode, onConfirmMode]);
 
   // Definición de las opciones y sus sub-menús contextuales

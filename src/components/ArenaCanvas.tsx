@@ -12,7 +12,7 @@ import { GameConstants } from '../game/GameConstants';
 import { PhysicsRect, PhysicsStep } from '../game/PhysicsStep';
 import { PlayerFSM } from '../game/PlayerFSM';
 import { createPlayerState, PlayerFSMState, PlayerState, WeaponSlotType, PlayerInventory } from '../game/PlayerState';
-import { getWeapon, isBladeWeapon, isOneHandWeapon, isOneHandBladeWeapon, isOneHandBluntWeapon, isPistolWeapon, isRifleWeapon, isSwordWeapon, isThrowableWeapon, isTwoHandWeapon, SpawnableWeaponsList, WeaponCategory, WeaponDatabase, WeaponType, getWeaponStunData, slotForWeapon, WeaponSlot, getWeaponGrip, getWeaponHitFrame } from '../game/WeaponData';
+import { getWeapon, isBladeWeapon, isOneHandWeapon, isOneHandBladeWeapon, isOneHandBluntWeapon, isPistolWeapon, isRifleWeapon, isSwordWeapon, isThrowableWeapon, isTwoHandWeapon, SpawnableWeaponsList, WeaponCategory, WeaponDatabase, WeaponType, getWeaponStunData, slotForWeapon, WeaponSlot, getWeaponGrip, getWeaponHitFrame, getWeaponSoundProfile } from '../game/WeaponData';
 import { PlayerController, PlayerInput, PlayerState as ControllerState, PLAYER_CONFIG } from '../game/PlayerController';
 import { sounds } from '../game/SoundEffects';
 import { getWorldConfig, WorldConfig, HazardCfg, PlatformRect } from '../game/WorldData';
@@ -1097,12 +1097,22 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
       if (inReachX && inReachY) {
         didHitAny = true;
-        if (options.isBlade) {
+        const soundProfile = getWeaponSoundProfile(attacker.equippedWeapon);
+        if (options.isBlade || soundProfile === 'knife' || soundProfile === 'blade_heavy') {
           sounds.playBladeHit();
           addSparks(target.x, target.y, '#38bdf8', 22);
           addSparks(target.x, target.y, '#ffffff', 14);
+        } else if (soundProfile === 'shock') {
+          sounds.playShockHit();
+          addSparks(target.x, target.y, '#60a5fa', 20);
+        } else if (soundProfile === 'chainsaw') {
+          sounds.playChainsawAttack();
+          addSparks(target.x, target.y, '#f97316', 20);
+        } else if (soundProfile === 'blunt_wood' || soundProfile === 'blunt_metal') {
+          sounds.playBluntHit(soundProfile === 'blunt_metal' ? 'metal' : 'wood');
+          addSparks(target.x, target.y, '#fbbf24', 18);
         } else {
-          sounds.playHit();
+          sounds.playMeleeHit(Boolean(options.causedKnockdown || options.baseDamage >= 12));
           addSparks(target.x, target.y, '#f97316', 22);
           addSparks(target.x, target.y, '#fbbf24', 14);
         }
@@ -3459,11 +3469,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
               s.p1Controller.state = ControllerState.Idle;
               PlayerFSM.tryTransition(p1, PlayerFSMState.MeleeAttack);
 
-              if (isBladeWeapon(p1.equippedWeapon)) {
-                sounds.playSwordSwing();
-              } else {
-                sounds.playPunch();
-              }
+              sounds.playWeaponSound(getWeaponSoundProfile(p1.equippedWeapon), p1.comboStep);
             }
           } else if (isOneHandWeapon(p1.equippedWeapon) && p1.equippedWeapon !== WeaponType.Fists && hasOneHandSheet) {
             // Agarre a una mano (Corte/Impacto rápido): Katana, Machete, Knife, Baton, ShockBaton, Whip, CueStick (+ Sword)
@@ -3478,11 +3484,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
               s.p1Controller.state = ControllerState.Idle;
               PlayerFSM.tryTransition(p1, PlayerFSMState.MeleeAttack);
 
-              if (isBladeWeapon(p1.equippedWeapon)) {
-                sounds.playSwordSwing();
-              } else {
-                sounds.playPunch();
-              }
+              sounds.playWeaponSound(getWeaponSoundProfile(p1.equippedWeapon), p1.comboStep);
             }
           } else {
             // Sistema de combo melee desarmado (Puños / Golpes cuerpo a cuerpo)
@@ -3527,7 +3529,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                 s.p1Controller.state = ControllerState.Idle;
                 PlayerFSM.tryTransition(p1, PlayerFSMState.MeleeAttack);
 
-                sounds.playPunch();
+                sounds.playMeleeSwing(step);
               }
             } else {
               if (p1.isMeleeComboAttacking) {
@@ -3543,7 +3545,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                     p1.meleeHasHit = false;
                     p1.comboBuffered = false;
                     p1.comboWindowTicks = 34;
-                    sounds.playPunch();
+                    sounds.playMeleeSwing(p1.meleeComboStep);
                   }
                 }
               } else {
@@ -3568,7 +3570,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                 s.p1Controller.state = ControllerState.Idle;
                 PlayerFSM.tryTransition(p1, PlayerFSMState.MeleeAttack);
 
-                sounds.playPunch();
+                sounds.playMeleeSwing(nextStep);
               }
             }
           }
@@ -4275,37 +4277,10 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
               if (p1.rifleAnimFrame === 1 && !p1.rifleHasFired) {
                 p1.rifleHasFired = true;
                 const wpn = getWeapon(p1.equippedWeapon);
-                sounds.playGunshot(wpn.soundType || wpn.type.toLowerCase());
-
                 const dir = p1.facingRight ? 1 : -1;
                 const muzzleX = p1.x + dir * 36;
                 const muzzleY = p1.y - 7;
-
-                addSparks(muzzleX, muzzleY, '#fde047', 14);
-                addSparks(muzzleX, muzzleY, '#ffffff', 8);
-                s.screenShake = Math.min(14, Math.max(5, (wpn.damage || 25) / 3));
-
-                const count = wpn.pelletCount || 1;
-                for (let i = 0; i < count; i++) {
-                  const spreadAngle = ((Math.random() - 0.5) * ((wpn.accuracyDeg || 4) * Math.PI / 180)) / 2;
-                  const speed = wpn.projectileSpeed || 950;
-                  s.projectiles.push({
-                    id: s.nextEntityId++,
-                    x: muzzleX,
-                    y: muzzleY,
-                    vx: dir * speed * Math.cos(spreadAngle),
-                    vy: speed * Math.sin(spreadAngle),
-                    damage: (wpn.damage / count) * p1.damageDealtModifier,
-                    onFireDuration: wpn.onFireDuration || 0,
-                    explosionRadius: wpn.explosionRadius || 0,
-                    shooterId: p1.id,
-                    weaponType: p1.equippedWeapon,
-                    pelletCount: count,
-                    lifeTicks: 0,
-                    maxLifeTicks: 60,
-                    color: wpn.color || '#facc15',
-                  });
-                }
+                emitWeaponFire(p1, muzzleX, muzzleY, s.p1Controller, wpn.color);
               } else if (p1.rifleAnimFrame === 2 && !p1.rifleHasRecoilApplied) {
                 p1.rifleHasRecoilApplied = true;
                 const kickDir = p1.facingRight ? -1 : 1;
@@ -4673,7 +4648,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                   p1.meleeHasHit = false;
                   p1.comboBuffered = false;
                   p1.comboWindowTicks = 34;
-                  sounds.playPunch();
+                  sounds.playMeleeSwing(1);
                 } else {
                   // Si no presionó de nuevo, finaliza aquí y vuelve a Idle
                   p1.isMeleeComboAttacking = false;
@@ -4696,7 +4671,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                   p1.meleeHasHit = false;
                   p1.comboBuffered = false;
                   p1.comboWindowTicks = 34;
-                  sounds.playPunch();
+                  sounds.playMeleeSwing(2);
                 } else {
                   // Si no presionó de nuevo, finaliza aquí y vuelve a Idle
                   p1.isMeleeComboAttacking = false;
@@ -4742,7 +4717,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                 p1.meleeHasHit = false;
                 p1.comboBuffered = false;
                 p1.comboWindowTicks = 34;
-                sounds.playPunch();
+                sounds.playMeleeSwing(p1.meleeComboStep);
               } else if (p1.meleeAnimFrame >= totalMeleeFrames) {
                 // Fin del último frame (One Shot completado)
                 if (p1.comboBuffered && p1.meleeComboStep < maxComboSteps) {
@@ -4753,7 +4728,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                   p1.meleeHasHit = false;
                   p1.comboBuffered = false;
                   p1.comboWindowTicks = 34;
-                  sounds.playPunch();
+                  sounds.playMeleeSwing(p1.meleeComboStep);
                 } else {
                   // Al terminar el último frame, vuelve al estado normal (Idle)
                   p1.isMeleeComboAttacking = false;
@@ -6140,37 +6115,10 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                 if (bot.rifleAnimFrame === 1 && !bot.rifleHasFired) {
                   bot.rifleHasFired = true;
                   const wpn = getWeapon(bot.equippedWeapon);
-                  sounds.playGunshot(wpn.soundType || wpn.type.toLowerCase());
-
                   const dir = bot.facingRight ? 1 : -1;
                   const muzzleX = bot.x + dir * 36;
                   const muzzleY = bot.y - 7;
-
-                  addSparks(muzzleX, muzzleY, '#fde047', 14);
-                  addSparks(muzzleX, muzzleY, '#ffffff', 8);
-                  s.screenShake = Math.min(14, Math.max(5, (wpn.damage || 25) / 3));
-
-                  const count = wpn.pelletCount || 1;
-                  for (let i = 0; i < count; i++) {
-                    const spreadAngle = ((Math.random() - 0.5) * ((wpn.accuracyDeg || 4) * Math.PI / 180)) / 2;
-                    const speed = wpn.projectileSpeed || 950;
-                    s.projectiles.push({
-                      id: s.nextEntityId++,
-                      x: muzzleX,
-                      y: muzzleY,
-                      vx: dir * speed * Math.cos(spreadAngle),
-                      vy: speed * Math.sin(spreadAngle),
-                      damage: (wpn.damage / count) * bot.damageDealtModifier,
-                      onFireDuration: wpn.onFireDuration || 0,
-                      explosionRadius: wpn.explosionRadius || 0,
-                      shooterId: bot.id,
-                      weaponType: bot.equippedWeapon,
-                      pelletCount: count,
-                      lifeTicks: 0,
-                      maxLifeTicks: 60,
-                      color: wpn.color || '#facc15',
-                    });
-                  }
+                  emitWeaponFire(bot, muzzleX, muzzleY, s.p2Controller, wpn.color);
                 } else if (bot.rifleAnimFrame === 2 && !bot.rifleHasRecoilApplied) {
                   bot.rifleHasRecoilApplied = true;
                   const kickDir = bot.facingRight ? -1 : 1;

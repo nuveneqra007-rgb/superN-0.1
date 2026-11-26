@@ -8626,9 +8626,15 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           if (hitTarget) {
             const dir = pr.vx > 0 ? 1 : -1;
             const attacker = allFighters.find((f) => f.id === pr.shooterId);
+            const distRatio = pr.ballisticType === 'pellet_spread'
+              ? Math.min(1, pr.lifeTicks / Math.max(1, pr.maxLifeTicks))
+              : 0;
+            const effectiveDamage = pr.ballisticType === 'pellet_spread'
+              ? pr.damage * (1 - distRatio * 0.6)
+              : pr.damage;
             const hitRes = CombatSystem.applyHit(hitTarget, {
-              damage: pr.damage,
-              kbX: dir * 65,
+              damage: effectiveDamage,
+              kbX: dir * (pr.ballisticType === 'pellet_spread' ? 32 : 65),
               stunTicks: GameConstants.HitstunTicksLight,
               attacker,
               screenShake: 5,
@@ -9872,9 +9878,9 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                 ry = 0;
                 rAngle = -0.05;
               } else if (currentF === 2) {
-                rx = 12;
-                ry = -14;
-                rAngle = -0.58;
+                rx = 15;
+                ry = -3;
+                rAngle = -0.2;
               } else if (currentF >= 3) {
                 rx = 18;
                 ry = -1;
@@ -10706,7 +10712,15 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             ctx.rotate(pr.rotation || 0);
           }
 
-          if (wImg && wImg.complete && wImg.naturalWidth > 0) {
+          if (pr.isLauncherRound) {
+            // Cápsula explosiva de 40mm para Lanzagranadas (no el sprite del arma)
+            ctx.fillStyle = '#3f6212';
+            ctx.fillRect(-5, -3, 7, 6);
+            ctx.fillStyle = '#eab308';
+            ctx.beginPath();
+            ctx.arc(2, 0, 3, -Math.PI / 2, Math.PI / 2);
+            ctx.fill();
+          } else if (wImg && wImg.complete && wImg.naturalWidth > 0) {
             // Renderizado físico preciso con la imagen/modelo de la granada o arrojadizo equipado
             ctx.drawImage(wImg, -11, -11, 22, 22);
           } else {
@@ -10807,6 +10821,18 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           ctx.fill();
           ctx.fillStyle = '#ef4444';
           ctx.fillRect(-11, -2.5, 4, 5);
+          ctx.restore();
+        } else if (pr.ballisticType === 'pellet_spread') {
+          const angle = Math.atan2(pr.vy, pr.vx);
+          ctx.save();
+          ctx.translate(pr.x, pr.y);
+          ctx.rotate(angle);
+          ctx.fillStyle = '#f97316';
+          ctx.fillRect(-5, -1, 5, 2);
+          ctx.fillStyle = '#fef08a';
+          ctx.beginPath();
+          ctx.arc(2, 0, 2, 0, Math.PI * 2);
+          ctx.fill();
           ctx.restore();
         } else {
           const angle = Math.atan2(pr.vy, pr.vx);

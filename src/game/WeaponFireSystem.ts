@@ -37,6 +37,7 @@ export interface FiredProjectileSpec {
   isFlame?: boolean;
   isArrow?: boolean;
   isGrenade?: boolean;
+  isLauncherRound?: boolean;
   grenadeType?: GrenadeType;
   rotation?: number;
   rotationSpeed?: number;
@@ -87,16 +88,17 @@ export function fireWeaponProjectiles(params: FireWeaponParams): FireWeaponResul
   const totalDamage = (wpn.damage || 15) * damageMultiplier;
 
   if (ballisticType === 'rocket') {
-    const speed = wpn.projectileSpeed || 520;
+    const speed = 460;
+    const rocketDamage = Math.max(65, wpn.damage || 65) * damageMultiplier;
     projectiles.push({
       id: nextEntityId(),
       x: muzzleX,
       y: muzzleY,
       vx: dir * speed,
       vy: 0,
-      damage: totalDamage,
+      damage: rocketDamage,
       onFireDuration: wpn.onFireDuration || 120,
-      explosionRadius: wpn.explosionRadius || 115,
+      explosionRadius: Math.max(110, wpn.explosionRadius || 110),
       shooterId,
       weaponType,
       pelletCount: 1,
@@ -137,6 +139,7 @@ export function fireWeaponProjectiles(params: FireWeaponParams): FireWeaponResul
       color: '#22c55e',
       ballisticType,
       isGrenade: true,
+      isLauncherRound: true,
       grenadeType: GrenadeType.Frag,
       rotation: 0,
       rotationSpeed: dir * 0.22,
@@ -247,17 +250,63 @@ export function fireWeaponProjectiles(params: FireWeaponParams): FireWeaponResul
       recoilForce: 10,
       screenShake: 1,
       sparkColor: '#fef3c7',
-      sparkCount: 2,
+      sparkCount: 0,
     };
   }
 
-  // Balas convencionales, silenciadas, escopetas y francotirador
+  // Escopetas: abanico real de múltiples perdigones y corto alcance
+  if (ballisticType === 'pellet_spread') {
+    const count = Math.max(4, wpn.pelletCount || 5);
+    const isSawedOff = weaponType === WeaponType.SawedOff;
+    const isDark = weaponType === WeaponType.DarkShotgun;
+    const spreadDeg = isSawedOff ? 24 : isDark ? 18 : 16;
+    const spreadRad = (spreadDeg * Math.PI) / 180;
+    const maxLife = isSawedOff ? 18 : 21;
+    const baseSpeed = wpn.projectileSpeed || 680;
+    const pelletDamage = (isSawedOff ? 9 : isDark ? 10 : 11) * damageMultiplier;
+
+    for (let i = 0; i < count; i++) {
+      const t = count > 1 ? i / (count - 1) - 0.5 : 0;
+      const jitter = ((Math.random() - 0.5) * 3 * Math.PI) / 180;
+      const angle = t * spreadRad + jitter;
+      const spd = baseSpeed * (0.92 + Math.random() * 0.16);
+
+      projectiles.push({
+        id: nextEntityId(),
+        x: muzzleX,
+        y: muzzleY,
+        vx: dir * spd * Math.cos(angle),
+        vy: spd * Math.sin(angle),
+        damage: pelletDamage,
+        onFireDuration: 0,
+        explosionRadius: 0,
+        shooterId,
+        weaponType,
+        pelletCount: count,
+        lifeTicks: 0,
+        maxLifeTicks: maxLife,
+        color: '#fbbf24',
+        ballisticType,
+      });
+    }
+
+    return {
+      projectiles,
+      ballisticType,
+      recoilForce: isSawedOff ? 85 : 75,
+      screenShake: 7,
+      sparkColor: '#fde047',
+      sparkCount: 12,
+    };
+  }
+
+  // Balas convencionales, silenciadas y francotirador
   const count = wpn.pelletCount || 1;
   const baseSpeed =
     ballisticType === 'sniper_pierce'
       ? wpn.projectileSpeed || 1500
       : wpn.projectileSpeed || 900;
-  const maxLife = ballisticType === 'pellet_spread' ? 38 : 65;
+  const maxLife = 65;
   const projColor =
     ballisticType === 'silenced_bullet'
       ? '#94a3b8'
@@ -289,8 +338,6 @@ export function fireWeaponProjectiles(params: FireWeaponParams): FireWeaponResul
   const recoilForce =
     ballisticType === 'sniper_pierce'
       ? 95
-      : ballisticType === 'pellet_spread'
-      ? 75
       : soundProfile === 'magnum'
       ? 60
       : soundProfile === 'rifle'

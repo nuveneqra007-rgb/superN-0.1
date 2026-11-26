@@ -1405,7 +1405,8 @@ export type WeaponBallisticType =
   | 'grenade_launcher'
   | 'flame_stream'
   | 'laser_beam'
-  | 'arrow';
+  | 'arrow'
+  | 'flare';
 
 export type WeaponSoundProfile =
   | 'fist'
@@ -1415,6 +1416,8 @@ export type WeaponSoundProfile =
   | 'blunt_metal'
   | 'shock'
   | 'chainsaw'
+  | 'glass'
+  | 'whip'
   | 'pistol'
   | 'silenced'
   | 'magnum'
@@ -1425,6 +1428,7 @@ export type WeaponSoundProfile =
   | 'bazooka'
   | 'glauncher'
   | 'flamethrower'
+  | 'flare'
   | 'lazer'
   | 'bow'
   | 'throwable';
@@ -1483,7 +1487,7 @@ const WEAPON_BALLISTIC_MAP: Record<WeaponType, WeaponBallisticType> = {
   [WeaponType.Bazooka]: 'rocket',
   [WeaponType.GLauncher]: 'grenade_launcher',
   [WeaponType.Flamethrower]: 'flame_stream',
-  [WeaponType.FlareGun]: 'bullet',
+  [WeaponType.FlareGun]: 'flare',
   [WeaponType.Lazer]: 'laser_beam',
   [WeaponType.Bow]: 'arrow',
 };
@@ -1504,9 +1508,9 @@ const WEAPON_SOUND_PROFILE_MAP: Record<WeaponType, WeaponSoundProfile> = {
   [WeaponType.Chainsaw]: 'chainsaw',
   [WeaponType.Hammer]: 'blunt_metal',
   [WeaponType.Chair]: 'blunt_wood',
-  [WeaponType.Bottle]: 'blunt_wood',
-  [WeaponType.Chain]: 'blunt_metal',
-  [WeaponType.Whip]: 'knife',
+  [WeaponType.Bottle]: 'glass',
+  [WeaponType.Chain]: 'whip',
+  [WeaponType.Whip]: 'whip',
   [WeaponType.CueStick]: 'blunt_wood',
   [WeaponType.Teapot]: 'blunt_metal',
   [WeaponType.Pillow]: 'fist',
@@ -1535,7 +1539,7 @@ const WEAPON_SOUND_PROFILE_MAP: Record<WeaponType, WeaponSoundProfile> = {
   [WeaponType.Bazooka]: 'bazooka',
   [WeaponType.GLauncher]: 'glauncher',
   [WeaponType.Flamethrower]: 'flamethrower',
-  [WeaponType.FlareGun]: 'pistol',
+  [WeaponType.FlareGun]: 'flare',
   [WeaponType.Lazer]: 'lazer',
   [WeaponType.Bow]: 'bow',
 

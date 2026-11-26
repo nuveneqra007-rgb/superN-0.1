@@ -534,6 +534,67 @@ class SoundEngine {
     osc.stop(t + 0.21);
   }
 
+  public playGlassBreak() {
+    if (this.isMuted) return;
+    this.initContext();
+    if (!this.ctx) return;
+
+    const t = this.ctx.currentTime;
+    const noise = this.createNoiseSource(0.16);
+    if (noise) {
+      const filter = this.ctx.createBiquadFilter();
+      filter.type = 'highpass';
+      filter.frequency.setValueAtTime(3200, t);
+      const gain = this.ctx.createGain();
+      gain.gain.setValueAtTime(0.32, t);
+      gain.gain.exponentialRampToValueAtTime(0.004, t + 0.16);
+      noise.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.ctx.destination);
+      noise.start(t);
+      noise.stop(t + 0.17);
+    }
+  }
+
+  public playWhipCrack() {
+    if (this.isMuted) return;
+    this.initContext();
+    if (!this.ctx) return;
+
+    const t = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(420, t);
+    osc.frequency.exponentialRampToValueAtTime(1600, t + 0.04);
+    osc.frequency.exponentialRampToValueAtTime(180, t + 0.09);
+    gain.gain.setValueAtTime(0.28, t);
+    gain.gain.exponentialRampToValueAtTime(0.005, t + 0.09);
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start(t);
+    osc.stop(t + 0.1);
+  }
+
+  public playFlareLaunch() {
+    if (this.isMuted) return;
+    this.initContext();
+    if (!this.ctx) return;
+
+    const t = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(380, t);
+    osc.frequency.exponentialRampToValueAtTime(1150, t + 0.18);
+    gain.gain.setValueAtTime(0.24, t);
+    gain.gain.exponentialRampToValueAtTime(0.006, t + 0.18);
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start(t);
+    osc.stop(t + 0.19);
+  }
+
   public playBazookaLaunch() {
     if (this.isMuted) return;
     this.initContext();
@@ -892,6 +953,15 @@ class SoundEngine {
         break;
       case 'chainsaw':
         this.playChainsawAttack();
+        break;
+      case 'glass':
+        this.playKnifeSlash();
+        break;
+      case 'whip':
+        this.playWhipCrack();
+        break;
+      case 'flare':
+        this.playFlareLaunch();
         break;
       case 'explosion':
         this.playExplosion();

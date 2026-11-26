@@ -36,6 +36,7 @@ export interface FiredProjectileSpec {
   isLaser?: boolean;
   isFlame?: boolean;
   isArrow?: boolean;
+  isFlare?: boolean;
   isGrenade?: boolean;
   isLauncherRound?: boolean;
   grenadeType?: GrenadeType;
@@ -250,6 +251,39 @@ export function fireWeaponProjectiles(params: FireWeaponParams): FireWeaponResul
       screenShake: 1,
       sparkColor: '#fef3c7',
       sparkCount: 0,
+    };
+  }
+
+  // Pistola de bengalas: proyectil luminoso en arco que incendia al impactar
+  if (ballisticType === 'flare') {
+    const speed = wpn.projectileSpeed || 540;
+    projectiles.push({
+      id: nextEntityId(),
+      x: muzzleX,
+      y: muzzleY,
+      vx: dir * speed,
+      vy: -45,
+      damage: totalDamage,
+      onFireDuration: wpn.onFireDuration || 180,
+      explosionRadius: 0,
+      shooterId,
+      weaponType,
+      pelletCount: 1,
+      lifeTicks: 0,
+      maxLifeTicks: 90,
+      color: '#ef4444',
+      ballisticType,
+      gravity: 220,
+      isFlare: true,
+    });
+
+    return {
+      projectiles,
+      ballisticType,
+      recoilForce: 28,
+      screenShake: 3,
+      sparkColor: '#ef4444',
+      sparkCount: 10,
     };
   }
 

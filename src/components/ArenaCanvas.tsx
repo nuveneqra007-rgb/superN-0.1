@@ -1098,16 +1098,28 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       if (inReachX && inReachY) {
         didHitAny = true;
         const soundProfile = getWeaponSoundProfile(attacker.equippedWeapon);
+        let extraDamage = 0;
+        let extraStun = options.stunTicks ?? 24;
+
         if (options.isBlade || soundProfile === 'knife' || soundProfile === 'blade_heavy') {
           sounds.playBladeHit();
           addSparks(target.x, target.y, '#38bdf8', 22);
           addSparks(target.x, target.y, '#ffffff', 14);
         } else if (soundProfile === 'shock') {
           sounds.playShockHit();
-          addSparks(target.x, target.y, '#60a5fa', 20);
+          extraStun = Math.max(extraStun, 42);
+          addSparks(target.x, target.y, '#38bdf8', 24);
+          addSparks(target.x, target.y, '#e0f2fe', 12);
         } else if (soundProfile === 'chainsaw') {
           sounds.playChainsawAttack();
-          addSparks(target.x, target.y, '#f97316', 20);
+          extraDamage = 4;
+          addSparks(target.x, target.y, '#f97316', 26);
+          addSparks(target.x, target.y, '#fde047', 14);
+        } else if (soundProfile === 'glass') {
+          sounds.playGlassBreak();
+          extraDamage = 4;
+          addSparks(target.x, target.y, '#bae6fd', 18);
+          addSparks(target.x, target.y, '#ffffff', 10);
         } else if (soundProfile === 'blunt_wood' || soundProfile === 'blunt_metal') {
           sounds.playBluntHit(soundProfile === 'blunt_metal' ? 'metal' : 'wood');
           addSparks(target.x, target.y, '#fbbf24', 18);
@@ -1117,12 +1129,12 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           addSparks(target.x, target.y, '#fbbf24', 14);
         }
 
-        const finalDmg = options.baseDamage * (attacker.damageDealtModifier || 1.0);
+        const finalDmg = (options.baseDamage + extraDamage) * (attacker.damageDealtModifier || 1.0);
         const hitRes = CombatSystem.applyHit(target, {
           damage: finalDmg,
           kbX: facingDir * options.kbX,
           kbY: options.kbY ?? -60,
-          stunTicks: options.stunTicks ?? 24,
+          stunTicks: extraStun,
           hitStop: options.hitStop ?? 5,
           screenShake: options.screenShake ?? 12,
           causedKnockdown: options.causedKnockdown,
@@ -8536,6 +8548,18 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
               color: '#94a3b8',
               size: 3,
             });
+          } else if (pr.isFlare) {
+            // Estela incandescente roja para bengala de FlareGun
+            s.particles.push({
+              x: pr.x,
+              y: pr.y,
+              vx: (Math.random() - 0.5) * 18,
+              vy: -14 + (Math.random() - 0.5) * 14,
+              life: 14,
+              maxLife: 14,
+              color: pr.lifeTicks % 2 === 0 ? '#ef4444' : '#fde047',
+              size: 3.5,
+            });
           }
 
           pr.x += pr.vx * (1 / 60);
@@ -10838,6 +10862,20 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           ctx.fill();
           ctx.fillStyle = '#ef4444';
           ctx.fillRect(-11, -2.5, 4, 5);
+          ctx.restore();
+        } else if (pr.isFlare) {
+          // Bengala luminosa incandescente de FlareGun
+          ctx.save();
+          ctx.shadowColor = '#ef4444';
+          ctx.shadowBlur = 14;
+          ctx.fillStyle = '#ef4444';
+          ctx.beginPath();
+          ctx.arc(pr.x, pr.y, 4.5, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = '#fef08a';
+          ctx.beginPath();
+          ctx.arc(pr.x, pr.y, 2.2, 0, Math.PI * 2);
+          ctx.fill();
           ctx.restore();
         } else if (pr.ballisticType === 'pellet_spread') {
           const angle = Math.atan2(pr.vy, pr.vx);

@@ -8524,6 +8524,18 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
               color: pr.lifeTicks % 2 === 0 ? '#f97316' : '#94a3b8',
               size: pr.lifeTicks % 2 === 0 ? 4 : 5,
             });
+          } else if (pr.isLauncherRound && pr.lifeTicks % 2 === 0) {
+            // Estela fina de humo para granada 40mm de M79
+            s.particles.push({
+              x: pr.x,
+              y: pr.y,
+              vx: (Math.random() - 0.5) * 15,
+              vy: -10 + (Math.random() - 0.5) * 12,
+              life: 12,
+              maxLife: 12,
+              color: '#94a3b8',
+              size: 3,
+            });
           }
 
           pr.x += pr.vx * (1 / 60);
@@ -10712,15 +10724,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             ctx.rotate(pr.rotation || 0);
           }
 
-          if (pr.isLauncherRound) {
-            // Cápsula explosiva de 40mm para Lanzagranadas (no el sprite del arma)
-            ctx.fillStyle = '#3f6212';
-            ctx.fillRect(-5, -3, 7, 6);
-            ctx.fillStyle = '#eab308';
-            ctx.beginPath();
-            ctx.arc(2, 0, 3, -Math.PI / 2, Math.PI / 2);
-            ctx.fill();
-          } else if (wImg && wImg.complete && wImg.naturalWidth > 0) {
+          if (wImg && wImg.complete && wImg.naturalWidth > 0) {
             // Renderizado físico preciso con la imagen/modelo de la granada o arrojadizo equipado
             ctx.drawImage(wImg, -11, -11, 22, 22);
           } else {
@@ -10748,6 +10752,19 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             }
           }
 
+          ctx.restore();
+        } else if (pr.isLauncherRound) {
+          // Cápsula explosiva de 40mm para Lanzagranadas M79
+          const angle = Math.atan2(pr.vy, pr.vx);
+          ctx.save();
+          ctx.translate(pr.x, pr.y);
+          ctx.rotate(angle);
+          ctx.fillStyle = '#3f6212';
+          ctx.fillRect(-6, -3.5, 8, 7);
+          ctx.fillStyle = '#eab308';
+          ctx.beginPath();
+          ctx.arc(2, 0, 3.5, -Math.PI / 2, Math.PI / 2);
+          ctx.fill();
           ctx.restore();
         } else if (pr.isRocket) {
           // Misil de Bazooka con ojiva roja, cuerpo metálico, aletas y llama propulsora

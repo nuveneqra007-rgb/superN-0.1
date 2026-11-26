@@ -43,6 +43,11 @@ export function resolveHandAnchor(
     return null;
   }
 
+  // Al correr (sprint), el arma se enfunda/oculta; reaparece al detenerse, caminar lento o disparar
+  if (pose.isRunning) {
+    return null;
+  }
+
   if (pose.fsm === PlayerFSMState.KnockedDown) {
     return { x: 4, y: 14, angle: -Math.PI / 2 };
   }

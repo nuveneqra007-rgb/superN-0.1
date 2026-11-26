@@ -135,14 +135,13 @@ export function fireWeaponProjectiles(params: FireWeaponParams): FireWeaponResul
       weaponType,
       pelletCount: 1,
       lifeTicks: 0,
-      maxLifeTicks: 85,
+      maxLifeTicks: 110,
       color: '#22c55e',
       ballisticType,
-      isGrenade: true,
+      gravity: 540,
+      isGrenade: false,
       isLauncherRound: true,
-      grenadeType: GrenadeType.Frag,
       rotation: 0,
-      rotationSpeed: dir * 0.22,
     });
 
     return {

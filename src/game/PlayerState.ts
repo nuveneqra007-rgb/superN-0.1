@@ -79,6 +79,7 @@ export interface PlayerState {
   attackCooldown: number;
   comboStep: number;
   comboWindowTicks: number;
+  weaponPickupAnimTicks?: number;
 
   // Contadores de estado
   rollTicks: number;

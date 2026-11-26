@@ -4,7 +4,7 @@
 // protagonista (Ninja, Gymrat, Santa) según su estado de animación.
 // =============================================================
 
-import { CharacterHandProfile, HandAnchor } from './CharacterData';
+import { CharacterHandProfile, CharacterHandStyle, HandAnchor } from './CharacterData';
 import { PlayerFSMState } from './PlayerState';
 import { WeaponType } from './WeaponData';
 import { getWeaponGripConfig } from './WeaponGripData';
@@ -19,6 +19,7 @@ export interface WeaponRenderPose {
   isRolling: boolean;
   isCrouching: boolean;
   getUpTicks?: number;
+  pickupAnimTicks?: number;
 }
 
 /**
@@ -74,7 +75,45 @@ export function resolveHandAnchor(
 }
 
 /**
- * Dibuja el arma equipada anclada por su empuñadura a la mano del protagonista.
+ * Dibuja el puño/guante envolvente sobre el punto de agarre de la empuñadura.
+ * Mantiene el estilo visual único de cada protagonista (Ninja, Gymrat, Santa).
+ */
+export function drawGripHand(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  style: CharacterHandStyle,
+  scale: number = 1
+): void {
+  const r = style.radius * scale;
+  ctx.save();
+  ctx.translate(x, y);
+
+  // Muñequera / borde de guante detrás del puño
+  ctx.fillStyle = style.cuffColor;
+  ctx.fillRect(-r * 1.15, -r * 0.55, r * 0.75, r * 1.1);
+
+  // Puño cerrado envolviendo el mango
+  ctx.fillStyle = style.gloveColor;
+  ctx.strokeStyle = style.borderColor;
+  ctx.lineWidth = 1.1;
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  // Detalle sutil de nudillos superiores
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.18)';
+  ctx.beginPath();
+  ctx.arc(r * 0.2, -r * 0.28, r * 0.42, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
+/**
+ * Dibuja el arma equipada anclada por su empuñadura a la mano del protagonista,
+ * con puño envolvente, segunda mano en armas largas y feedback al recoger.
  */
 export function renderEquippedWeaponIdle(
   ctx: CanvasRenderingContext2D,
@@ -90,9 +129,30 @@ export function renderEquippedWeaponIdle(
   const offsetX = -grip.gripX * grip.drawW;
   const offsetY = -grip.gripY * grip.drawH;
 
+  // Tween corto de 6 ticks al recoger o cambiar de arma
+  const pickupT = Math.min(1, Math.max(0, (pose.pickupAnimTicks || 0) / 6));
+  const pickupScale = 1 + 0.18 * pickupT;
+  const pickupAngle = -0.32 * pickupT;
+
   ctx.save();
   ctx.translate(anchor.x, anchor.y);
-  ctx.rotate(anchor.angle + grip.idleAngle);
+  ctx.rotate(anchor.angle + grip.idleAngle + pickupAngle);
+  if (pickupT > 0) {
+    ctx.scale(pickupScale, pickupScale);
+  }
+
+  // Capa 2: Sprite del arma alineado por su empuñadura
   ctx.drawImage(weaponImg, offsetX, offsetY, grip.drawW, grip.drawH);
+
+  // Capa 3a: Mano principal envolviendo la empuñadura
+  drawGripHand(ctx, 0, 0, profile.handStyle, 1);
+
+  // Capa 3b: Mano de apoyo en rifles y armas pesadas a dos manos
+  if (grip.foregripX !== undefined && grip.foregripY !== undefined) {
+    const fx = (grip.foregripX - grip.gripX) * grip.drawW;
+    const fy = (grip.foregripY - grip.gripY) * grip.drawH;
+    drawGripHand(ctx, fx, fy, profile.handStyle, 0.86);
+  }
+
   ctx.restore();
 }

@@ -851,6 +851,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     controller?: PlayerController
   ): void => {
     fighter.equippedWeapon = type;
+    fighter.weaponPickupAnimTicks = type === WeaponType.Fists ? 0 : 6;
     const isOneHand = isOneHandWeapon(type);
     const isThrowable = isThrowableWeapon(type);
     const isRifle = isRifleWeapon(type);
@@ -7358,6 +7359,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
       // Decrementar cooldown de cambio de ranura y mantener munición activa en sincronía
       if (p1.slotCooldownTicks && p1.slotCooldownTicks > 0) p1.slotCooldownTicks--;
+      if (p1.weaponPickupAnimTicks && p1.weaponPickupAnimTicks > 0) p1.weaponPickupAnimTicks--;
       if (p1.inventory) {
         if (p1.inventory.activeSlot === 'handgun' && p1.inventory.handgun) {
           p1.inventory.handgun.ammo = p1.ammo;
@@ -7408,6 +7410,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         }
 
         if (b.slotCooldownTicks && b.slotCooldownTicks > 0) b.slotCooldownTicks--;
+        if (b.weaponPickupAnimTicks && b.weaponPickupAnimTicks > 0) b.weaponPickupAnimTicks--;
         if (b.inventory) {
           if (b.inventory.activeSlot === 'handgun' && b.inventory.handgun) {
             b.inventory.handgun.ammo = b.ammo;
@@ -10751,6 +10754,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
               isRolling: Boolean(isRolling),
               isCrouching,
               getUpTicks: p.getUpTicks,
+              pickupAnimTicks: p.weaponPickupAnimTicks,
             });
           }
         }

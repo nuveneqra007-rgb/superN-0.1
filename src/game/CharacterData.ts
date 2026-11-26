@@ -725,3 +725,148 @@ export function getUniformScaleConfig(sheetId: string): UniformScaleAnchor | nul
   return null;
 }
 
+// ==============================================================================
+// Perfiles independientes de mano y empuñadura por protagonista
+// Preserva las proporciones, estilo de guante/piel y spritesheets de cada uno.
+// ==============================================================================
+
+export interface HandAnchor {
+  x: number;
+  y: number;
+  angle: number;
+}
+
+export interface CharacterHandStyle {
+  gloveColor: string;
+  borderColor: string;
+  cuffColor: string;
+  radius: number;
+}
+
+export interface CharacterHandProfile {
+  characterId: CharacterId;
+  handStyle: CharacterHandStyle;
+  idle: HandAnchor;
+  walk: HandAnchor[];
+  run: HandAnchor[];
+  jump: HandAnchor;
+  fall: HandAnchor;
+  crouch: HandAnchor;
+  hideOnRoll: boolean;
+  hasBuiltInGun: boolean;
+}
+
+export const CHARACTER_HAND_PROFILES: Record<CharacterId, CharacterHandProfile> = {
+  ninja: {
+    characterId: 'ninja',
+    handStyle: {
+      gloveColor: '#1e293b',
+      borderColor: '#020617',
+      cuffColor: '#334155',
+      radius: 3.4,
+    },
+    idle: { x: 10, y: 2, angle: 0 },
+    walk: [
+      { x: 11, y: 2, angle: -0.04 },
+      { x: 12, y: 1, angle: 0.04 },
+      { x: 10, y: 2, angle: 0.08 },
+      { x: 9, y: 3, angle: 0.02 },
+      { x: 10, y: 2, angle: -0.05 },
+      { x: 11, y: 1, angle: -0.02 },
+    ],
+    run: [
+      { x: 13, y: 1, angle: 0.1 },
+      { x: 14, y: 0, angle: 0.16 },
+      { x: 12, y: 2, angle: 0.08 },
+      { x: 10, y: 3, angle: -0.04 },
+      { x: 12, y: 2, angle: 0.04 },
+      { x: 14, y: 1, angle: 0.12 },
+    ],
+    jump: { x: 11, y: -2, angle: -0.15 },
+    fall: { x: 11, y: 0, angle: 0.14 },
+    crouch: { x: 11, y: 11, angle: 0.05 },
+    hideOnRoll: true,
+    hasBuiltInGun: false,
+  },
+  gymrat: {
+    characterId: 'gymrat',
+    handStyle: {
+      gloveColor: '#d99b78',
+      borderColor: '#5c3317',
+      cuffColor: '#e2e8f0',
+      radius: 3.9,
+    },
+    idle: { x: 12, y: 1, angle: 0 },
+    walk: [
+      { x: 12, y: 1, angle: -0.03 },
+      { x: 13, y: 0, angle: 0.04 },
+      { x: 12, y: 1, angle: 0.07 },
+      { x: 11, y: 2, angle: 0.01 },
+      { x: 12, y: 1, angle: -0.04 },
+      { x: 13, y: 0, angle: -0.01 },
+    ],
+    run: [
+      { x: 14, y: 0, angle: 0.08 },
+      { x: 15, y: -1, angle: 0.14 },
+      { x: 13, y: 1, angle: 0.06 },
+      { x: 11, y: 2, angle: -0.03 },
+      { x: 13, y: 1, angle: 0.04 },
+      { x: 15, y: 0, angle: 0.1 },
+    ],
+    jump: { x: 12, y: -3, angle: -0.12 },
+    fall: { x: 12, y: -1, angle: 0.12 },
+    crouch: { x: 12, y: 10, angle: 0.04 },
+    hideOnRoll: true,
+    hasBuiltInGun: true,
+  },
+  santaclo: {
+    characterId: 'santaclo',
+    handStyle: {
+      gloveColor: '#f8fafc',
+      borderColor: '#64748b',
+      cuffColor: '#dc2626',
+      radius: 3.8,
+    },
+    idle: { x: 11, y: 2, angle: 0 },
+    walk: [
+      { x: 11, y: 2, angle: -0.03 },
+      { x: 12, y: 1, angle: 0.04 },
+      { x: 11, y: 2, angle: 0.06 },
+      { x: 10, y: 3, angle: 0.01 },
+      { x: 11, y: 2, angle: -0.04 },
+      { x: 12, y: 1, angle: -0.01 },
+    ],
+    run: [
+      { x: 13, y: 1, angle: 0.08 },
+      { x: 14, y: 0, angle: 0.12 },
+      { x: 12, y: 2, angle: 0.05 },
+      { x: 11, y: 3, angle: -0.02 },
+      { x: 12, y: 2, angle: 0.04 },
+      { x: 14, y: 1, angle: 0.1 },
+    ],
+    jump: { x: 11, y: -2, angle: -0.12 },
+    fall: { x: 11, y: 0, angle: 0.12 },
+    crouch: { x: 11, y: 11, angle: 0.04 },
+    hideOnRoll: true,
+    hasBuiltInGun: true,
+  },
+};
+
+/**
+ * Obtiene el perfil de mano correspondiente al protagonista o bot.
+ */
+export function getCharacterHandProfile(faction?: BotFaction | string, name?: string): CharacterHandProfile {
+  if (faction === BotFaction.Gymrat || faction === 'gymrat') {
+    return CHARACTER_HAND_PROFILES.gymrat;
+  }
+  if (
+    faction === BotFaction.Santa ||
+    faction === 'santaclo' ||
+    (name && name.toUpperCase().includes('SANTA'))
+  ) {
+    return CHARACTER_HAND_PROFILES.santaclo;
+  }
+  return CHARACTER_HAND_PROFILES.ninja;
+}
+
+

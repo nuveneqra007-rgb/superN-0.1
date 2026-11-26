@@ -18,7 +18,8 @@ import { sounds } from '../game/SoundEffects';
 import { getWorldConfig, WorldConfig, HazardCfg, PlatformRect } from '../game/WorldData';
 import { GameMode } from './ModeSelectScreen';
 import { FighterBar, FighterBarData, FighterSlotInfo, SHOW_ENERGY_BAR } from './FighterBar';
-import { getFighterSheetConfig, FighterSheetConfig, getCharacterDefByFaction, getUniformScaleConfig, UniformScaleAnchor, frameMetaData } from '../game/CharacterData';
+import { getFighterSheetConfig, FighterSheetConfig, getCharacterDefByFaction, getUniformScaleConfig, UniformScaleAnchor, frameMetaData, getCharacterHandProfile } from '../game/CharacterData';
+import { renderEquippedWeaponIdle } from '../game/WeaponRenderer';
 import {
   GrenadeType,
   GrenadeConfig,
@@ -10729,12 +10730,28 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           ctx.restore();
         }
 
-        // Arma equipada en mano (proporcional al personaje aumentado)
-        // Si está ejecutando el ataque de filo, el ataque a una mano, el ataque a dos manos, pistolas, rifles o el combo melee del Ninja, las manos muestran la animación
+        // Arma equipada en mano anclada al perfil único de cada protagonista (Ninja, Gymrat, Santa)
+        // Si está ejecutando ataque de filo, una mano, dos manos, pistola, rifle o combo melee, las manos muestran la animación
         if (p.equippedWeapon !== WeaponType.Fists && !isBladeAttacking && !p.isMeleeComboAttacking && !p.isOneHandAttacking && !p.isTwoHandAttacking && !p.isPistolShooting && !p.isRifleShooting) {
           const wImg = s.weaponImages[p.equippedWeapon];
           if (wImg && wImg.complete && wImg.naturalWidth > 0) {
-            ctx.drawImage(wImg, 8, -6, 32, 16);
+            const handProfileId = isGymratFighter ? 'gymrat' : isSantaFighter ? 'santaclo' : 'ninja';
+            const handProfile = getCharacterHandProfile(handProfileId, p.name);
+            const isCrouching =
+              p.fsm === PlayerFSMState.Crouch ||
+              p.fsm === PlayerFSMState.CrouchSlide;
+            const isRunningPose = Math.abs(p.velocityX) > 190 && p.onGround;
+            renderEquippedWeaponIdle(ctx, wImg, p.equippedWeapon, handProfile, {
+              fsm: p.fsm,
+              animFrame: p.animFrame,
+              velocityY: p.velocityY,
+              onGround: p.onGround,
+              isWalking,
+              isRunning: isRunningPose,
+              isRolling: Boolean(isRolling),
+              isCrouching,
+              getUpTicks: p.getUpTicks,
+            });
           }
         }
 

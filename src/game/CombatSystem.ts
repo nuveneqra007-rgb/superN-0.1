@@ -539,6 +539,26 @@ export const CombatSystem = {
       target.lastHitTicks = 0;
     }
 
+    // Limpiar estados de ataque/carga/buffer activos para evitar acciones colgadas tras recibir impacto
+    target.isMeleeComboAttacking = false;
+    target.comboStep = 0;
+    target.meleeComboStep = 0;
+    target.comboBuffered = false;
+    target.comboWindowTicks = 0;
+    target.isOneHandAttacking = false;
+    target.oneHandHasHit = false;
+    target.isTwoHandAttacking = false;
+    target.twoHandHasHit = false;
+    target.isSwordAttacking = false;
+    target.swordComboBuffered = false;
+    target.swordComboWindowTicks = 0;
+    target.isPistolShooting = false;
+    target.isRifleShooting = false;
+    target.isThrowing = false;
+    target.isChargingHeavy = false;
+    target.heavyChargeTicks = 0;
+    target.isSliding = false;
+
     if (target.health <= 0) {
       target.health = 0;
       target.isAlive = false;

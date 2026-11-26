@@ -4038,60 +4038,17 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             const wpn = getWeapon(p1.equippedWeapon);
             const isBlade = isBladeWeapon(p1.equippedWeapon);
             const baseDmg = wpn.damage || 16;
-            const finalDmg = baseDmg * p1.damageDealtModifier;
 
-            for (const bInst of s.bots) {
-              const bot = bInst.state;
-              if (!bot.isAlive || bot.isGrabbed) continue;
-              const isInvuln =
-                bot.id === 2 && gameMode === 'local1v1'
-                  ? s.p2Controller.isInvulnerable
-                  : bot.fsm !== PlayerFSMState.Roll;
-              if (isInvuln) continue;
-
-              const isBotInReach =
-                ((p1FacingDir > 0 && bot.x >= p1.x - 10 && bot.x <= p1.x + hitReach) ||
-                 (p1FacingDir < 0 && bot.x <= p1.x + 10 && bot.x >= p1.x - hitReach)) &&
-                Math.abs(bot.y - p1.y) < 34;
-
-              if (isBotInReach) {
-                if (isBlade) {
-                  sounds.playBladeHit();
-                  addSparks(bot.x, bot.y, isGymratP1 ? '#f97316' : '#38bdf8', 18);
-                  addSparks(bot.x, bot.y, '#ffffff', 12);
-                } else {
-                  sounds.playHit();
-                  addSparks(bot.x, bot.y, isGymratP1 ? '#f97316' : '#f59e0b', 16);
-                  addSparks(bot.x, bot.y, '#fde047', 10);
-                }
-
-                const hitRes = CombatSystem.applyHit(bot, {
-                  damage: finalDmg,
-                  kbX: p1FacingDir * 170,
-                  stunTicks: GameConstants.HitstunTicksLight,
-                  attacker: p1,
-                  weaponType: p1.equippedWeapon,
-                  screenShake: 7,
-                });
-                s.screenShake = hitRes.screenShake;
-                s.hitStopTicks = hitRes.hitStop;
-                if (gameMode === 'local1v1') {
-                  s.p2Controller.setPosition(bot.x, bot.y);
-                  s.p2Controller.vx = bot.velocityX;
-                  s.p2Controller.vy = bot.velocityY;
-                }
-                addBloodParticles(bot.x, bot.y, p1FacingDir, hitRes.finalDamage);
-
-                s.floatingTexts.push({
-                  id: s.nextEntityId++,
-                  text: `¡${wpn.name.toUpperCase()}! -${Math.round(hitRes.finalDamage)}`,
-                  x: bot.x,
-                  y: bot.y - 32,
-                  color: isBlade ? '#38bdf8' : '#f59e0b',
-                  life: 35,
-                });
-              }
-            }
+            resolveMeleeHits(s, p1, {
+              reachX: hitReach,
+              reachY: 34,
+              baseDamage: baseDmg,
+              kbX: 170,
+              stunTicks: GameConstants.HitstunTicksLight,
+              screenShake: 7,
+              isBlade,
+              floatingTextPrefix: `¡${wpn.name.toUpperCase()}! `,
+            });
 
             // Impacto en cajas del escenario
             s.crates.forEach((c) => {

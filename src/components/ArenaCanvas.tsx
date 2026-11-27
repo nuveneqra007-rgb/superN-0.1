@@ -3119,6 +3119,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           p1.isAiming = false;
           p1.aimAngle = 0;
           p1.burstRemaining = 0;
+          p1.weaponGuardTicks = 0;
           if (!p1.isPistolShooting && !p1.isRifleShooting && !isNinjaComboLocked) {
             p1.equipState = 'holstered';
           }
@@ -3659,9 +3660,51 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
         // ═════════════════════════════════════════════════════════
         // 2. DISPARO POR CLIC IZQUIERDO (Requiere mantener M para apuntar)
+        // Semiautomáticas y escopetas: 1 disparo por clic.
+        // Automáticas: ráfaga acotada de 3–4 balas por clic + breve espera.
         // ═════════════════════════════════════════════════════════
+        if ((p1.burstCooldownTicks || 0) > 0) {
+          p1.burstCooldownTicks = (p1.burstCooldownTicks || 0) - 1;
+        }
+
+        // Procesamiento de ráfaga activa (solo para armas automáticas tras un clic)
+        if (
+          p1.isAiming &&
+          (p1.burstRemaining || 0) > 0 &&
+          p1.isAlive &&
+          s.roundActive &&
+          p1.fsm !== PlayerFSMState.KnockedDown &&
+          p1.fsm !== PlayerFSMState.Hitstun &&
+          p1.fsm !== PlayerFSMState.Roll
+        ) {
+          if (p1.ammo > 0) {
+            p1.burstTickTimer = (p1.burstTickTimer || 0) - 1;
+            if ((p1.burstTickTimer || 0) <= 0) {
+              const wpn = getWeapon(p1.equippedWeapon);
+              const dir = (p1.aimFacingRight ?? p1.facingRight) ? 1 : -1;
+              const muzzleX = p1.x + dir * (isPistol ? 28 : 32);
+              const muzzleY = p1.y - (isPistol ? 6 : 7);
+              p1.ammo--;
+              emitWeaponFire(p1, muzzleX, muzzleY, s.p1Controller, wpn.color);
+              p1.burstRemaining = (p1.burstRemaining || 1) - 1;
+              if ((p1.burstRemaining || 0) > 0) {
+                p1.burstTickTimer = 4;
+              } else {
+                p1.burstCooldownTicks = 12;
+                p1.equipState = p1.isAiming ? 'aiming' : 'holstered';
+              }
+            }
+          } else {
+            p1.burstRemaining = 0;
+            p1.burstCooldownTicks = 12;
+          }
+        }
+
         const clickFireJust = Boolean(s.mouseFireJust);
-        const shouldTriggerFireP1 = clickFireJust && Boolean(p1.isAiming);
+        const isAutoFirearmP1 = isFirearm && isAutomaticFirearm(p1.equippedWeapon);
+        const canStartAutoBurst =
+          !isAutoFirearmP1 || ((p1.burstCooldownTicks || 0) <= 0 && (p1.burstRemaining || 0) <= 0);
+        const shouldTriggerFireP1 = clickFireJust && Boolean(p1.isAiming) && canStartAutoBurst;
 
         if (
           shouldTriggerFireP1 &&
@@ -3685,6 +3728,14 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                 p1.rifleHasRecoilApplied = false;
                 s.p1Controller.isShootingRifle = true;
 
+                if (isAutoFirearmP1) {
+                  const highRateAuto =
+                    p1.equippedWeapon === WeaponType.M60 ||
+                    p1.equippedWeapon === WeaponType.Flamethrower;
+                  p1.burstRemaining = highRateAuto ? 3 : 2;
+                  p1.burstTickTimer = 4;
+                }
+
                 if (gameMode === 'practice' && tutorialStepRef.current === 5) {
                   setTutorialStep(6);
                   tutorialInputProgressRef.current.hasShot = true;
@@ -3693,13 +3744,13 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                 if (s.p1Faction === BotFaction.Gymrat || s.p1Faction === BotFaction.Santa) {
                   // Para Gymrat y Santa: la bala se instancia en el Frame 2 (fogonazo) y el retroceso en Frame 3
                   p1.rifleHasFired = false;
-                  p1.attackCooldown = Math.max(wpn.cooldownTicks, 12);
+                  p1.attackCooldown = isAutoFirearmP1 ? 10 : Math.max(wpn.cooldownTicks, 12);
                   p1.ammo--;
                   PlayerFSM.tryTransition(p1, PlayerFSMState.RangedFire);
                 } else {
                   // Ninja y otros: instanciación inmediata
                   p1.rifleHasFired = true;
-                  p1.attackCooldown = Math.max(wpn.cooldownTicks, 10);
+                  p1.attackCooldown = isAutoFirearmP1 ? 10 : Math.max(wpn.cooldownTicks, 10);
                   p1.ammo--;
                   PlayerFSM.tryTransition(p1, PlayerFSMState.RangedFire);
 
@@ -3724,12 +3775,17 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                 p1.pistolHasRecoilApplied = false;
                 s.p1Controller.isShootingPistol = true;
 
+                if (isAutoFirearmP1) {
+                  p1.burstRemaining = 3; // 4 balas totales por clic en Uzi/MachinePistol
+                  p1.burstTickTimer = 4;
+                }
+
                 if (gameMode === 'practice' && tutorialStepRef.current === 5) {
                   setTutorialStep(6);
                   tutorialInputProgressRef.current.hasShot = true;
                 }
 
-                p1.attackCooldown = Math.max(wpn.cooldownTicks, 14);
+                p1.attackCooldown = isAutoFirearmP1 ? 10 : Math.max(wpn.cooldownTicks, 14);
                 p1.ammo--;
                 PlayerFSM.tryTransition(p1, PlayerFSMState.RangedFire);
 
@@ -3851,6 +3907,8 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
               p1.twoHandAnimFrame = 0;
               p1.twoHandAnimTimer = 0;
               p1.twoHandHasHit = false;
+              p1.weaponGuardTicks = 0;
+              p1.equipState = p1.isAiming ? 'aiming' : 'holstered';
               p1.fsm = PlayerFSMState.Idle;
             }
           }
@@ -4096,6 +4154,8 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
               p1.oneHandAnimFrame = 0;
               p1.oneHandAnimTimer = 0;
               p1.oneHandHasHit = false;
+              p1.weaponGuardTicks = 0;
+              p1.equipState = p1.isAiming ? 'aiming' : 'holstered';
               p1.fsm = PlayerFSMState.Idle;
             }
           }

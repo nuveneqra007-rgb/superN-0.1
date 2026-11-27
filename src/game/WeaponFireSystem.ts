@@ -88,6 +88,7 @@ export function fireWeaponProjectiles(params: FireWeaponParams): FireWeaponResul
 
   const projectiles: FiredProjectileSpec[] = [];
   const totalDamage = (wpn.damage || 15) * damageMultiplier;
+  const baseAim = params.aimAngle || 0;
 
   if (ballisticType === 'rocket') {
     const speed = 460;
@@ -96,8 +97,8 @@ export function fireWeaponProjectiles(params: FireWeaponParams): FireWeaponResul
       id: nextEntityId(),
       x: muzzleX,
       y: muzzleY,
-      vx: dir * speed,
-      vy: 0,
+      vx: dir * speed * Math.cos(baseAim),
+      vy: speed * Math.sin(baseAim),
       damage: rocketDamage,
       onFireDuration: wpn.onFireDuration || 120,
       explosionRadius: Math.max(110, wpn.explosionRadius || 110),
@@ -109,7 +110,7 @@ export function fireWeaponProjectiles(params: FireWeaponParams): FireWeaponResul
       color: '#f97316',
       ballisticType,
       isRocket: true,
-      rotation: dir > 0 ? 0 : Math.PI,
+      rotation: dir > 0 ? baseAim : Math.PI - baseAim,
     });
 
     return {
@@ -124,12 +125,13 @@ export function fireWeaponProjectiles(params: FireWeaponParams): FireWeaponResul
 
   if (ballisticType === 'grenade_launcher') {
     const speed = wpn.projectileSpeed || 540;
+    const launchAngle = baseAim - 0.28;
     projectiles.push({
       id: nextEntityId(),
       x: muzzleX,
       y: muzzleY,
-      vx: dir * speed,
-      vy: -165,
+      vx: dir * speed * Math.cos(launchAngle),
+      vy: speed * Math.sin(launchAngle),
       damage: totalDamage,
       onFireDuration: wpn.onFireDuration || 0,
       explosionRadius: wpn.explosionRadius || 95,
@@ -162,12 +164,13 @@ export function fireWeaponProjectiles(params: FireWeaponParams): FireWeaponResul
     for (let i = 0; i < flameCount; i++) {
       const spread = (Math.random() - 0.5) * 0.34;
       const spd = speed * (0.85 + Math.random() * 0.3);
+      const angle = baseAim + spread;
       projectiles.push({
         id: nextEntityId(),
         x: muzzleX,
         y: muzzleY + (Math.random() - 0.5) * 4,
-        vx: dir * spd * Math.cos(spread),
-        vy: spd * Math.sin(spread) - 25,
+        vx: dir * spd * Math.cos(angle),
+        vy: spd * Math.sin(angle) - 18,
         damage: totalDamage / flameCount,
         onFireDuration: wpn.onFireDuration || 160,
         explosionRadius: 0,
@@ -198,8 +201,8 @@ export function fireWeaponProjectiles(params: FireWeaponParams): FireWeaponResul
       id: nextEntityId(),
       x: muzzleX,
       y: muzzleY,
-      vx: dir * speed,
-      vy: 0,
+      vx: dir * speed * Math.cos(baseAim),
+      vy: speed * Math.sin(baseAim),
       damage: totalDamage,
       onFireDuration: wpn.onFireDuration || 60,
       explosionRadius: 0,
@@ -225,12 +228,13 @@ export function fireWeaponProjectiles(params: FireWeaponParams): FireWeaponResul
 
   if (ballisticType === 'arrow') {
     const speed = wpn.projectileSpeed || 680;
+    const arrowAngle = baseAim - 0.09;
     projectiles.push({
       id: nextEntityId(),
       x: muzzleX,
       y: muzzleY,
-      vx: dir * speed,
-      vy: -60,
+      vx: dir * speed * Math.cos(arrowAngle),
+      vy: speed * Math.sin(arrowAngle),
       damage: totalDamage,
       onFireDuration: 0,
       explosionRadius: 0,
@@ -258,12 +262,13 @@ export function fireWeaponProjectiles(params: FireWeaponParams): FireWeaponResul
   // Pistola de bengalas: proyectil luminoso en arco que incendia al impactar
   if (ballisticType === 'flare') {
     const speed = wpn.projectileSpeed || 540;
+    const flareAngle = baseAim - 0.08;
     projectiles.push({
       id: nextEntityId(),
       x: muzzleX,
       y: muzzleY,
-      vx: dir * speed,
-      vy: -45,
+      vx: dir * speed * Math.cos(flareAngle),
+      vy: speed * Math.sin(flareAngle),
       damage: totalDamage,
       onFireDuration: wpn.onFireDuration || 180,
       explosionRadius: 0,
@@ -302,7 +307,7 @@ export function fireWeaponProjectiles(params: FireWeaponParams): FireWeaponResul
     for (let i = 0; i < count; i++) {
       const t = count > 1 ? i / (count - 1) - 0.5 : 0;
       const jitter = ((Math.random() - 0.5) * 3 * Math.PI) / 180;
-      const angle = t * spreadRad + jitter;
+      const angle = baseAim + t * spreadRad + jitter;
       const spd = baseSpeed * (0.92 + Math.random() * 0.16);
 
       projectiles.push({
@@ -350,12 +355,13 @@ export function fireWeaponProjectiles(params: FireWeaponParams): FireWeaponResul
 
   for (let i = 0; i < count; i++) {
     const spreadAngle = ((Math.random() - 0.5) * ((wpn.accuracyDeg || 3) * Math.PI) / 180) / 2;
+    const finalAngle = baseAim + spreadAngle;
     projectiles.push({
       id: nextEntityId(),
       x: muzzleX,
       y: muzzleY,
-      vx: dir * baseSpeed * Math.cos(spreadAngle),
-      vy: baseSpeed * Math.sin(spreadAngle),
+      vx: dir * baseSpeed * Math.cos(finalAngle),
+      vy: baseSpeed * Math.sin(finalAngle),
       damage: totalDamage / count,
       onFireDuration: wpn.onFireDuration || 0,
       explosionRadius: wpn.explosionRadius || 0,

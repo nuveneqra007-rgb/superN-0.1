@@ -882,22 +882,29 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     if (!s) return;
     shooter.weaponGuardTicks = 18;
     const dir: 1 | -1 = shooter.facingRight ? 1 : -1;
+    const aimAngle = shooter.aimAngle || 0;
+    const dx = muzzleX - shooter.x;
+    const dy = muzzleY - (shooter.y - 6);
+    const barrelDist = Math.max(20, Math.hypot(dx, dy));
+    const aimedMuzzleX = aimAngle !== 0 ? shooter.x + dir * Math.cos(aimAngle) * barrelDist : muzzleX;
+    const aimedMuzzleY = aimAngle !== 0 ? (shooter.y - 6) + Math.sin(aimAngle) * barrelDist : muzzleY;
+
     const res = fireWeaponProjectiles({
       weaponType: shooter.equippedWeapon,
       shooterId: shooter.id,
-      muzzleX,
-      muzzleY,
+      muzzleX: aimedMuzzleX,
+      muzzleY: aimedMuzzleY,
       dir,
       damageMultiplier: shooter.damageDealtModifier,
       nextEntityId: () => s.nextEntityId++,
       bulletColor,
-      aimAngle: shooter.aimAngle || 0,
+      aimAngle,
     });
 
     for (const proj of res.projectiles) {
       s.projectiles.push(proj);
     }
-    addSparks(muzzleX, muzzleY, res.sparkColor, res.sparkCount);
+    addSparks(aimedMuzzleX, aimedMuzzleY, res.sparkColor, res.sparkCount);
     s.screenShake = Math.max(s.screenShake, res.screenShake);
 
     if (res.recoilForce > 0) {
@@ -9990,7 +9997,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                 ry = -1;
                 rAngle = -0.05;
               }
-              renderWeaponAtHand(ctx, wImg, p.equippedWeapon, handProfile, rx, ry, rAngle, {
+              renderWeaponAtHand(ctx, wImg, p.equippedWeapon, handProfile, rx, ry, rAngle + (p.aimAngle || 0), {
                 includeForegrip: true,
               });
             }
@@ -10057,7 +10064,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                 py = -1;
                 pAngle = -0.05;
               }
-              renderWeaponAtHand(ctx, wImg, p.equippedWeapon, handProfile, px, py, pAngle, {
+              renderWeaponAtHand(ctx, wImg, p.equippedWeapon, handProfile, px, py, pAngle + (p.aimAngle || 0), {
                 includeForegrip: false,
               });
             }
@@ -10661,6 +10668,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
               pickupAnimTicks: p.weaponPickupAnimTicks,
               isUsingWeapon: Boolean(p.isThrowing),
               isAiming: Boolean(p.isAiming),
+              aimAngle: p.aimAngle || 0,
               weaponGuardTicks: p.weaponGuardTicks,
             });
           }

@@ -6,7 +6,7 @@
 
 import { CharacterHandProfile, CharacterHandStyle, HandAnchor } from './CharacterData';
 import { PlayerFSMState } from './PlayerState';
-import { WeaponType } from './WeaponData';
+import { WeaponType, getWeapon, getWeaponBallisticType } from './WeaponData';
 import { CarryPose, getWeaponGripConfig } from './WeaponGripData';
 
 export interface WeaponRenderPose {
@@ -22,6 +22,7 @@ export interface WeaponRenderPose {
   pickupAnimTicks?: number;
   isUsingWeapon?: boolean;
   isAiming?: boolean;
+  aimAngle?: number;
   weaponGuardTicks?: number;
   debugGrip?: boolean;
 }
@@ -194,8 +195,90 @@ export function renderWeaponAtHand(
 }
 
 /**
+ * Dibuja la retícula / línea de mira o arco parabólico desde la boca del arma.
+ * El contexto ya debe estar trasladado a la mano y sin rotar aún, o rotado al ángulo.
+ */
+function renderAimReticle(
+  ctx: CanvasRenderingContext2D,
+  weaponType: WeaponType,
+  handX: number,
+  handY: number,
+  aimAngle: number,
+  barrelLen: number
+): void {
+  const ballistic = getWeaponBallisticType(weaponType);
+  const muzzleX = handX + Math.cos(aimAngle) * barrelLen;
+  const muzzleY = handY + Math.sin(aimAngle) * barrelLen;
+
+  ctx.save();
+
+  if (ballistic === 'grenade_launcher' || ballistic === 'arrow' || ballistic === 'flare') {
+    const wpn = getWeapon(weaponType);
+    const speed = wpn.projectileSpeed || (ballistic === 'arrow' ? 680 : 540);
+    const grav = ballistic === 'grenade_launcher' ? 540 : ballistic === 'arrow' ? 340 : 220;
+    const elev = ballistic === 'grenade_launcher' ? -0.28 : ballistic === 'arrow' ? -0.09 : -0.08;
+    const launchAngle = aimAngle + elev;
+    const vx = speed * Math.cos(launchAngle);
+    const vy = speed * Math.sin(launchAngle);
+
+    ctx.fillStyle = ballistic === 'flare' ? 'rgba(239, 68, 68, 0.78)' : 'rgba(250, 204, 21, 0.75)';
+    for (let step = 1; step <= 8; step++) {
+      const t = step * 0.065;
+      const px = muzzleX + vx * t;
+      const py = muzzleY + vy * t + 0.5 * grav * t * t;
+      const r = Math.max(1.2, 2.6 - step * 0.16);
+      ctx.beginPath();
+      ctx.arc(px, py, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+    return;
+  }
+
+  const isLaserSight = ballistic === 'sniper_pierce' || ballistic === 'laser_beam';
+  const sightLen = isLaserSight ? 250 : 155;
+  const endX = muzzleX + Math.cos(aimAngle) * sightLen;
+  const endY = muzzleY + Math.sin(aimAngle) * sightLen;
+
+  if (isLaserSight) {
+    ctx.strokeStyle = ballistic === 'laser_beam' ? 'rgba(34, 211, 238, 0.65)' : 'rgba(239, 68, 68, 0.65)';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(muzzleX, muzzleY);
+    ctx.lineTo(endX, endY);
+    ctx.stroke();
+
+    ctx.fillStyle = ballistic === 'laser_beam' ? '#22d3ee' : '#ef4444';
+    ctx.beginPath();
+    ctx.arc(endX, endY, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.48)';
+    ctx.lineWidth = 1.2;
+    ctx.setLineDash([5, 5]);
+    ctx.beginPath();
+    ctx.moveTo(muzzleX, muzzleY);
+    ctx.lineTo(endX, endY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Pequeña cruz de retícula al extremo
+    ctx.strokeStyle = 'rgba(250, 204, 21, 0.85)';
+    ctx.lineWidth = 1.3;
+    ctx.beginPath();
+    ctx.moveTo(endX - 4, endY);
+    ctx.lineTo(endX + 4, endY);
+    ctx.moveTo(endX, endY - 4);
+    ctx.lineTo(endX, endY + 4);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+/**
  * Dibuja el arma equipada anclada por su empuñadura a la mano del protagonista,
- * con puño envolvente, segunda mano en armas largas y feedback al recoger.
+ * con puño envolvente, segunda mano en armas largas, feedback al recoger y retícula al apuntar.
  */
 export function renderEquippedWeaponIdle(
   ctx: CanvasRenderingContext2D,
@@ -215,14 +298,27 @@ export function renderEquippedWeaponIdle(
   const pickupScale = 1 + 0.18 * pickupT;
   const pickupAngle = -0.32 * pickupT;
 
+  const isAiming = Boolean(pose.isAiming);
+  const aimAngle = pose.aimAngle || 0;
+  const handX = anchor.x + carryOffset.x + (isAiming ? Math.cos(aimAngle) * 2 : 0);
+  const handY = anchor.y + carryOffset.y + (isAiming ? Math.sin(aimAngle) * 4 : 0);
+  const finalAngle = isAiming
+    ? aimAngle
+    : anchor.angle + grip.idleAngle + pickupAngle;
+
+  if (isAiming) {
+    const barrelLen = (1 - grip.gripX) * grip.drawW;
+    renderAimReticle(ctx, weaponType, handX, handY, aimAngle, barrelLen);
+  }
+
   renderWeaponAtHand(
     ctx,
     weaponImg,
     weaponType,
     profile,
-    anchor.x + carryOffset.x,
-    anchor.y + carryOffset.y,
-    anchor.angle + grip.idleAngle + pickupAngle,
+    handX,
+    handY,
+    finalAngle,
     {
       scale: pickupScale,
       includeForegrip: true,

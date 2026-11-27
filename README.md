@@ -1,133 +1,151 @@
-# superN — 2D Platform Tactical Fighter
+# superN — Juego Web Táctico de Lucha y Disparos 2D
 
-Un juego de lucha y disparos táctico 2D en plataformas inspirado en **Superfighters Deluxe**, desarrollado con **React 19**, **TypeScript**, **HTML5 Canvas 2D** y **Tailwind CSS**, operando a 60 Hz deterministas con paso fijo de simulación.
+🎮 **Juega ahora directamente desde tu navegador (sin descargar nada ni clonar el repositorio):**  
+👉 **[https://supern01.vercel.app/](https://supern01.vercel.app/)**
 
----
-
-> ⚠️ **ADVERTENCIA IMPORTANTE PARA DESARROLLADORES:**  
-> **"No modificar los archivos de CharacterData.ts sin actualizar el GDD"**  
-> Cualquier alteración en configuraciones de fotogramas, escalas (`UNIFORM_SCALE_MAP`), puntos de anclaje de pies o metadatos de hojas de sprites debe coordinarse estrictamente con el Documento de Diseño de Juego (`superN_PROXIMOS_ARREGLOS_6368a114.md` y `AUDITORIA_Y_VERIFICACION_GDD_V2.md`).
+**superN** es un juego web de acción, plataformas y combate táctico 2D inspirado en *Superfighters Deluxe*. Funciona directamente en navegadores de escritorio y teléfonos móviles (con controles táctiles estilo PSP), ejecutando una simulación determinista a **60 Hz** con física arcade, arsenal variado, inventario de 3 ranuras activas y combates contra bots de IA o en modo práctica.
 
 ---
 
-## 🚀 Cómo iniciar el juego localmente
+## 🌐 Jugar en línea (Sin descargas)
 
-Para ejecutar el proyecto en tu entorno local de desarrollo:
-
-```bash
-# 1. Instalar las dependencias del proyecto
-npm install
-
-# 2. Iniciar el servidor de desarrollo Vite
-npm run dev
-```
-
-El juego estará disponible inmediatamente en tu navegador en:
-`http://localhost:3000` (o `http://0.0.0.0:3000`).
-
-Para verificar tipos y compilar la versión optimizada de producción:
-```bash
-npm run build
-```
+No necesitas instalar programas ni descargar código fuente para jugar:
+1. Abre **[https://supern01.vercel.app/](https://supern01.vercel.app/)** desde cualquier navegador moderno (Chrome, Safari, Firefox, Edge).
+2. En **PC**, navega con teclado o ratón.
+3. En **teléfono móvil**, gira la pantalla en **horizontal** para activar el modo pantalla completa y los controles táctiles PSP.
 
 ---
 
-## 📁 Estructura del Proyecto y Ubicación de Assets
+## 🛠️ Tecnologías Utilizadas (Formulación del Juego y Despliegue)
 
-La arquitectura del proyecto sigue una estricta separación como fuente única de verdad:
-
-```
-superN/
-├── public/
-│   ├── assets/
-│   │   ├── characters/                 # Retratos e idles canónicos (ninja, gymrat, santaclo)
-│   │   │   ├── ninja/idle.png
-│   │   │   ├── gymrat/idle.png
-│   │   │   └── santaclo/idle.png
-│   │   ├── sprites/
-│   │   │   ├── player/                 # Spritesheets activos y metadatos subpíxel
-│   │   │   │   ├── frameMeta.json      # Metadatos oficiales de recorte y anclaje a los pies
-│   │   │   │   ├── ninja_*.png         # Hojas de animación Ninja (walk, run, jump, melee, roll...)
-│   │   │   │   ├── gymrat_*.png        # Hojas de animación Gymrat (walk, run, jump, melee, roll...)
-│   │   │   │   └── santaclo_*.png      # Hojas de animación Santa Claus (walk, run, jump, melee, pistol, rifle, throw...)
-│   │   │   └── bot/                    # Spritesheets y arquetipos de IA (assassin, agent, etc.)
-│   │   ├── weapons/                    # Sprites e iconos de armas (cuerpo a cuerpo, fuego, granadas)
-│   │   └── aistudio/                   # Fondos oficiales de batalla y documentos del plan maestro
-│   ├── contact_sheet.html              # Visor interactivo de hojas de sprites y bounding boxes
-│   └── icon.svg                        # Favicon oficial del juego
-├── scripts/                            # Herramientas de procesamiento y slicing de sprites
-│   └── smart_slicer.ts                 # Cortador inteligente por detección de canal alfa
-├── src/
-│   ├── components/
-│   │   ├── ArenaCanvas.tsx             # Motor de juego a 60Hz deterministas, física y renderizado Canvas 2D
-│   │   ├── LandingScreen.tsx           # Portada con fondo Urban Noir y vitrina de personajes
-│   │   ├── ModeSelectScreen.tsx        # Selección de modo de juego (1P vs Bot, 1v1 Local)
-│   │   ├── MainMenu.tsx                # Selección de luchadores, configuración de bots y dificultad
-│   │   ├── MatchSetupModal.tsx         # Selección de escenario y número de rondas
-│   │   ├── ArsenalView.tsx             # Catálogo de armamento e inspección de estadísticas
-│   │   ├── GameBackdrop.tsx            # Fondo ambiental compartido de tuberías y escaneo
-│   │   └── FighterBar.tsx              # Componente HUD de barras de salud y slots de armas
-│   └── game/
-│       ├── Controls.ts                 # Fuente única de verdad de controles (KeyboardEvent.code)
-│       ├── CharacterData.ts            # Fuente única de verdad de personajes, escalas y animaciones
-│       ├── WeaponData.ts               # Fuente única de verdad de armas, agarres (1/2 manos) y daños
-│       ├── WorldData.ts                # Fuente única de verdad de los 6 mapas oficiales y plataformas
-│       ├── GrenadeSystem.ts            # Físicas de granadas, rebotes elásticos, C4/minas y detonaciones
-│       ├── PlayerController.ts         # FSM de movimiento, salto variable y cinemática
-│       ├── CombatSystem.ts             # Detección de colisiones e intercambios de daño
-│       ├── BotData.ts & BotFSM.ts      # 15 arquetipos de bots, FSM y toma de decisiones
-│       └── PhysicsStep.ts              # Simulación de física, gravedad, fricción y plataformas
-├── index.html                          # Entrada HTML principal
-├── package.json                        # Dependencias de npm y scripts de ejecución
-├── tsconfig.json                       # Configuración de compilador TypeScript
-└── vite.config.ts                      # Configuración de Vite y Tailwind v4
-```
+| Área | Tecnología / Herramienta | Función en el proyecto |
+|---|---|---|
+| **Interfaz & Estado** | **React 19** + **TypeScript 5** | Arquitectura modular de pantallas, HUD reactivo (`FighterBar`), armería interactiva y tipado estricto. |
+| **Estilos & Iconos** | **Tailwind CSS v4** + **Lucide React** | Diseño retro arcade responsivo, modales apaisados y controles táctiles adaptados a móviles. |
+| **Motor 2D (60 Hz)** | **HTML5 Canvas 2D** | Simulación física de paso fijo (`1000 / 60 ms`), partículas, fuego multicapa, hit-stop, screen-shake y pixel-art nítido (`imageSmoothingEnabled = false`). |
+| **Escena 3D (Escritorio)** | **Three.js** (`WebGLRenderer` + `RoomEnvironment`) | Portada 3D PBR atmosférica con niebla, luces dinámicas, lluvia y reflejos en navegadores de escritorio. |
+| **Audio Procedural** | **Web Audio API** (`SoundEffects.ts`) | Síntesis de disparos, explosiones, motosierra, látigo, golpes y gong en tiempo real sin descarga de audios pesados. |
+| **Empaquetado** | **Vite 6** + **tsc** | Compilación rápida, tree-shaking y verificación de tipos (`npm run lint` / `npm run build`). |
+| **Despliegue / Hosting** | **Vercel** | Despliegue web continuo accesible al instante desde **[https://supern01.vercel.app/](https://supern01.vercel.app/)**. |
 
 ---
 
-## 🕹️ Teclas de Control Reales (Fuente Única: `src/game/Controls.ts`)
+## 📱 Adaptación Total a Móvil (Modo Horizontal + Controles PSP)
 
-Todos los controles son capturados a nivel físico mediante `KeyboardEvent.code` para garantizar consistencia absoluta en cualquier distribución de teclado (QWERTY, AZERTY, etc.):
+**superN** cuenta con una adaptación nativa para jugar cómodamente desde teléfonos móviles sin recortes ni caídas de rendimiento:
+
+1. **Guardia de Orientación Horizontal y Pantalla Completa (`useMobileDevice.ts`, `MobileOrientationGuard.tsx`)**
+   - Detecta automáticamente dispositivos táctiles/móviles y monitorea el área visible real (`window.visualViewport`).
+   - Si el usuario abre el juego en vertical (*Portrait*), muestra un aviso bloqueante solicitando girar el teléfono en horizontal (*Landscape*).
+   - Al rotar a horizontal, solicita entrar en **pantalla completa** (`requestFullscreen` + bloqueo `landscape`) e incluye un botón flotante discreto `FullScreen` por si el navegador móvil requiere confirmación táctil directa.
+
+2. **Portada Optimizada a 60 FPS en Teléfonos (`LandingScreen.tsx`)**
+   - En dispositivos móviles se omite automáticamente la escena 3D WebGL de Three.js (`Warehouse3DCanvas`) y los bucles de parallax por ratón, cargando en su lugar un fondo 2D ligero que evita congelamientos y sobrecalentamiento al abrir la web.
+
+3. **Experiencia Exclusiva de 1 Jugador en Móvil (`ModeSelectScreen.tsx`)**
+   - En pantallas móviles se filtra el modo `2 JUGADORES` (teclado compartido), dejando listos y optimizados los modos pensados para juego táctil individual:
+     - **Duelo vs Bot (IA)** (1 a 5 bots configurables).
+     - **Modo Práctica (El Gimnasio)** con armería infinita y tutorial paso a paso.
+
+4. **Resolución Adaptativa Exacta por Dispositivo y Cámara Dinámica (`ArenaCanvas.tsx`, `MainMenu.tsx`, `MatchSetupModal.tsx`, `WorldSelectScreen.tsx`, `FighterBar.tsx`)**
+   - **Arena sin franjas negras**: En combate móvil, el `<canvas>` adopta las dimensiones exactas del área útil de la pantalla del teléfono multiplicadas por su `devicePixelRatio` (hasta 2×) y aplica una cámara 2D suavizada enfocada en Player 1 y el rival más cercano para apreciar personajes, armas y proyectiles con total claridad. Desde el menú de **Pausa**, puede alternarse entre `EXACTA (ZOOM+)` y `CLÁSICA 16:9`.
+   - **UI y Modales Apaisados**: La barra de luchadores (`FighterBar` en modo compacto), el selector `1 vs Bot` (`MainMenu`), el modal rápido de mapa/rondas (`MatchSetupModal`), la selección de mundo y el menú de pausa se reorganizan horizontalmente con escalado dinámico y scroll seguro para adaptarse a cualquier altura de pantalla móvil (~320–430 px).
+
+5. **Controles Táctiles Multi-Touch Estilo PSP (`MobilePSPControls.tsx`)**
+   - **Joystick Analógico Izquierdo**: Captura independiente por puntero (`setPointerCapture`) que permite caminar, **correr automáticamente** al llevar el stick al borde exterior, saltar/agacharse/rodar y graduar el ángulo de mira al disparar.
+   - **Botonera PSP Derecha**:
+     - `□` **Melee**: Golpes cuerpo a cuerpo, combos de espada, motosierra continua, látigo, silla, etc.
+     - `○` **Fuego**: Disparar o mantener presionado para apuntar (y flujo continuo de llamas con el Lanzallamas Napalm).
+     - `△` **Bomba**: Lanzar granadas, cócteles molotov, C4, minas o pelotas de béisbol.
+     - `✕` **Salto**: Salto rápido independiente del joystick.
+   - **Barra Superior Táctil Integrada**: Acceso directo sin solapamientos a `PAUSA`, `ARMAS` (Armería interactiva en Práctica) y `GUÍA`.
+
+---
+
+## ⚔️ Mecánicas Principales del Juego
+
+* **Inventario Rápido de 3 Ranuras Activas**:
+  * **Ranura 1 (`N` / `□`)**: Arma cuerpo a cuerpo o puños (`Fists`, Katana, Motosierra encendida, Cadena, Látigo, Silla, Asta de Bandera, Almohada Cósmica, etc.).
+  * **Ranura 2 (`M` / `○`)**: Arma de fuego equipada (pistola, subfusil, escopeta, francotirador, bazuca, lanzagranadas, **Lanzallamas Napalm** con chorro continuo de fuego vivo, láser, arco o bengalas). Al agotarse la munición en combate, el arma se suelta automáticamente.
+  * **Ranura 3 (`,` / `△`)**: Explosivos y arrojadizas (Granada Frag, Humo, Cegadora, Cóctel Molotov, C4, Mina de proximidad y Pelota de Béisbol).
+* **Ciclo Vivo de Armas en el Mapa**: Aparición y sustitución periódica en puntos designados (incluyendo 3 spawns rotativos en *El Gimnasio*), parpadeo visual previo antes de desaparecer, recogida determinista del objeto más cercano sin bucles y recarga de balas al recoger la misma arma con cargador incompleto.
+* **Personajes Jugables**: **Ninja** (combo de 3 tajos con espada), **Gymrat** (combos pesados) y **Santa Claus** (golpes devastadores y retroceso de armas calibrado).
+
+---
+
+## 🕹️ Controles en Escritorio (`src/game/Controls.ts`)
 
 ### Modo 1 Jugador (Solitario / Práctica vs Bot)
-* **Moverse:** `A` (Izquierda) / `D` (Derecha) o **Flechas** (`←` `→`)
+* **Moverse:** `A` / `D` o **Flechas** (`←` `→`)
 * **Salto:** `W`, `↑` o `Espacio`
-* **Agacharse:** `S` o `↓`
-* **Rodar (Invulnerable ~0.24s):** `S` + Movimiento (o `↓` + Movimiento)
+* **Agacharse / Recoger o Intercambiar Arma:** `S` o `↓`
+* **Rodar (Invulnerabilidad breve):** `S` + Movimiento (o `↓` + Movimiento)
 * **Correr (Sprint):** Mantener `Q`, `Shift Izquierdo` o `.` (Punto)
-* **Ataque Cuerpo a Cuerpo (Melee):** `N` (alternativas: `F` / `J`)
-* **Disparar Arma de Fuego:** `M` (alternativas: `G` / `K`)
-* **Lanzar Granada / Explosivo:** `,` (Coma) (alternativas: `H` / `L`)
-* **Selección de Arma Rápida (Ranuras 1–4):** Teclas `1`, `2`, `3`, `4`
-* **Pausa:** `ESC` (abre el menú de pausa retro)
+* **Ataque Cuerpo a Cuerpo (Melee):** `N` (mantener con Motosierra para corte continuo)
+* **Disparar / Apuntar Arma de Fuego:** `M` (toque rápido dispara; mantener apunta con dirección o dispara chorro continuo con Lanzallamas)
+* **Lanzar Granada / Arrojadizo:** `,` (Coma)
+* **Cambio Rápido de Ranuras:** Teclas `1`, `2`, `3`, `4`
+* **Armería en Modo Práctica:** `E` (cerca del estante) | **Guía Tutorial:** `H`
+* **Pausa:** `ESC`
 
----
-
-### Modo 1v1 Local (Dos Jugadores en el Mismo Teclado)
+### Modo 1v1 Local (Dos Jugadores en el Mismo Teclado — Solo Escritorio)
 
 | Acción | Jugador 1 (WASD) | Jugador 2 (Flechas) |
 |---|---|---|
-| **Moverse** | `A` (Izquierda) / `D` (Derecha) | `←` (Izquierda) / `→` (Derecha) |
-| **Salto** | `W` o `Espacio` | `↑` (Flecha Arriba) |
-| **Agacharse** | `S` | `↓` (Flecha Abajo) |
+| **Moverse** | `A` / `D` | `←` / `→` |
+| **Salto** | `W` o `Espacio` | `↑` |
+| **Agacharse** | `S` | `↓` |
 | **Rodar** | `S` + Movimiento | `↓` + Movimiento |
-| **Correr (Sprint)** | Mantener `Shift Izquierdo` o `Q` | Mantener `.` (Punto) o `/` (Barra) |
-| **Melee (Golpe / Combo)** | `F` | `N` |
+| **Correr** | `Shift Izquierdo` o `Q` | `.` (Punto) o `/` |
+| **Melee** | `F` | `N` |
 | **Disparo** | `G` | `M` |
-| **Granada / Bomba** | `H` (o `L` / `,`) | `,` (Coma) (o `L`) |
-| **Cambio de Ranura (1–4)**| Teclas numéricas `1`, `2`, `3`, `4` | Teclas numéricas `7`, `8`, `9`, `0` |
-| **Menú de Pausa** | `ESC` | `ESC` |
+| **Granada / Bomba** | `H` (o `L` / `,`) | `,` (o `L`) |
+| **Ranuras (1–4)** | `1`, `2`, `3`, `4` | `7`, `8`, `9`, `0` |
 
 ---
 
-## 🥊 Personajes Jugables y Estado
+## 💻 Desarrollo Local (Opcional para Colaboradores)
 
-1. **Ninja (Shinobi Urbano):** Completado (Movimiento y Combate). Incluye combo triple de katana, lanzamiento y compatibilidad total con armas.
-2. **Gymrat (Bestia de Gimnasio):** Completado (Movimiento y Combate). Patadas frontales, ganchos y proporciones masivas calibradas.
-3. **Santa Claus (Santa Táctico):** Completado (Movimiento, Combate, Armas y Bombas). Soporte para armas a una mano (pistolas con retroceso físico), dos manos (rifles/pesadas), ciclo completo de animaciones y lanzamiento de bombas.
+Si deseas modificar el código fuente o contribuir al proyecto localmente:
 
----
+```bash
+# 1. Instalar dependencias
+npm install
 
-## 💥 Sistema de Bombas y Proyectiles
-* **Rebotes en Infraestructura:** Las granadas y cócteles molotov rebotan elásticamente contra plataformas atravesables (*one-way*), paredes y techos, manteniendo su temporizador de detonación en el aire.
-* **Adherencia Superficial:** C4 y Minas terrestres se adhieren firmemente a pisos, plataformas y paredes tras el impacto.
+# 2. Iniciar servidor de desarrollo (puerto 3000)
+npm run dev
+
+# 3. Verificar tipos y generar build de producción
+npm run lint && npm run build
+```
+
+### Estructura Principal
+
+```text
+superN-0.1/
+├── docs/                       # Planes maestros y documentación técnica
+├── public/assets/              # Spritesheets, frameMeta.json, armas y fondos
+├── src/
+│   ├── hooks/
+│   │   └── useMobileDevice.ts  # Detección táctil, orientación, viewport y fullscreen
+│   ├── components/
+│   │   ├── ArenaCanvas.tsx     # Motor 60Hz, física, cámara móvil adaptativa y render 2D
+│   │   ├── MobileOrientationGuard.tsx
+│   │   ├── MobilePSPControls.tsx
+│   │   ├── LandingScreen.tsx
+│   │   ├── Warehouse3DCanvas.tsx
+│   │   ├── ModeSelectScreen.tsx
+│   │   ├── MainMenu.tsx
+│   │   ├── MatchSetupModal.tsx
+│   │   ├── WorldSelectScreen.tsx
+│   │   ├── ArsenalView.tsx
+│   │   └── FighterBar.tsx
+│   └── game/                   # Controls, CharacterData, WeaponData, WeaponFireSystem,
+│                               # WeaponRenderer, WorldData, GrenadeSystem, BotFSM, PhysicsStep
+├── index.html
+├── package.json
+└── vite.config.ts
+```
+
+> ⚠️ **Nota de Desarrollo:**  
+> Al modificar animaciones o fotogramas en `src/game/CharacterData.ts`, coordina siempre los cambios con `public/assets/sprites/player/frameMeta.json` y los metadatos de escala uniforme.

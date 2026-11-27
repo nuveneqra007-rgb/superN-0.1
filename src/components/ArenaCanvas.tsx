@@ -11156,8 +11156,8 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
         {/* Modal de Arsenal (Armería de Práctica) para selección de armas con munición infinita */}
         {showPracticeArsenal && (
-          <div className="absolute inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 md:p-8 animate-in fade-in duration-150">
-            <div className="w-full max-w-5xl h-[85vh] max-h-[85vh] my-auto flex flex-col rounded-2xl overflow-hidden border-2 border-amber-400/90 shadow-[0_0_50px_rgba(245,158,11,0.35)] bg-neutral-950">
+          <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 animate-in fade-in duration-150">
+            <div className="w-full max-w-6xl h-[92dvh] max-h-[92dvh] my-auto flex flex-col rounded-2xl overflow-hidden border-2 border-amber-400/90 shadow-[0_0_50px_rgba(245,158,11,0.35)] bg-neutral-950">
               <ArsenalView
                 onBackToMenu={() => {
                   setShowPracticeArsenal(false);

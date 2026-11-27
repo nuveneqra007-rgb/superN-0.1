@@ -5,7 +5,7 @@
 // =============================================================
 
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
-import { WeaponCategory, WeaponData, WeaponDatabase, WeaponType } from '../game/WeaponData';
+import { WeaponCategory, WeaponData, WeaponDatabase, WeaponType, getWeaponSoundProfile } from '../game/WeaponData';
 import { sounds } from '../game/SoundEffects';
 import {
   ArrowLeft,
@@ -116,7 +116,7 @@ export const ArsenalView: React.FC<ArsenalViewProps> = ({
 
   const handleTestSound = useCallback(() => {
     sounds.resumeAudio();
-    sounds.playWeaponSound(selectedWeapon.soundType);
+    sounds.playWeaponSound(getWeaponSoundProfile(selectedWeapon.type));
     setSoundFeedbackActive(true);
     setTimeout(() => setSoundFeedbackActive(false), 200);
   }, [selectedWeapon]);
@@ -226,7 +226,7 @@ export const ArsenalView: React.FC<ArsenalViewProps> = ({
   const rpm = Math.round((60 / Math.max(1, selectedWeapon.cooldownTicks)) * 60);
 
   return (
-    <div className="relative w-full h-full flex flex-col bg-neutral-950 text-neutral-100 overflow-hidden select-none font-sans">
+    <div className="relative w-full h-full max-h-dvh flex flex-col bg-neutral-950 text-neutral-100 overflow-hidden select-none font-sans">
       {/* Background Ambience */}
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-sky-950/30 via-neutral-950 to-neutral-950 -z-10 pointer-events-none" />
 
@@ -344,10 +344,10 @@ export const ArsenalView: React.FC<ArsenalViewProps> = ({
         </div>
       </div>
 
-      {/* Main Content Area: Split View with guaranteed independent scrolling */}
-      <div className="flex-1 min-h-0 w-full grid grid-cols-1 lg:grid-cols-12 overflow-hidden">
-        {/* Left Spotlight Panel: Selected Weapon Deep Dive + PINNED Action Footer */}
-        <aside className="lg:col-span-5 xl:col-span-4 bg-neutral-900/95 border-r border-neutral-800 flex flex-col min-h-0 backdrop-blur shadow-2xl overflow-hidden">
+      {/* Main Content Area: Split View on lg+, Gallery + Bottom Bar on <lg */}
+      <div className="flex-1 min-h-0 w-full flex flex-col lg:grid lg:grid-cols-12 overflow-hidden">
+        {/* Left Spotlight Panel (lg+): Selected Weapon Deep Dive + PINNED Action Footer */}
+        <aside className="hidden lg:flex lg:col-span-4 bg-neutral-900/95 border-r border-neutral-800 flex-col min-h-0 backdrop-blur shadow-2xl overflow-hidden">
           {/* Scrollable details area for weapon stats */}
           <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-5 space-y-3.5 [scrollbar-width:thin] [scrollbar-color:#0284c7_#171717]">
             {/* Category & Status Banner */}
@@ -581,8 +581,8 @@ export const ArsenalView: React.FC<ArsenalViewProps> = ({
           </div>
         </aside>
 
-        {/* Right Gallery: All 53 Weapons with vertical scrollbar */}
-        <main className="lg:col-span-7 xl:col-span-8 bg-neutral-950 p-3 sm:p-4 lg:p-5 flex flex-col min-h-0 overflow-hidden">
+        {/* Right Gallery: All 53 Weapons with compact grid & internal vertical scroll */}
+        <main className="flex-1 min-h-0 lg:col-span-8 bg-neutral-950 p-2.5 sm:p-3.5 lg:p-4 flex flex-col overflow-hidden">
           {/* Gallery Info Bar (shrink-0) */}
           <div className="flex items-center justify-between mb-2.5 text-xs shrink-0">
             <span className="font-mono-code text-neutral-400 text-[11px]">
@@ -618,7 +618,7 @@ export const ArsenalView: React.FC<ArsenalViewProps> = ({
               <div
                 ref={gridRef}
                 id="arsenal-grid"
-                className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-2 sm:gap-2.5 pb-4"
+                className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 xl:grid-cols-6 gap-1.5 sm:gap-2 pb-2"
               >
                 {filteredWeapons.map((weapon) => {
                   const isSelected = selectedWeapon.type === weapon.type;
@@ -634,24 +634,24 @@ export const ArsenalView: React.FC<ArsenalViewProps> = ({
                           onEquipWeapon(weapon.type);
                         }
                       }}
-                      className={`relative p-2.5 sm:p-3 rounded-xl border text-left cursor-pointer transition-all duration-150 flex flex-col justify-between group ${
+                      className={`relative p-1.5 sm:p-2 rounded-lg border text-left cursor-pointer transition-all duration-150 flex flex-col justify-between group ${
                         isSelected
-                          ? 'bg-neutral-900 border-amber-400 ring-2 ring-amber-400/50 shadow-[0_0_18px_rgba(245,158,11,0.3)] -translate-y-0.5'
-                          : 'bg-neutral-900/70 border-neutral-800 hover:border-neutral-700 hover:bg-neutral-900 hover:-translate-y-0.5'
+                          ? 'bg-neutral-900 border-amber-400 ring-2 ring-amber-400/50 shadow-[0_0_14px_rgba(245,158,11,0.3)]'
+                          : 'bg-neutral-900/70 border-neutral-800 hover:border-neutral-700 hover:bg-neutral-900'
                       }`}
                     >
-                      {/* Top row: Category pill & Ammo */}
-                      <div className="flex items-center justify-between gap-1 mb-1.5">
-                        <span className="text-[9px] uppercase font-mono-code font-bold px-1.5 py-0.5 rounded bg-neutral-950 border border-neutral-800 text-neutral-400">
-                          {weapon.category}
+                      {/* Top row: Ammo / Melee */}
+                      <div className="flex items-center justify-between gap-1 mb-1">
+                        <span className="text-[8px] uppercase font-mono-code font-bold px-1 py-0.5 rounded bg-neutral-950 border border-neutral-800 text-neutral-400 truncate">
+                          {weapon.category === 'Firearm' ? 'Fuego' : weapon.category === 'Melee' ? 'Melee' : weapon.category === 'Throwable' ? 'Bomba' : 'Esp'}
                         </span>
-                        <span className="text-[10px] font-mono-code text-neutral-400">
-                          {weapon.magSize === -1 ? 'Melee' : `${weapon.magSize}b`}
+                        <span className="text-[9px] font-mono-code text-neutral-400 shrink-0">
+                          {weapon.magSize === -1 ? '∞' : `${weapon.magSize}b`}
                         </span>
                       </div>
 
                       {/* Weapon Pixel Art Preview */}
-                      <div className="w-full h-14 sm:h-16 bg-neutral-950/80 rounded-lg border border-neutral-800/80 flex items-center justify-center p-2 mb-2 group-hover:border-neutral-700 transition overflow-hidden">
+                      <div className="w-full h-10 sm:h-11 bg-neutral-950/80 rounded border border-neutral-800/80 flex items-center justify-center p-1 mb-1.5 group-hover:border-neutral-700 transition overflow-hidden">
                         {weapon.iconUrl ? (
                           <img
                             src={weapon.iconUrl}
@@ -659,54 +659,41 @@ export const ArsenalView: React.FC<ArsenalViewProps> = ({
                             className="max-h-full max-w-full object-contain [image-rendering:pixelated] group-hover:scale-110 transition duration-150"
                           />
                         ) : (
-                          <div className="w-5 h-5 rounded-full" style={{ backgroundColor: weapon.color }} />
+                          <div className="w-4 h-4 rounded-full" style={{ backgroundColor: weapon.color }} />
                         )}
                       </div>
 
                       {/* Weapon Title */}
-                      <div className="min-w-0 mb-2">
-                        <h3
-                          className={`text-xs font-bold truncate transition ${
-                            isSelected ? 'text-amber-300' : 'text-neutral-100 group-hover:text-white'
-                          }`}
-                          title={weapon.name}
-                        >
-                          {weapon.name}
-                        </h3>
-                        <span className="text-[10px] text-neutral-400 font-mono-code block truncate">
-                          {weapon.range}
-                        </span>
-                      </div>
+                      <h3
+                        className={`text-[11px] font-bold truncate mb-1 transition ${
+                          isSelected ? 'text-amber-300' : 'text-neutral-100 group-hover:text-white'
+                        }`}
+                        title={weapon.name}
+                      >
+                        {weapon.name}
+                      </h3>
 
-                      {/* Bottom metric badges: Prominent Damage display */}
-                      <div className="flex items-center justify-between pt-1.5 border-t border-neutral-800/80">
-                        <div className={`px-1.5 py-0.5 rounded text-[10px] font-mono-code font-bold border ${damageStyle}`}>
-                          Daño: {weapon.damage}
+                      {/* Bottom metric badges */}
+                      <div className="flex items-center justify-between pt-1 border-t border-neutral-800/80">
+                        <div className={`px-1 py-0.5 rounded text-[9px] font-mono-code font-bold border ${damageStyle}`}>
+                          {weapon.damage} DMG
                         </div>
 
-                        {/* Icon indicator for special property */}
-                        <div className="flex items-center gap-1 text-[10px] text-neutral-400">
+                        <div className="flex items-center gap-1 text-[9px] text-neutral-400">
                           {weapon.explosionRadius ? (
-                            <span title="Explosión">
-                              <Bomb className="w-3.5 h-3.5 text-amber-400" />
-                            </span>
+                            <Bomb className="w-3 h-3 text-amber-400" />
                           ) : weapon.onFireDuration ? (
-                            <span title="Prende en Llamas">
-                              <Flame className="w-3.5 h-3.5 text-rose-400" />
-                            </span>
+                            <Flame className="w-3 h-3 text-rose-400" />
                           ) : weapon.hasLaserSight ? (
-                            <span title="Mira Láser">
-                              <Target className="w-3.5 h-3.5 text-purple-400" />
-                            </span>
+                            <Target className="w-3 h-3 text-purple-400" />
                           ) : weapon.pelletCount ? (
-                            <span className="text-[10px] text-rose-400 font-mono-code font-bold">x{weapon.pelletCount}</span>
+                            <span className="text-[9px] text-rose-400 font-mono-code font-bold">x{weapon.pelletCount}</span>
                           ) : null}
                         </div>
                       </div>
 
-                      {/* Active Selection Glow Dot */}
                       {isSelected && (
-                        <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-amber-400 shadow-[0_0_8px_#fbbf24]" />
+                        <span className="absolute top-1.5 right-1.5 w-1.5 h-1.5 rounded-full bg-amber-400 shadow-[0_0_6px_#fbbf24]" />
                       )}
                     </div>
                   );
@@ -715,6 +702,47 @@ export const ArsenalView: React.FC<ArsenalViewProps> = ({
             )}
           </div>
         </main>
+
+        {/* Compact Bottom Action Bar for < lg screens (never crushes the grid) */}
+        <div className="lg:hidden shrink-0 border-t border-neutral-800 bg-neutral-900/95 px-3 py-2 flex items-center justify-between gap-2.5">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-10 h-10 rounded-lg bg-neutral-950 border border-neutral-800 flex items-center justify-center p-1 shrink-0">
+              {selectedWeapon.iconUrl ? (
+                <img
+                  src={selectedWeapon.iconUrl}
+                  alt={selectedWeapon.name}
+                  className="max-h-full max-w-full object-contain [image-rendering:pixelated]"
+                />
+              ) : (
+                <div className="w-4 h-4 rounded-full" style={{ backgroundColor: selectedWeapon.color }} />
+              )}
+            </div>
+            <div className="min-w-0">
+              <div className="text-xs font-bold text-amber-300 truncate">{selectedWeapon.name}</div>
+              <div className="text-[10px] font-mono-code text-neutral-400 truncate">
+                Daño: {selectedWeapon.damage} · {selectedWeapon.range}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={handleTestSound}
+              className="p-2 rounded-lg bg-neutral-800 hover:bg-neutral-700 border border-neutral-700 text-sky-400 cursor-pointer"
+              title="Escuchar Audio"
+            >
+              <Volume2 className="w-4 h-4" />
+            </button>
+            {isPracticePicker && onEquipWeapon && (
+              <button
+                onClick={handleEquipCurrent}
+                className="px-3 py-2 rounded-lg bg-amber-400 hover:bg-amber-300 text-neutral-950 font-black text-xs uppercase tracking-wider cursor-pointer shadow"
+              >
+                Equipar
+              </button>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );

@@ -278,60 +278,9 @@ function renderAimReticle(
 }
 
 /**
- * Dibuja el arma equipada en su posición corporal (espalda para armas largas/machetes
- * o funda lateral en cintura para pistolas/cuchillos) cuando está en estado holstered.
- */
-export function renderHolsteredWeapon(
-  ctx: CanvasRenderingContext2D,
-  weaponImg: HTMLImageElement,
-  weaponType: WeaponType,
-  pose: WeaponRenderPose
-): void {
-  if (pose.isRolling) return;
-  const grip = getWeaponGripConfig(weaponType);
-  if (grip.carryPose === 'throwable') return;
-
-  const isHipSidearm =
-    grip.carryPose === 'pistol' ||
-    weaponType === WeaponType.Knife ||
-    weaponType === WeaponType.Baton ||
-    weaponType === WeaponType.ShockBaton;
-
-  const crouchOffsetY = pose.isCrouching ? 9 : 0;
-  const walkBobY = pose.isWalking || pose.isRunning ? Math.sin(pose.animFrame * 0.45) * 1.2 : 0;
-
-  ctx.save();
-  if (pose.fsm === PlayerFSMState.KnockedDown) {
-    ctx.translate(0, 14);
-    ctx.rotate(-Math.PI / 2);
-  }
-
-  if (isHipSidearm) {
-    // Funda lateral en la cintura / cadera
-    ctx.translate(-3, 5 + crouchOffsetY + walkBobY);
-    ctx.rotate(1.28);
-    ctx.scale(0.76, 0.76);
-    ctx.drawImage(weaponImg, -grip.drawW * 0.45, -grip.drawH * 0.5, grip.drawW, grip.drawH);
-    // Correa de funda en cintura
-    ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
-    ctx.fillRect(-5, -grip.drawH * 0.52, 8, grip.drawH * 1.04);
-  } else {
-    // Sujeta en diagonal sobre la espalda / mochila
-    ctx.translate(-6, -2 + crouchOffsetY + walkBobY);
-    ctx.rotate(-2.12);
-    ctx.scale(0.84, 0.84);
-    ctx.drawImage(weaponImg, -grip.drawW * 0.48, -grip.drawH * 0.5, grip.drawW, grip.drawH);
-    // Correa táctica de espalda
-    ctx.fillStyle = 'rgba(15, 23, 42, 0.8)';
-    ctx.fillRect(-4, -grip.drawH * 0.55, 6, grip.drawH * 1.1);
-  }
-
-  ctx.restore();
-}
-
-/**
- * Dibuja el arma equipada anclada por su empuñadura a la mano del protagonista,
- * o enfundada en espalda/cintura cuando está en estado holstered.
+ * Dibuja el arma equipada anclada por su empuñadura a la mano del protagonista.
+ * Si está en estado holstered/holstering, no dibuja nada sobre el cuerpo
+ * (el arma permanece equipada únicamente en el HUD de ranuras).
  */
 export function renderEquippedWeaponIdle(
   ctx: CanvasRenderingContext2D,
@@ -346,7 +295,6 @@ export function renderEquippedWeaponIdle(
     (!pose.isUsingWeapon && !pose.isAiming && (pose.weaponGuardTicks || 0) <= 0);
 
   if (isHolstered) {
-    renderHolsteredWeapon(ctx, weaponImg, weaponType, pose);
     return;
   }
 

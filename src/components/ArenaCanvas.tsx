@@ -882,7 +882,6 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
   ): void => {
     const s = stateRef.current;
     if (!s) return;
-    shooter.weaponGuardTicks = 18;
     shooter.equipState = 'firing';
     const dir: 1 | -1 = (shooter.aimFacingRight ?? shooter.facingRight) ? 1 : -1;
     const aimAngle = shooter.aimAngle || 0;
@@ -3076,7 +3075,9 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         const isNinjaComboLocked = !!p1.isSwordAttacking || !!p1.isMeleeComboAttacking || !!p1.isOneHandAttacking || !!p1.isTwoHandAttacking || !!p1.isThrowing;
         const isShootingPistol = !!p1.isPistolShooting;
 
-        // Postura de apuntado direccional: mantener M/G desenfunda y ajusta mira con flechas
+        // Postura de apunte vs disparo por pulsación con M / G:
+        // - Pulsación rápida (< 8 ticks) y soltar: dispara de inmediato en la dirección actual.
+        // - Mantener M / G (>= 8 ticks): desenfunda y entra en apunte con flechas; al soltar dispara en el ángulo graduado.
         const p1FireHeld = p1Combat.fire;
         const p1CanAim =
           p1.isAlive &&
@@ -3091,38 +3092,46 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           p1.equippedWeapon !== WeaponType.Fists &&
           getWeapon(p1.equippedWeapon).category === 'Firearm';
 
+        let p1ReleaseFire = false;
         if (p1CanAim && p1FireHeld) {
-          if (!p1.isAiming) {
-            p1.isAiming = true;
-            p1.equipState = 'aiming';
-            p1.aimFacingRight = p1.facingRight;
-            p1.aimAngle = 0;
-          } else if (!p1.isPistolShooting && !p1.isRifleShooting) {
-            p1.equipState = 'aiming';
-          }
+          p1.fireHoldTicks = (p1.fireHoldTicks || 0) + 1;
+          if (p1.fireHoldTicks >= 8) {
+            if (!p1.isAiming) {
+              p1.isAiming = true;
+              p1.equipState = 'aiming';
+              p1.aimFacingRight = p1.facingRight;
+              p1.aimAngle = 0;
+            } else if (!p1.isPistolShooting && !p1.isRifleShooting) {
+              p1.equipState = 'aiming';
+            }
 
-          // Las flechas ajustan la mira de forma independiente al movimiento (WASD)
-          if (keys['ArrowLeft'] || keys['arrowleft']) {
-            p1.aimFacingRight = false;
-          } else if (keys['ArrowRight'] || keys['arrowright']) {
-            p1.aimFacingRight = true;
-          }
+            // Las flechas gradúan la mira de forma independiente al movimiento (WASD)
+            if (keys['ArrowLeft'] || keys['arrowleft']) {
+              p1.aimFacingRight = false;
+            } else if (keys['ArrowRight'] || keys['arrowright']) {
+              p1.aimFacingRight = true;
+            }
 
-          const curAngle = p1.aimAngle || 0;
-          if (keys['ArrowUp'] || keys['arrowup']) {
-            p1.aimAngle = Math.max(-1.48, curAngle - 0.065);
-          } else if (keys['ArrowDown'] || keys['arrowdown']) {
-            p1.aimAngle = Math.min(1.48, curAngle + 0.065);
+            const curAngle = p1.aimAngle || 0;
+            if (keys['ArrowUp'] || keys['arrowup']) {
+              p1.aimAngle = Math.max(-1.48, curAngle - 0.065);
+            } else if (keys['ArrowDown'] || keys['arrowdown']) {
+              p1.aimAngle = Math.min(1.48, curAngle + 0.065);
+            }
           }
         } else {
+          if (p1CanAim && !p1FireHeld && (p1.fireHoldTicks || 0) > 0) {
+            p1ReleaseFire = true;
+          }
           p1.fireHoldTicks = 0;
           p1.isAiming = false;
-          p1.aimAngle = 0;
-          p1.burstRemaining = 0;
-          p1.weaponGuardTicks = 0;
-          if (!p1.isPistolShooting && !p1.isRifleShooting && !isNinjaComboLocked) {
-            p1.equipState = 'holstered';
+          if (!p1ReleaseFire && !p1.isPistolShooting && !p1.isRifleShooting && (p1.burstRemaining || 0) <= 0) {
+            p1.aimAngle = 0;
+            if (!isNinjaComboLocked) {
+              p1.equipState = 'holstered';
+            }
           }
+          p1.weaponGuardTicks = 0;
         }
 
         // Al apuntar con M, WASD sigue permitiendo caminar mientras las flechas controlan la mira
@@ -3659,17 +3668,16 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         }
 
         // ═════════════════════════════════════════════════════════
-        // 2. DISPARO POR CLIC IZQUIERDO (Requiere mantener M para apuntar)
-        // Semiautomáticas y escopetas: 1 disparo por clic.
-        // Automáticas: ráfaga acotada de 3–4 balas por clic + breve espera.
+        // 2. DISPARO CON M / G (Pulsación rápida o al soltar tras apuntar) + CLIC EN APUNTE
+        // Semiautomáticas y escopetas: 1 disparo por pulsación.
+        // Automáticas: ráfaga acotada de 3–4 balas por pulsación + breve espera.
         // ═════════════════════════════════════════════════════════
         if ((p1.burstCooldownTicks || 0) > 0) {
           p1.burstCooldownTicks = (p1.burstCooldownTicks || 0) - 1;
         }
 
-        // Procesamiento de ráfaga activa (solo para armas automáticas tras un clic)
+        // Procesamiento de ráfaga activa (solo para armas automáticas tras una pulsación)
         if (
-          p1.isAiming &&
           (p1.burstRemaining || 0) > 0 &&
           p1.isAlive &&
           s.roundActive &&
@@ -3692,11 +3700,13 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
               } else {
                 p1.burstCooldownTicks = 12;
                 p1.equipState = p1.isAiming ? 'aiming' : 'holstered';
+                if (!p1.isAiming) p1.aimAngle = 0;
               }
             }
           } else {
             p1.burstRemaining = 0;
             p1.burstCooldownTicks = 12;
+            p1.equipState = p1.isAiming ? 'aiming' : 'holstered';
           }
         }
 
@@ -3704,7 +3714,10 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         const isAutoFirearmP1 = isFirearm && isAutomaticFirearm(p1.equippedWeapon);
         const canStartAutoBurst =
           !isAutoFirearmP1 || ((p1.burstCooldownTicks || 0) <= 0 && (p1.burstRemaining || 0) <= 0);
-        const shouldTriggerFireP1 = clickFireJust && Boolean(p1.isAiming) && canStartAutoBurst;
+        const shouldTriggerFireP1 =
+          (p1ReleaseFire && canStartAutoBurst) ||
+          (clickFireJust && Boolean(p1.isAiming) && canStartAutoBurst) ||
+          (fireJustPressed && (!isFirearm || p1.ammo <= 0));
 
         if (
           shouldTriggerFireP1 &&
@@ -3813,7 +3826,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           }
         }
 
-        if (!p1.isAiming && !p1.isPistolShooting && !p1.isRifleShooting) {
+        if (!p1.isAiming && !p1.isPistolShooting && !p1.isRifleShooting && (p1.burstRemaining || 0) <= 0) {
           p1.aimAngle = 0;
         }
 

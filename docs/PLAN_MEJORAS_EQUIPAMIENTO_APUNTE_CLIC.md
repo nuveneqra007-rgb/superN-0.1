@@ -21,28 +21,24 @@ Añadir en `PlayerState.ts` una máquina de estados explícita para el porte del
 
 ---
 
-## 3. Equipamiento Visible en Cuerpo (Espalda / Cintura / Cinturón)
+## 3. Equipamiento Invisible en Reposo (Solo HUD de Ranuras)
 
-En `WeaponRenderer.ts`, cuando el arma esté en `holstered` (o durante `Walk`, `Run`, `Jump`, `Crouch`, `Idle` sin usar):
-- **Armas largas y de filo medio/grande** (`Rifle`, `Assault`, `Carbine`, `M60`, `Shotgun`, `SawedOff`, `DarkShotgun`, `Sniper`, `Bazooka`, `GLauncher`, `Flamethrower`, `Katana`, `Sword`, `Machete`, `Axe`, `Bat`, `Chainsaw`, `Hammer`):
-  - Se dibujan **enfundadas en diagonal sobre la espalda/mochila** (detrás del torso del personaje, acompañando la inclinación del cuerpo al caminar, correr o agacharse).
-- **Armas cortas de una mano** (`Pistol`, `Pistol45`, `SilencedPistol`, `Magnum`, `Revolver`, `Uzi`, `SilencedUzi`, `MachinePistol`, `Knife`, `Baton`, `ShockBaton`):
-  - Se dibujan **pegadas en funda lateral en la cintura/cadera**.
-- **Granadas:**
-  - Compactas y pegadas al cinturón/bolsillo táctico del torso (nunca flotando separadas), saliendo a la mano solo en `throw_up`.
-- **Al entrar en `drawing` / `aiming` / `using`:** el arma desaparece de la espalda/cintura y aparece en la mano con el puño envolvente (`drawGripHand`).
+En `WeaponRenderer.ts`, cuando el arma esté en `holstered` o `holstering` (durante `Idle`, `Walk`, `Run`, `Jump`, `Crouch`, `Roll` sin usar):
+- **No se dibuja ningún arma sobre el cuerpo** (ni en la mano, ni en la espalda, ni en la cintura). El personaje mantiene su silueta 100% limpia y el equipamiento activo se muestra exclusivamente en el HUD de ranuras (`1–4`).
+- **Al atacar (`N`/`F`), apuntar (`M`/`G` mantenida) o disparar (`M`/`G` pulsada):** el arma aparece inmediatamente en la mano con su puño envolvente (`drawGripHand`).
+- **Al soltar o terminar de disparar/golpear:** el arma desaparece automáticamente de la vista y regresa a estado equipado en el HUD.
 
 ---
 
-## 4. Separación Estricta de Controles
+## 4. Controles Exactos (`M` / `G` Dual: Pulsar = Disparar · Mantener = Apuntar)
 
 | Acción | Control | Comportamiento Exacto |
 |---|---|---|
-| **Desenfundar y Apuntar** | **`M` mantenida** | Saca el arma de fuego y mantiene `aiming`. Al soltar `M`, pasa a `holstering` → `holstered`. |
-| **Ajustar Mira** | **Flechas (`↑`, `↓`, `←`, `→`)** mientras mantiene `M` | Ajusta `aimAngle` (arriba/abajo/diagonal) y `aimFacingRight` (izquierda/derecha) de forma **independiente de la dirección de movimiento**. |
-| **Disparar** | **Clic izquierdo** (en el canvas) | Dispara el arma desenfundada en la dirección actual de la mira (`aimAngle` + `aimFacingRight`). |
-| **Combate Melee** | **Tecla de combate (`N` / `F`)** | Saca el machete/arma blanca, golpea y al terminar vuelve a guardarlo. |
-| **Granadas** | **Tecla de granada (`,` / `H` / `L`)** | Acción especial de lanzamiento parabólico independiente del apunte recto. |
+| **Disparar (toque rápido)** | **Pulsar `M` o `G`** (`< 8 ticks`) | Saca el arma y **dispara inmediatamente** según el tipo de arma (1 tiro en semi/escopeta/revólver; ráfaga de 3–4 balas en automáticas). Al terminar, el arma desaparece de la vista. |
+| **Apuntar y Graduar Mira** | **Mantener `M` o `G`** (`≥ 8 ticks`) | Desenfunda el arma y entra en `aiming` con retícula/arco visible. Las flechas (`↑`, `↓`, `←`, `→`) gradúan `aimAngle` y `aimFacingRight` de forma independiente al movimiento (`WASD`). |
+| **Disparar tras Apuntar** | **Soltar `M` o `G`** (o clic mientras apunta) | Dispara exactamente en el ángulo y dirección graduados y, al terminar la animación de disparo, el arma desaparece de la vista. |
+| **Combate Melee** | **Tecla de combate (`N` / `F`)** | Saca el machete/arma blanca, golpea y al terminar desaparece de la vista. |
+| **Granadas** | **Tecla de granada (`,` / `H` / `L`)** | Acción especial de lanzamiento parabólico; desaparece tras lanzar. |
 
 ---
 

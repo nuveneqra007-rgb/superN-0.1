@@ -880,6 +880,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
   ): void => {
     const s = stateRef.current;
     if (!s) return;
+    shooter.weaponGuardTicks = 18;
     const dir: 1 | -1 = shooter.facingRight ? 1 : -1;
     const res = fireWeaponProjectiles({
       weaponType: shooter.equippedWeapon,
@@ -7115,6 +7116,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       // Decrementar cooldown de cambio de ranura y mantener munición activa en sincronía
       if (p1.slotCooldownTicks && p1.slotCooldownTicks > 0) p1.slotCooldownTicks--;
       if (p1.weaponPickupAnimTicks && p1.weaponPickupAnimTicks > 0) p1.weaponPickupAnimTicks--;
+      if (p1.weaponGuardTicks && p1.weaponGuardTicks > 0) p1.weaponGuardTicks--;
       if (p1.inventory) {
         if (p1.inventory.activeSlot === 'handgun' && p1.inventory.handgun) {
           p1.inventory.handgun.ammo = p1.ammo;
@@ -7166,6 +7168,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
         if (b.slotCooldownTicks && b.slotCooldownTicks > 0) b.slotCooldownTicks--;
         if (b.weaponPickupAnimTicks && b.weaponPickupAnimTicks > 0) b.weaponPickupAnimTicks--;
+        if (b.weaponGuardTicks && b.weaponGuardTicks > 0) b.weaponGuardTicks--;
         if (b.inventory) {
           if (b.inventory.activeSlot === 'handgun' && b.inventory.handgun) {
             b.inventory.handgun.ammo = b.ammo;
@@ -10591,32 +10594,11 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
               isCrouching,
               getUpTicks: p.getUpTicks,
               pickupAnimTicks: p.weaponPickupAnimTicks,
+              isUsingWeapon: Boolean(p.isThrowing),
+              isAiming: Boolean(p.isAiming),
+              weaponGuardTicks: p.weaponGuardTicks,
             });
           }
-        }
-
-        // Granada táctica activa visible en el cinturón / funda del combatiente
-        const fighterGrenades = isP1 ? s.p1Grenades : (s.bots.find((b) => b.id === p.id)?.grenades || s.bots[0]?.grenades || s.p1Grenades);
-        const activeGType = fighterGrenades.activeType;
-        const activeCount = fighterGrenades.ammo[activeGType] || 0;
-        if (activeCount > 0) {
-          const gImg = s.grenadeImages[activeGType];
-          ctx.save();
-          // Portada en el cinturón / funda táctica de la cadera
-          ctx.translate(-8, 6);
-          ctx.rotate(-0.15);
-          if (gImg && gImg.complete && gImg.naturalWidth > 0) {
-            ctx.drawImage(gImg, -8, -8, 16, 16);
-          } else {
-            ctx.fillStyle = GRENADE_DATABASE[activeGType].color;
-            ctx.beginPath();
-            ctx.arc(0, 0, 5, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.strokeStyle = '#0f172a';
-            ctx.lineWidth = 1;
-            ctx.stroke();
-          }
-          ctx.restore();
         }
 
         // Destello blanco rápido en impacto (Hit Flash Feedback retro)

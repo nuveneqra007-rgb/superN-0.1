@@ -20,6 +20,9 @@ export interface WeaponRenderPose {
   isCrouching: boolean;
   getUpTicks?: number;
   pickupAnimTicks?: number;
+  isUsingWeapon?: boolean;
+  isAiming?: boolean;
+  weaponGuardTicks?: number;
   debugGrip?: boolean;
 }
 
@@ -43,8 +46,14 @@ export function resolveHandAnchor(
     return null;
   }
 
+  // Enfunde táctico: si no está usando, apuntando ni en guardia post-ataque,
+  // el arma permanece guardada en el inventario (HUD) sin flotar en la mano.
+  if (!pose.isUsingWeapon && !pose.isAiming && (pose.weaponGuardTicks || 0) <= 0) {
+    return null;
+  }
+
   // Al correr (sprint), el arma se enfunda/oculta; reaparece al detenerse, caminar lento o disparar
-  if (pose.isRunning) {
+  if (pose.isRunning && !pose.isUsingWeapon && !pose.isAiming) {
     return null;
   }
 

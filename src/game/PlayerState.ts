@@ -80,6 +80,9 @@ export interface PlayerState {
   comboStep: number;
   comboWindowTicks: number;
   weaponPickupAnimTicks?: number;
+  weaponGuardTicks?: number;
+  isAiming?: boolean;
+  aimAngle?: number;
 
   // Contadores de estado
   rollTicks: number;

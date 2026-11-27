@@ -3748,24 +3748,16 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                   tutorialInputProgressRef.current.hasShot = true;
                 }
 
-                if (s.p1Faction === BotFaction.Gymrat || s.p1Faction === BotFaction.Santa) {
-                  // Para Gymrat y Santa: la bala se instancia en el Frame 2 (fogonazo) y el retroceso en Frame 3
-                  p1.rifleHasFired = false;
-                  p1.attackCooldown = isAutoFirearmP1 ? 10 : Math.max(wpn.cooldownTicks, 12);
-                  p1.ammo--;
-                  PlayerFSM.tryTransition(p1, PlayerFSMState.RangedFire);
-                } else {
-                  // Ninja y otros: instanciación inmediata
-                  p1.rifleHasFired = true;
-                  p1.attackCooldown = isAutoFirearmP1 ? 10 : Math.max(wpn.cooldownTicks, 10);
-                  p1.ammo--;
-                  PlayerFSM.tryTransition(p1, PlayerFSMState.RangedFire);
+                // Paridad unificada: Ninja, Gymrat y Santa disparan al instante respetando aimAngle y aimFacingRight
+                p1.rifleHasFired = true;
+                p1.attackCooldown = isAutoFirearmP1 ? 10 : Math.max(wpn.cooldownTicks, 10);
+                p1.ammo--;
+                PlayerFSM.tryTransition(p1, PlayerFSMState.RangedFire);
 
-                  const dir = (p1.aimFacingRight ?? p1.facingRight) ? 1 : -1;
-                  const muzzleX = p1.x + dir * 32;
-                  const muzzleY = p1.y - 7;
-                  emitWeaponFire(p1, muzzleX, muzzleY, s.p1Controller, wpn.color);
-                }
+                const dir = (p1.aimFacingRight ?? p1.facingRight) ? 1 : -1;
+                const muzzleX = p1.x + dir * 32;
+                const muzzleY = p1.y - 7;
+                emitWeaponFire(p1, muzzleX, muzzleY, s.p1Controller, wpn.color);
               } else {
                 p1.attackCooldown = 15;
                 sounds.playDryFire();
@@ -3796,18 +3788,12 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                 p1.ammo--;
                 PlayerFSM.tryTransition(p1, PlayerFSMState.RangedFire);
 
-                const isDelayedFirePistol = s.p1Faction === BotFaction.Gymrat || s.p1Faction === BotFaction.Santa || p1.faction === BotFaction.Santa || p1.name.toUpperCase().includes('SANTA');
-                if (!isDelayedFirePistol) {
-                  // Para Ninja: disparo inmediato con destello
-                  p1.pistolHasFired = true;
-                  const dir = (p1.aimFacingRight ?? p1.facingRight) ? 1 : -1;
-                  const muzzleX = p1.x + dir * 28;
-                  const muzzleY = p1.y - 6;
-                  emitWeaponFire(p1, muzzleX, muzzleY, s.p1Controller);
-                } else {
-                  // Para Gymrat y Santa: la bala se crea exactamente en el Frame 2 (fogonazo)
-                  p1.pistolHasFired = false;
-                }
+                // Paridad unificada: Ninja, Gymrat y Santa disparan al instante respetando aimAngle y aimFacingRight
+                p1.pistolHasFired = true;
+                const dir = (p1.aimFacingRight ?? p1.facingRight) ? 1 : -1;
+                const muzzleX = p1.x + dir * 28;
+                const muzzleY = p1.y - 6;
+                emitWeaponFire(p1, muzzleX, muzzleY, s.p1Controller);
               } else {
                 p1.attackCooldown = 15;
                 sounds.playDryFire();
@@ -4233,70 +4219,17 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           } else {
             s.p1Controller.isShootingPistol = true;
 
-            // Solo orienta por movimiento si NO está en postura de apunte (donde las flechas mandan la mira)
-            if (!p1.isAiming) {
-              const p1Controls = gameMode === 'local1v1' ? CONTROLS.LOCAL_1V1_P1 : CONTROLS.SOLO;
-              const moveDir = isAnyPressed(keys, p1Controls.left)
-                ? -1
-                : isAnyPressed(keys, p1Controls.right)
-                ? 1
-                : 0;
-
-              if (moveDir !== 0) {
-                p1.facingRight = moveDir > 0;
-                s.p1Controller.facingRight = p1.facingRight;
-              }
-            }
-
             const isDelayedPistolP1 = s.p1Faction === BotFaction.Gymrat || s.p1Faction === BotFaction.Santa || p1.faction === BotFaction.Santa || p1.name.toUpperCase().includes('SANTA');
             const isSantaP1 = s.p1Faction === BotFaction.Santa || p1.faction === BotFaction.Santa || p1.name.toUpperCase().includes('SANTA');
             const p1CharPrefix = isSantaP1 ? 'santaclo_' : (s.p1Faction === BotFaction.Gymrat ? 'gymrat_' : 'ninja_');
 
-            // CREACIÓN DE BALA EN FRAME 2 (index 1) para Gymrat y Santa (donde está el fogonazo / muzzle flash)
-            if (isDelayedPistolP1 && p1.pistolAnimFrame === 1 && !p1.pistolHasFired) {
-              p1.pistolHasFired = true;
-              const wpn = getWeapon(p1.equippedWeapon);
-              sounds.playGunshot(wpn.type.toLowerCase());
-
-              const dir = p1.facingRight ? 1 : -1;
-              const muzzleX = p1.x + dir * (isSantaP1 ? 36 : 32);
-              const muzzleY = p1.y - (isSantaP1 ? 8 : 6);
-
-              addSparks(muzzleX, muzzleY, '#fde047', 10);
-              s.screenShake = Math.min(10, Math.max(3, (wpn.damage || 20) / 4));
-
-              const count = wpn.pelletCount || 1;
-              for (let i = 0; i < count; i++) {
-                const spreadAngle = ((Math.random() - 0.5) * ((wpn.accuracyDeg || 3) * Math.PI / 180)) / 2;
-                const speed = wpn.projectileSpeed || 900;
-                s.projectiles.push({
-                  id: s.nextEntityId++,
-                  x: muzzleX,
-                  y: muzzleY,
-                  vx: dir * speed * Math.cos(spreadAngle),
-                  vy: speed * Math.sin(spreadAngle),
-                  damage: (wpn.damage / count) * p1.damageDealtModifier,
-                  onFireDuration: wpn.onFireDuration || 0,
-                  explosionRadius: wpn.explosionRadius || 0,
-                  shooterId: p1.id,
-                  weaponType: p1.equippedWeapon,
-                  pelletCount: count,
-                  lifeTicks: 0,
-                  maxLifeTicks: 60,
-                  color: '#facc15',
-                });
-              }
-            }
-
-            // RETROCESO (KICK) EN FRAME 3 (index 2) para Gymrat y Santa (sacudida del cuerpo hacia atrás)
+            // RETROCESO (KICK) EN FRAME 3 (index 2) para Gymrat y Santa (sin girar orientación)
             if (isDelayedPistolP1 && p1.pistolAnimFrame === 2 && !p1.pistolHasRecoilApplied) {
               p1.pistolHasRecoilApplied = true;
-              const kickDir = p1.facingRight ? -1 : 1;
-              const kickForce = isSantaP1 ? 85 : 65;
-              p1.x += kickDir * (isSantaP1 ? 3 : 2);
+              const kickDir = (p1.aimFacingRight ?? p1.facingRight) ? -1 : 1;
+              const kickForce = isSantaP1 ? 45 : 35;
               p1.velocityX += kickDir * kickForce;
               s.p1Controller.vx += kickDir * kickForce;
-              s.p1Controller.setPosition(p1.x, p1.y);
             }
 
             p1.pistolAnimTimer = (p1.pistolAnimTimer || 0) + 1;
@@ -4305,82 +4238,16 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
               p1.pistolAnimTimer = 0;
               p1.pistolAnimFrame = (p1.pistolAnimFrame || 0) + 1;
 
-              // Comprobar creación de bala al avanzar al Frame 2 (index 1)
-              if (isDelayedPistolP1 && p1.pistolAnimFrame === 1 && !p1.pistolHasFired) {
-                p1.pistolHasFired = true;
-                const dir = p1.facingRight ? 1 : -1;
-                const muzzleX = p1.x + dir * (isSantaP1 ? 36 : 32);
-                const muzzleY = p1.y - (isSantaP1 ? 8 : 6);
-                emitWeaponFire(p1, muzzleX, muzzleY, s.p1Controller);
-              }
-
-              // Comprobar retroceso al avanzar al Frame 3 (index 2)
-              if (isDelayedPistolP1 && p1.pistolAnimFrame === 2 && !p1.pistolHasRecoilApplied) {
-                p1.pistolHasRecoilApplied = true;
-                const kickDir = p1.facingRight ? -1 : 1;
-                const kickForce = isSantaP1 ? 85 : 65;
-                p1.x += kickDir * (isSantaP1 ? 3 : 2);
-                p1.velocityX += kickDir * kickForce;
-                s.p1Controller.vx += kickDir * kickForce;
-                s.p1Controller.setPosition(p1.x, p1.y);
-              }
-
               if (p1.pistolAnimFrame >= 4) {
-                // Ciclo continuo si mantiene disparo con arma automática (Uzi, SilencedUzi, MachinePistol)
-                const isAuto =
-                  p1.equippedWeapon === WeaponType.Uzi ||
-                  p1.equippedWeapon === WeaponType.SilencedUzi ||
-                  p1.equippedWeapon === WeaponType.MachinePistol;
-                const nHeld = isAnyPressed(keys, p1Controls.fire);
-
-                if (isAuto && nHeld && p1.ammo > 0 && p1.attackCooldown <= 0) {
-                  p1.pistolAnimFrame = 0;
-                  p1.pistolHasFired = false;
-                  p1.pistolHasRecoilApplied = false;
-                  p1.ammo--;
-                  const wpn = getWeapon(p1.equippedWeapon);
-                  p1.attackCooldown = Math.max(wpn.cooldownTicks, 10);
-                  if (!isDelayedPistolP1) {
-                    p1.pistolHasFired = true;
-                    sounds.playGunshot(wpn.type.toLowerCase());
-
-                    const dir = p1.facingRight ? 1 : -1;
-                    const muzzleX = p1.x + dir * 28;
-                    const muzzleY = p1.y - 6;
-
-                    addSparks(muzzleX, muzzleY, '#fde047', 8);
-                    s.screenShake = 3;
-
-                    const speed = wpn.projectileSpeed || 900;
-                    const spreadAngle = ((Math.random() - 0.5) * ((wpn.accuracyDeg || 4) * Math.PI / 180)) / 2;
-                    s.projectiles.push({
-                      id: s.nextEntityId++,
-                      x: muzzleX,
-                      y: muzzleY,
-                      vx: dir * speed * Math.cos(spreadAngle),
-                      vy: speed * Math.sin(spreadAngle),
-                      damage: wpn.damage * p1.damageDealtModifier,
-                      onFireDuration: 0,
-                      explosionRadius: 0,
-                      shooterId: p1.id,
-                      weaponType: p1.equippedWeapon,
-                      pelletCount: 1,
-                      lifeTicks: 0,
-                      maxLifeTicks: 60,
-                      color: '#facc15',
-                    });
-                  }
-                } else {
-                  p1.isPistolShooting = false;
-                  p1.pistolAnimFrame = 0;
-                  p1.pistolAnimTimer = 0;
-                  p1.pistolHasFired = false;
-                  p1.pistolHasRecoilApplied = false;
-                  s.p1Controller.isShootingPistol = false;
-                  p1.equipState = p1.isAiming ? 'aiming' : 'holstered';
-                  if (p1.fsm === PlayerFSMState.RangedFire) {
-                    p1.fsm = PlayerFSMState.Idle;
-                  }
+                p1.isPistolShooting = false;
+                p1.pistolAnimFrame = 0;
+                p1.pistolAnimTimer = 0;
+                p1.pistolHasFired = false;
+                p1.pistolHasRecoilApplied = false;
+                s.p1Controller.isShootingPistol = false;
+                p1.equipState = p1.isAiming ? 'aiming' : 'holstered';
+                if (p1.fsm === PlayerFSMState.RangedFire) {
+                  p1.fsm = PlayerFSMState.Idle;
                 }
               }
             }
@@ -5760,22 +5627,15 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                     bot.burstTickTimer = 4;
                   }
 
-                  if (s.botFaction === BotFaction.Gymrat || s.botFaction === BotFaction.Santa) {
-                    bot.rifleHasFired = false;
-                    bot.attackCooldown = Math.max(wpn.cooldownTicks, 12);
-                    bot.ammo--;
-                    PlayerFSM.tryTransition(bot, PlayerFSMState.RangedFire);
-                  } else {
-                    bot.rifleHasFired = true;
-                    bot.attackCooldown = Math.max(wpn.cooldownTicks, 10);
-                    bot.ammo--;
-                    PlayerFSM.tryTransition(bot, PlayerFSMState.RangedFire);
+                  bot.rifleHasFired = true;
+                  bot.attackCooldown = isAutoFirearmP2 ? 10 : Math.max(wpn.cooldownTicks, 10);
+                  bot.ammo--;
+                  PlayerFSM.tryTransition(bot, PlayerFSMState.RangedFire);
 
-                    const dir = (bot.aimFacingRight ?? bot.facingRight) ? 1 : -1;
-                    const muzzleX = bot.x + dir * 32;
-                    const muzzleY = bot.y - 7;
-                    emitWeaponFire(bot, muzzleX, muzzleY, s.p2Controller, wpn.color);
-                  }
+                  const dir = (bot.aimFacingRight ?? bot.facingRight) ? 1 : -1;
+                  const muzzleX = bot.x + dir * 32;
+                  const muzzleY = bot.y - 7;
+                  emitWeaponFire(bot, muzzleX, muzzleY, s.p2Controller, wpn.color);
                 } else {
                   bot.attackCooldown = 15;
                   sounds.playDryFire();
@@ -5795,16 +5655,11 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                   bot.ammo--;
                   PlayerFSM.tryTransition(bot, PlayerFSMState.RangedFire);
 
-                  const isDelayedFirePistolBot = bot.faction === BotFaction.Gymrat || bot.faction === BotFaction.Santa || bot.name.toUpperCase().includes('SANTA');
-                  if (!isDelayedFirePistolBot) {
-                    bot.pistolHasFired = true;
-                    const dir = bot.facingRight ? 1 : -1;
-                    const muzzleX = bot.x + dir * 28;
-                    const muzzleY = bot.y - 6;
-                    emitWeaponFire(bot, muzzleX, muzzleY, s.p2Controller);
-                  } else {
-                    bot.pistolHasFired = false;
-                  }
+                  bot.pistolHasFired = true;
+                  const dir = (bot.aimFacingRight ?? bot.facingRight) ? 1 : -1;
+                  const muzzleX = bot.x + dir * 28;
+                  const muzzleY = bot.y - 6;
+                  emitWeaponFire(bot, muzzleX, muzzleY, s.p2Controller);
                 } else {
                   bot.attackCooldown = 15;
                   sounds.playDryFire();
@@ -6128,60 +5983,17 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
               s.p2Controller.isShootingPistol = false;
             } else {
               s.p2Controller.isShootingPistol = true;
-              if (moveDir !== 0) {
-                bot.facingRight = moveDir > 0;
-                s.p2Controller.facingRight = bot.facingRight;
-              }
 
               const isDelayedFirePistolBot = bot.faction === BotFaction.Gymrat || bot.faction === BotFaction.Santa || bot.name.toUpperCase().includes('SANTA');
               const isSantaBot = bot.faction === BotFaction.Santa || bot.name.toUpperCase().includes('SANTA');
               const botCharPrefix = isSantaBot ? 'santaclo_' : (bot.faction === BotFaction.Gymrat ? 'gymrat_' : 'ninja_');
 
-              // CREACIÓN DE BALA EN FRAME 2 (index 1) para Gymrat y Santa
-              if (isDelayedFirePistolBot && bot.pistolAnimFrame === 1 && !bot.pistolHasFired) {
-                bot.pistolHasFired = true;
-                const wpn = getWeapon(bot.equippedWeapon);
-                sounds.playGunshot(wpn.type.toLowerCase());
-
-                const dir = bot.facingRight ? 1 : -1;
-                const muzzleX = bot.x + dir * (isSantaBot ? 36 : 32);
-                const muzzleY = bot.y - (isSantaBot ? 8 : 6);
-
-                addSparks(muzzleX, muzzleY, '#fde047', 10);
-                s.screenShake = Math.min(10, Math.max(3, (wpn.damage || 20) / 4));
-
-                const count = wpn.pelletCount || 1;
-                for (let i = 0; i < count; i++) {
-                  const spreadAngle = ((Math.random() - 0.5) * ((wpn.accuracyDeg || 3) * Math.PI / 180)) / 2;
-                  const speed = wpn.projectileSpeed || 900;
-                  s.projectiles.push({
-                    id: s.nextEntityId++,
-                    x: muzzleX,
-                    y: muzzleY,
-                    vx: dir * speed * Math.cos(spreadAngle),
-                    vy: speed * Math.sin(spreadAngle),
-                    damage: (wpn.damage / count) * bot.damageDealtModifier,
-                    onFireDuration: wpn.onFireDuration || 0,
-                    explosionRadius: wpn.explosionRadius || 0,
-                    shooterId: bot.id,
-                    weaponType: bot.equippedWeapon,
-                    pelletCount: count,
-                    lifeTicks: 0,
-                    maxLifeTicks: 60,
-                    color: '#facc15',
-                  });
-                }
-              }
-
-              // RETROCESO (KICK) EN FRAME 3 (index 2) para Gymrat y Santa
               if (isDelayedFirePistolBot && bot.pistolAnimFrame === 2 && !bot.pistolHasRecoilApplied) {
                 bot.pistolHasRecoilApplied = true;
-                const kickDir = bot.facingRight ? -1 : 1;
-                const kickForce = isSantaBot ? 85 : 65;
-                bot.x += kickDir * (isSantaBot ? 3 : 2);
+                const kickDir = (bot.aimFacingRight ?? bot.facingRight) ? -1 : 1;
+                const kickForce = isSantaBot ? 45 : 35;
                 bot.velocityX += kickDir * kickForce;
                 s.p2Controller.vx += kickDir * kickForce;
-                s.p2Controller.setPosition(bot.x, bot.y);
               }
 
               bot.pistolAnimTimer = (bot.pistolAnimTimer || 0) + 1;
@@ -6190,107 +6002,16 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                 bot.pistolAnimTimer = 0;
                 bot.pistolAnimFrame = (bot.pistolAnimFrame || 0) + 1;
 
-                // Comprobar creación de bala al avanzar al Frame 2
-                if (isDelayedFirePistolBot && bot.pistolAnimFrame === 1 && !bot.pistolHasFired) {
-                  bot.pistolHasFired = true;
-                  const wpn = getWeapon(bot.equippedWeapon);
-                  sounds.playGunshot(wpn.type.toLowerCase());
-
-                  const dir = bot.facingRight ? 1 : -1;
-                  const muzzleX = bot.x + dir * (isSantaBot ? 36 : 32);
-                  const muzzleY = bot.y - (isSantaBot ? 8 : 6);
-
-                  addSparks(muzzleX, muzzleY, '#fde047', 10);
-                  s.screenShake = Math.min(10, Math.max(3, (wpn.damage || 20) / 4));
-
-                  const count = wpn.pelletCount || 1;
-                  for (let i = 0; i < count; i++) {
-                    const spreadAngle = ((Math.random() - 0.5) * ((wpn.accuracyDeg || 3) * Math.PI / 180)) / 2;
-                    const speed = wpn.projectileSpeed || 900;
-                    s.projectiles.push({
-                      id: s.nextEntityId++,
-                      x: muzzleX,
-                      y: muzzleY,
-                      vx: dir * speed * Math.cos(spreadAngle),
-                      vy: speed * Math.sin(spreadAngle),
-                      damage: (wpn.damage / count) * bot.damageDealtModifier,
-                      onFireDuration: wpn.onFireDuration || 0,
-                      explosionRadius: wpn.explosionRadius || 0,
-                      shooterId: bot.id,
-                      weaponType: bot.equippedWeapon,
-                      pelletCount: count,
-                      lifeTicks: 0,
-                      maxLifeTicks: 60,
-                      color: '#facc15',
-                    });
-                  }
-                }
-
-                // Comprobar retroceso al avanzar al Frame 3
-                if (isDelayedFirePistolBot && bot.pistolAnimFrame === 2 && !bot.pistolHasRecoilApplied) {
-                  bot.pistolHasRecoilApplied = true;
-                  const kickDir = bot.facingRight ? -1 : 1;
-                  const kickForce = isSantaBot ? 85 : 65;
-                  bot.x += kickDir * (isSantaBot ? 3 : 2);
-                  bot.velocityX += kickDir * kickForce;
-                  s.p2Controller.vx += kickDir * kickForce;
-                  s.p2Controller.setPosition(bot.x, bot.y);
-                }
-
                 if (bot.pistolAnimFrame >= 4) {
-                  const isAuto =
-                    bot.equippedWeapon === WeaponType.Uzi ||
-                    bot.equippedWeapon === WeaponType.SilencedUzi ||
-                    bot.equippedWeapon === WeaponType.MachinePistol;
-                  const kHeld = isAnyPressed(keys, CONTROLS.LOCAL_1V1_P2.fire);
-
-                  if (isAuto && kHeld && bot.ammo > 0 && bot.attackCooldown <= 0) {
-                    bot.pistolAnimFrame = 0;
-                    bot.pistolHasFired = false;
-                    bot.pistolHasRecoilApplied = false;
-                    bot.ammo--;
-                    const wpn = getWeapon(bot.equippedWeapon);
-                    bot.attackCooldown = Math.max(wpn.cooldownTicks, 10);
-                    if (!isDelayedFirePistolBot) {
-                      bot.pistolHasFired = true;
-                      sounds.playGunshot(wpn.type.toLowerCase());
-
-                      const dir = bot.facingRight ? 1 : -1;
-                      const muzzleX = bot.x + dir * 28;
-                      const muzzleY = bot.y - 6;
-
-                      addSparks(muzzleX, muzzleY, '#fde047', 8);
-                      s.screenShake = 3;
-
-                      const speed = wpn.projectileSpeed || 900;
-                      const spreadAngle = ((Math.random() - 0.5) * ((wpn.accuracyDeg || 4) * Math.PI / 180)) / 2;
-                      s.projectiles.push({
-                        id: s.nextEntityId++,
-                        x: muzzleX,
-                        y: muzzleY,
-                        vx: dir * speed * Math.cos(spreadAngle),
-                        vy: speed * Math.sin(spreadAngle),
-                        damage: wpn.damage * bot.damageDealtModifier,
-                        onFireDuration: 0,
-                        explosionRadius: 0,
-                        shooterId: bot.id,
-                        weaponType: bot.equippedWeapon,
-                        pelletCount: 1,
-                        lifeTicks: 0,
-                        maxLifeTicks: 60,
-                        color: '#facc15',
-                      });
-                    }
-                  } else {
-                    bot.isPistolShooting = false;
-                    bot.pistolAnimFrame = 0;
-                    bot.pistolAnimTimer = 0;
-                    bot.pistolHasFired = false;
-                    bot.pistolHasRecoilApplied = false;
-                    s.p2Controller.isShootingPistol = false;
-                    if (bot.fsm === PlayerFSMState.RangedFire) {
-                      bot.fsm = PlayerFSMState.Idle;
-                    }
+                  bot.isPistolShooting = false;
+                  bot.pistolAnimFrame = 0;
+                  bot.pistolAnimTimer = 0;
+                  bot.pistolHasFired = false;
+                  bot.pistolHasRecoilApplied = false;
+                  s.p2Controller.isShootingPistol = false;
+                  bot.equipState = bot.isAiming ? 'aiming' : 'holstered';
+                  if (bot.fsm === PlayerFSMState.RangedFire) {
+                    bot.fsm = PlayerFSMState.Idle;
                   }
                 }
               }

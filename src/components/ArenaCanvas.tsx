@@ -3105,17 +3105,17 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
               p1.equipState = 'aiming';
             }
 
-            // Las flechas gradúan la mira de forma independiente al movimiento (WASD)
-            if (keys['ArrowLeft'] || keys['arrowleft']) {
+            // Las teclas direccionales del jugador (WASD en 1v1/Horda, WASD o Flechas en Solo) gradúan la mira
+            if (isAnyPressed(keys, p1Controls.left)) {
               p1.aimFacingRight = false;
-            } else if (keys['ArrowRight'] || keys['arrowright']) {
+            } else if (isAnyPressed(keys, p1Controls.right)) {
               p1.aimFacingRight = true;
             }
 
             const curAngle = p1.aimAngle || 0;
-            if (keys['ArrowUp'] || keys['arrowup']) {
+            if (isAnyPressed(keys, p1Controls.up)) {
               p1.aimAngle = Math.max(-1.48, curAngle - 0.065);
-            } else if (keys['ArrowDown'] || keys['arrowdown']) {
+            } else if (isAnyPressed(keys, p1Controls.down)) {
               p1.aimAngle = Math.min(1.48, curAngle + 0.065);
             }
           }
@@ -3134,21 +3134,15 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           p1.weaponGuardTicks = 0;
         }
 
-        // Al apuntar con M, WASD sigue permitiendo caminar mientras las flechas controlan la mira
-        const wasdMoveDir = ((keys['KeyA'] || keys['a'] ? -1 : 0) + (keys['KeyD'] || keys['d'] ? 1 : 0)) as -1 | 0 | 1;
-        const effectiveMoveDir: -1 | 0 | 1 = p1.isAiming ? wasdMoveDir : moveDir;
-        const effectiveJump = p1.isAiming ? Boolean(keys['KeyW'] || keys['w'] || keys['Space'] || keys[' ']) && jumpJustPressed : jumpJustPressed;
-        const effectiveJumpHeld = p1.isAiming ? Boolean(keys['KeyW'] || keys['w'] || keys['Space'] || keys[' ']) : jumpHeld;
-
         if (s.p1Controller) {
           s.p1Controller.hasHeavyRifleEquipped = isRifleWeapon(p1.equippedWeapon);
         }
 
         const p1Input: PlayerInput = {
-          moveDir: isNinjaComboLocked ? 0 : effectiveMoveDir,
+          moveDir: (isNinjaComboLocked || p1.isAiming) ? 0 : moveDir,
           run: (isNinjaComboLocked || isShootingPistol || p1.isAiming) ? false : runHeld,
-          jump: isNinjaComboLocked ? false : effectiveJump,
-          jumpHeld: isNinjaComboLocked ? false : effectiveJumpHeld,
+          jump: (isNinjaComboLocked || p1.isAiming) ? false : jumpJustPressed,
+          jumpHeld: (isNinjaComboLocked || p1.isAiming) ? false : jumpHeld,
           roll: (isNinjaComboLocked || p1.isAiming) ? false : rollPressed,
           dropThrough: (isNinjaComboLocked || p1.isAiming) ? false : dropThrough,
         };
@@ -5146,13 +5140,69 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           const isP2ComboLocked = !!bot.isSwordAttacking || !!bot.isMeleeComboAttacking || !!bot.isOneHandAttacking || !!bot.isTwoHandAttacking || !!bot.isThrowing;
           const isShootingPistol = !!bot.isPistolShooting;
 
+          // Postura de apunte vs disparo por pulsación para Jugador 2
+          const p2FireHeld = p2Combat.fire;
+          const p2CanAim =
+            bot.isAlive &&
+            s.roundActive &&
+            bot.fsm !== PlayerFSMState.KnockedDown &&
+            bot.fsm !== PlayerFSMState.GetUp &&
+            bot.fsm !== PlayerFSMState.Hitstun &&
+            bot.fsm !== PlayerFSMState.Roll &&
+            !bot.isGrappling &&
+            !bot.isThrowing &&
+            !isP2ComboLocked &&
+            bot.equippedWeapon !== WeaponType.Fists &&
+            getWeapon(bot.equippedWeapon).category === 'Firearm';
+
+          let p2ReleaseFire = false;
+          if (p2CanAim && p2FireHeld) {
+            bot.fireHoldTicks = (bot.fireHoldTicks || 0) + 1;
+            if (bot.fireHoldTicks >= 8) {
+              if (!bot.isAiming) {
+                bot.isAiming = true;
+                bot.equipState = 'aiming';
+                bot.aimFacingRight = bot.facingRight;
+                bot.aimAngle = 0;
+              } else if (!bot.isPistolShooting && !bot.isRifleShooting) {
+                bot.equipState = 'aiming';
+              }
+
+              if (isAnyPressed(keys, p2Bindings.left)) {
+                bot.aimFacingRight = false;
+              } else if (isAnyPressed(keys, p2Bindings.right)) {
+                bot.aimFacingRight = true;
+              }
+
+              const curAngleP2 = bot.aimAngle || 0;
+              if (isAnyPressed(keys, p2Bindings.up)) {
+                bot.aimAngle = Math.max(-1.48, curAngleP2 - 0.065);
+              } else if (isAnyPressed(keys, p2Bindings.down)) {
+                bot.aimAngle = Math.min(1.48, curAngleP2 + 0.065);
+              }
+            }
+          } else {
+            if (p2CanAim && !p2FireHeld && (bot.fireHoldTicks || 0) > 0) {
+              p2ReleaseFire = true;
+            }
+            bot.fireHoldTicks = 0;
+            bot.isAiming = false;
+            if (!p2ReleaseFire && !bot.isPistolShooting && !bot.isRifleShooting && (bot.burstRemaining || 0) <= 0) {
+              bot.aimAngle = 0;
+              if (!isP2ComboLocked) {
+                bot.equipState = 'holstered';
+              }
+            }
+            bot.weaponGuardTicks = 0;
+          }
+
           const p2Input: PlayerInput = {
-            moveDir: isP2ComboLocked ? 0 : moveDir,
-            run: (isP2ComboLocked || isShootingPistol) ? false : runHeld,
-            jump: isP2ComboLocked ? false : jumpJustPressed,
-            jumpHeld: isP2ComboLocked ? false : jumpHeld,
-            roll: isP2ComboLocked ? false : rollPressed,
-            dropThrough: isP2ComboLocked ? false : dropThrough,
+            moveDir: (isP2ComboLocked || bot.isAiming) ? 0 : moveDir,
+            run: (isP2ComboLocked || isShootingPistol || bot.isAiming) ? false : runHeld,
+            jump: (isP2ComboLocked || bot.isAiming) ? false : jumpJustPressed,
+            jumpHeld: (isP2ComboLocked || bot.isAiming) ? false : jumpHeld,
+            roll: (isP2ComboLocked || bot.isAiming) ? false : rollPressed,
+            dropThrough: (isP2ComboLocked || bot.isAiming) ? false : dropThrough,
           };
 
           // Recuperación activa de derribo para P2 (1v1 / Coop) mediante teclas de movimiento (Flechas, salto, rodada, combate)
@@ -5635,9 +5685,53 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             }
           }
 
-          // ── DISPARO DE ARMAS DE FUEGO JUGADOR 2 (Tecla K) ──
+          // ── DISPARO DE ARMAS DE FUEGO JUGADOR 2 (Pulsación rápida o al soltar tras apuntar) ──
+          if ((bot.burstCooldownTicks || 0) > 0) {
+            bot.burstCooldownTicks = (bot.burstCooldownTicks || 0) - 1;
+          }
+
           if (
-            (fireJustPressed || (firePressed && (bot.isRifleShooting || bot.isPistolShooting))) &&
+            (bot.burstRemaining || 0) > 0 &&
+            bot.isAlive &&
+            s.roundActive &&
+            bot.fsm !== PlayerFSMState.KnockedDown &&
+            bot.fsm !== PlayerFSMState.Hitstun &&
+            bot.fsm !== PlayerFSMState.Roll
+          ) {
+            if (bot.ammo > 0) {
+              bot.burstTickTimer = (bot.burstTickTimer || 0) - 1;
+              if ((bot.burstTickTimer || 0) <= 0) {
+                const wpn = getWeapon(bot.equippedWeapon);
+                const dir = (bot.aimFacingRight ?? bot.facingRight) ? 1 : -1;
+                const muzzleX = bot.x + dir * (isPistol ? 28 : 32);
+                const muzzleY = bot.y - (isPistol ? 6 : 7);
+                bot.ammo--;
+                emitWeaponFire(bot, muzzleX, muzzleY, s.p2Controller, wpn.color);
+                bot.burstRemaining = (bot.burstRemaining || 1) - 1;
+                if ((bot.burstRemaining || 0) > 0) {
+                  bot.burstTickTimer = 4;
+                } else {
+                  bot.burstCooldownTicks = 12;
+                  bot.equipState = bot.isAiming ? 'aiming' : 'holstered';
+                  if (!bot.isAiming) bot.aimAngle = 0;
+                }
+              }
+            } else {
+              bot.burstRemaining = 0;
+              bot.burstCooldownTicks = 12;
+              bot.equipState = bot.isAiming ? 'aiming' : 'holstered';
+            }
+          }
+
+          const isAutoFirearmP2 = isFirearm && isAutomaticFirearm(bot.equippedWeapon);
+          const canStartAutoBurstP2 =
+            !isAutoFirearmP2 || ((bot.burstCooldownTicks || 0) <= 0 && (bot.burstRemaining || 0) <= 0);
+          const shouldTriggerFireP2 =
+            (p2ReleaseFire && canStartAutoBurstP2) ||
+            (fireJustPressed && (!isFirearm || bot.ammo <= 0));
+
+          if (
+            shouldTriggerFireP2 &&
             isFirearm &&
             bot.isAlive &&
             s.roundActive &&
@@ -5658,6 +5752,14 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                   bot.rifleHasRecoilApplied = false;
                   s.p2Controller.isShootingRifle = true;
 
+                  if (isAutoFirearmP2) {
+                    const highRateAuto =
+                      bot.equippedWeapon === WeaponType.M60 ||
+                      bot.equippedWeapon === WeaponType.Flamethrower;
+                    bot.burstRemaining = highRateAuto ? 3 : 2;
+                    bot.burstTickTimer = 4;
+                  }
+
                   if (s.botFaction === BotFaction.Gymrat || s.botFaction === BotFaction.Santa) {
                     bot.rifleHasFired = false;
                     bot.attackCooldown = Math.max(wpn.cooldownTicks, 12);
@@ -5668,37 +5770,11 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                     bot.attackCooldown = Math.max(wpn.cooldownTicks, 10);
                     bot.ammo--;
                     PlayerFSM.tryTransition(bot, PlayerFSMState.RangedFire);
-                    sounds.playGunshot(wpn.soundType || wpn.type.toLowerCase());
 
-                    const dir = bot.facingRight ? 1 : -1;
+                    const dir = (bot.aimFacingRight ?? bot.facingRight) ? 1 : -1;
                     const muzzleX = bot.x + dir * 32;
                     const muzzleY = bot.y - 7;
-
-                    addSparks(muzzleX, muzzleY, '#fde047', 12);
-                    addSparks(muzzleX, muzzleY, '#ffffff', 6);
-                    s.screenShake = Math.min(14, Math.max(5, (wpn.damage || 25) / 3));
-
-                    const count = wpn.pelletCount || 1;
-                    for (let i = 0; i < count; i++) {
-                      const spreadAngle = ((Math.random() - 0.5) * ((wpn.accuracyDeg || 4) * Math.PI / 180)) / 2;
-                      const speed = wpn.projectileSpeed || 950;
-                      s.projectiles.push({
-                        id: s.nextEntityId++,
-                        x: muzzleX,
-                        y: muzzleY,
-                        vx: dir * speed * Math.cos(spreadAngle),
-                        vy: speed * Math.sin(spreadAngle),
-                        damage: (wpn.damage / count) * bot.damageDealtModifier,
-                        onFireDuration: wpn.onFireDuration || 0,
-                        explosionRadius: wpn.explosionRadius || 0,
-                        shooterId: bot.id,
-                        weaponType: bot.equippedWeapon,
-                        pelletCount: count,
-                        lifeTicks: 0,
-                        maxLifeTicks: 60,
-                        color: wpn.color || '#facc15',
-                      });
-                    }
+                    emitWeaponFire(bot, muzzleX, muzzleY, s.p2Controller, wpn.color);
                   }
                 } else {
                   bot.attackCooldown = 15;

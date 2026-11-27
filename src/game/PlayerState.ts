@@ -34,6 +34,14 @@ export enum PlayerFSMState {
 
 export type WeaponSlotType = 'melee' | 'handgun' | 'primary' | 'throwable';
 
+export type WeaponEquipState =
+  | 'holstered'
+  | 'drawing'
+  | 'using'
+  | 'aiming'
+  | 'firing'
+  | 'holstering';
+
 export interface PlayerInventory {
   melee: WeaponType;
   handgun: { type: WeaponType; ammo: number } | null;
@@ -81,9 +89,15 @@ export interface PlayerState {
   comboWindowTicks: number;
   weaponPickupAnimTicks?: number;
   weaponGuardTicks?: number;
+  equipState?: WeaponEquipState;
+  equipTransitionTicks?: number;
   isAiming?: boolean;
   aimAngle?: number;
+  aimFacingRight?: boolean;
   fireHoldTicks?: number;
+  burstRemaining?: number;
+  burstTickTimer?: number;
+  burstCooldownTicks?: number;
 
   // Contadores de estado
   rollTicks: number;
@@ -219,6 +233,8 @@ export function createPlayerState(
     attackCooldown: 0,
     comboStep: 0,
     comboWindowTicks: 0,
+    equipState: 'holstered',
+    aimFacingRight: id === 1,
     rollTicks: 0,
     slideTicks: 0,
     hitstunTicks: 0,

@@ -10670,6 +10670,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
               isAiming: Boolean(p.isAiming),
               aimAngle: p.aimAngle || 0,
               weaponGuardTicks: p.weaponGuardTicks,
+              equipState: p.equipState,
             });
           }
         }

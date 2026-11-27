@@ -919,6 +919,88 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
   };
 
   /**
+   * Activa instantáneamente la ranura correspondiente ('melee' o 'firearm') al usar N o M/G,
+   * permitiendo llevar y usar Espada + Arma de Fuego + Granadas de forma simultánea.
+   */
+  const ensureSlotActiveForAction = (
+    fighter: PlayerState,
+    target: 'melee' | 'firearm',
+    controller?: PlayerController
+  ): void => {
+    const inv = fighter.inventory;
+    if (!inv) return;
+
+    if (target === 'melee') {
+      if (inv.activeSlot === 'melee') return;
+      if (inv.activeSlot === 'handgun' && inv.handgun) {
+        inv.handgun.ammo = fighter.ammo;
+      } else if (inv.activeSlot === 'primary' && inv.primary) {
+        inv.primary.ammo = fighter.ammo;
+      }
+      inv.activeSlot = 'melee';
+      fighter.ammo = 0;
+      equipWeaponState(fighter, inv.melee, controller);
+      return;
+    }
+
+    const firearmEntry = inv.primary || inv.handgun;
+    if (!firearmEntry) return;
+    const targetSlot: WeaponSlotType = inv.primary ? 'primary' : 'handgun';
+    if (inv.activeSlot === targetSlot && fighter.equippedWeapon === firearmEntry.type) return;
+
+    inv.activeSlot = targetSlot;
+    fighter.ammo = firearmEntry.ammo;
+    equipWeaponState(fighter, firearmEntry.type, controller);
+  };
+
+  /**
+   * Descarta/suelta automáticamente un arma de fuego al agotarse su munición en combate real.
+   * En Modo Práctica se mantiene munición infinita para pruebas.
+   */
+  const discardEmptyFirearm = (
+    fighter: PlayerState,
+    controller?: PlayerController
+  ): void => {
+    if (gameMode === 'practice') return;
+    if (!fighter.isAlive) return;
+    if (fighter.equippedWeapon === WeaponType.Fists) return;
+    const wData = getWeapon(fighter.equippedWeapon);
+    if (wData.category !== 'Firearm') return;
+    if (fighter.ammo > 0) return;
+    if (fighter.isPistolShooting || fighter.isRifleShooting || (fighter.burstRemaining || 0) > 0) return;
+
+    const s = stateRef.current;
+    if (!s) return;
+
+    const inv = fighter.inventory;
+    if (inv) {
+      inv.handgun = null;
+      inv.primary = null;
+      inv.activeSlot = 'melee';
+      fighter.equippedWeapon = inv.melee || WeaponType.Fists;
+    } else {
+      fighter.equippedWeapon = WeaponType.Fists;
+    }
+
+    fighter.ammo = 0;
+    fighter.isAiming = false;
+    fighter.aimAngle = 0;
+    fighter.fireHoldTicks = 0;
+    fighter.weaponGuardTicks = 0;
+    fighter.equipState = 'holstered';
+    equipWeaponState(fighter, fighter.equippedWeapon, controller);
+    sounds.playThrow();
+    s.floatingTexts.push({
+      id: s.nextEntityId++,
+      text: '¡SIN MUNICIÓN!',
+      x: fighter.x,
+      y: fighter.y - 34,
+      color: '#f97316',
+      life: 36,
+    });
+  };
+
+  /**
    * Cambia de ranura de inventario para el luchador (J1 o J2 en 1v1).
    */
   const switchFighterSlot = (
@@ -2197,11 +2279,20 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         p1.ammo = 0;
       } else if (wSlot === 'handgun') {
         p1.inventory.handgun = { type: weaponType, ammo: 999 };
+        p1.inventory.primary = null;
         p1.inventory.activeSlot = 'handgun';
         p1.ammo = 999;
       } else if (wSlot === 'primary') {
         p1.inventory.primary = { type: weaponType, ammo: 999 };
+        p1.inventory.handgun = null;
         p1.inventory.activeSlot = 'primary';
+        p1.ammo = 999;
+      } else if (wSlot === 'throwable') {
+        const gType =
+          weaponType === WeaponType.Molotov ? GrenadeType.Molotov : GrenadeType.Frag;
+        s.p1Grenades.activeType = gType;
+        s.p1Grenades.ammo[gType] = Math.max(3, s.p1Grenades.ammo[gType] || 0);
+        p1.inventory.activeSlot = 'throwable';
         p1.ammo = 999;
       }
     }
@@ -3079,6 +3170,9 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         // - Pulsación rápida (< 8 ticks) y soltar: dispara de inmediato en la dirección actual.
         // - Mantener M / G (>= 8 ticks): desenfunda y entra en apunte con flechas; al soltar dispara en el ángulo graduado.
         const p1FireHeld = p1Combat.fire;
+        if (p1FireHeld && p1.isAlive && s.roundActive && !isNinjaComboLocked) {
+          ensureSlotActiveForAction(p1, 'firearm', s.p1Controller);
+        }
         const p1CanAim =
           p1.isAlive &&
           s.roundActive &&
@@ -3534,6 +3628,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           !p1.isGrappling &&
           !p1.isThrowing
         ) {
+          ensureSlotActiveForAction(p1, 'melee', s.p1Controller);
           // ── FASE 4: SISTEMA DE AGARRE DE ARMAS (WeaponGrip) ──
           // 1 Mano: Katana, Machete, Knife, Baton, ShockBaton, Whip, CueStick.
           // 2 Manos: Axe, Bat, LeadPipe, Hammer, Chair, Pipe, Bottle, Teapot, Pillow.
@@ -5009,6 +5104,9 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
           // Postura de apunte vs disparo por pulsación para Jugador 2
           const p2FireHeld = p2Combat.fire;
+          if (p2FireHeld && bot.isAlive && s.roundActive && !isP2ComboLocked) {
+            ensureSlotActiveForAction(bot, 'firearm', s.p2Controller);
+          }
           const p2CanAim =
             bot.isAlive &&
             s.roundActive &&
@@ -5467,6 +5565,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             !bot.isGrappling &&
             !bot.isThrowing
           ) {
+            ensureSlotActiveForAction(bot, 'melee', s.p2Controller);
             // ── FASE 4: SISTEMA DE AGARRE DE ARMAS (P2) ──
             const hasTwoHandBot = !!(s.botTwoHandSheet && s.botTwoHandSheet.complete && s.botTwoHandSheet.naturalWidth > 0) || !!s.botSheetConfig?.hasTwoHandAttackSheet;
             const hasOneHandBot = !!(s.botOneHandSheet && s.botOneHandSheet.complete && s.botOneHandSheet.naturalWidth > 0) || !!s.botSheetConfig?.hasOneHandAttackSheet;
@@ -7034,6 +7133,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       if (p1.slotCooldownTicks && p1.slotCooldownTicks > 0) p1.slotCooldownTicks--;
       if (p1.weaponPickupAnimTicks && p1.weaponPickupAnimTicks > 0) p1.weaponPickupAnimTicks--;
       if (p1.weaponGuardTicks && p1.weaponGuardTicks > 0) p1.weaponGuardTicks--;
+      discardEmptyFirearm(p1, s.p1Controller);
       if (p1.inventory) {
         if (p1.inventory.activeSlot === 'handgun' && p1.inventory.handgun) {
           p1.inventory.handgun.ammo = p1.ammo;
@@ -7086,6 +7186,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         if (b.slotCooldownTicks && b.slotCooldownTicks > 0) b.slotCooldownTicks--;
         if (b.weaponPickupAnimTicks && b.weaponPickupAnimTicks > 0) b.weaponPickupAnimTicks--;
         if (b.weaponGuardTicks && b.weaponGuardTicks > 0) b.weaponGuardTicks--;
+        discardEmptyFirearm(b, inst.controller);
         if (b.inventory) {
           if (b.inventory.activeSlot === 'handgun' && b.inventory.handgun) {
             b.inventory.handgun.ammo = b.ammo;
@@ -7676,11 +7777,12 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
               p1.ammo = 0;
               equipWeaponState(p1, w.weaponType, s.p1Controller);
             } else if (wSlot === 'handgun') {
-              if (p1.inventory.handgun !== null) {
-                // Suelta la pistola anterior en los pies
+              const prevFirearm = p1.inventory.handgun || p1.inventory.primary;
+              if (prevFirearm !== null) {
+                // Suelta el arma de fuego anterior en los pies (ranura única de arma de fuego)
                 s.worldWeapons.push({
                   id: s.nextEntityId++,
-                  weaponType: p1.inventory.handgun.type,
+                  weaponType: prevFirearm.type,
                   x: p1.x,
                   y: p1.y,
                   baseY: p1.y,
@@ -7688,15 +7790,17 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                 });
               }
               p1.inventory.handgun = { type: w.weaponType, ammo: wData.magSize };
+              p1.inventory.primary = null;
               p1.inventory.activeSlot = 'handgun';
               p1.ammo = wData.magSize;
               equipWeaponState(p1, w.weaponType, s.p1Controller);
             } else if (wSlot === 'primary') {
-              if (p1.inventory.primary !== null) {
-                // Suelta el arma primaria anterior en los pies
+              const prevFirearm = p1.inventory.primary || p1.inventory.handgun;
+              if (prevFirearm !== null) {
+                // Suelta el arma de fuego anterior en los pies (ranura única de arma de fuego)
                 s.worldWeapons.push({
                   id: s.nextEntityId++,
-                  weaponType: p1.inventory.primary.type,
+                  weaponType: prevFirearm.type,
                   x: p1.x,
                   y: p1.y,
                   baseY: p1.y,
@@ -7704,6 +7808,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                 });
               }
               p1.inventory.primary = { type: w.weaponType, ammo: wData.magSize };
+              p1.inventory.handgun = null;
               p1.inventory.activeSlot = 'primary';
               p1.ammo = wData.magSize;
               equipWeaponState(p1, w.weaponType, s.p1Controller);
@@ -7826,10 +7931,11 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                 bState.ammo = 0;
                 equipWeaponState(bState, w.weaponType, inst.controller || s.p2Controller);
               } else if (wSlot === 'handgun') {
-                if (bState.inventory.handgun !== null) {
+                const prevFirearm = bState.inventory.handgun || bState.inventory.primary;
+                if (prevFirearm !== null) {
                   s.worldWeapons.push({
                     id: s.nextEntityId++,
-                    weaponType: bState.inventory.handgun.type,
+                    weaponType: prevFirearm.type,
                     x: bState.x,
                     y: bState.y,
                     baseY: bState.y,
@@ -7837,14 +7943,16 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                   });
                 }
                 bState.inventory.handgun = { type: w.weaponType, ammo: wData.magSize };
+                bState.inventory.primary = null;
                 bState.inventory.activeSlot = 'handgun';
                 bState.ammo = wData.magSize;
                 equipWeaponState(bState, w.weaponType, inst.controller || s.p2Controller);
               } else if (wSlot === 'primary') {
-                if (bState.inventory.primary !== null) {
+                const prevFirearm = bState.inventory.primary || bState.inventory.handgun;
+                if (prevFirearm !== null) {
                   s.worldWeapons.push({
                     id: s.nextEntityId++,
-                    weaponType: bState.inventory.primary.type,
+                    weaponType: prevFirearm.type,
                     x: bState.x,
                     y: bState.y,
                     baseY: bState.y,
@@ -7852,6 +7960,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                   });
                 }
                 bState.inventory.primary = { type: w.weaponType, ammo: wData.magSize };
+                bState.inventory.handgun = null;
                 bState.inventory.activeSlot = 'primary';
                 bState.ammo = wData.magSize;
                 equipWeaponState(bState, w.weaponType, inst.controller || s.p2Controller);

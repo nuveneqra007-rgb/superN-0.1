@@ -234,12 +234,16 @@ export const FighterBar: React.FC<FighterBarProps> = ({ fighters }) => {
                   </span>
                 </div>
               ) : (
-                /* Modo Completo (4 ranuras) */
+                /* Modo Completo: 3 Ranuras Específicas ([N] Melee · [M] Fuego · [,] Granadas) */
                 <div className="flex items-center gap-1 pt-0.5">
-                  {renderSlotBox('melee', f.slots.melee, f.activeSlot === 'melee', '1')}
-                  {renderSlotBox('handgun', f.slots.handgun, f.activeSlot === 'handgun', '2')}
-                  {renderSlotBox('primary', f.slots.primary, f.activeSlot === 'primary', '3')}
-                  {renderSlotBox('throwable', f.slots.throwable, f.activeSlot === 'throwable', '4')}
+                  {renderSlotBox('melee', f.slots.melee, f.activeSlot === 'melee', 'N')}
+                  {(() => {
+                    const firearmSlot = !f.slots.primary.isEmpty ? f.slots.primary : f.slots.handgun;
+                    const firearmKey = !f.slots.primary.isEmpty ? 'primary' : 'handgun';
+                    const isFirearmActive = f.activeSlot === 'primary' || f.activeSlot === 'handgun';
+                    return renderSlotBox(firearmKey, firearmSlot, isFirearmActive, 'M');
+                  })()}
+                  {renderSlotBox('throwable', f.slots.throwable, f.activeSlot === 'throwable', ',')}
                 </div>
               )}
             </div>

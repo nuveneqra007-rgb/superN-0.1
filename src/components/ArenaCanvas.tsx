@@ -404,6 +404,10 @@ interface WorldWeaponEntity {
   baseY: number;
   bobTicks: number;
   spawnSlotIndex?: number; // Índice del punto de spawn designado que generó esta arma
+  ageTicks?: number;
+  maxLifeTicks?: number; // Ticks antes de desaparecer si nadie la recoge (armas caídas/cajas)
+  pickupCooldownTicks?: number; // Cooldown breve al soltar para no re-recogerla al instante
+  ammo?: number; // Munición conservada si fue soltada
 }
 
 /**
@@ -697,6 +701,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     projectiles: ProjectileEntity[];
     worldWeapons: WorldWeaponEntity[];
     weaponSlots: WeaponSpawnSlot[];
+    lastPickupTickByFighter: Record<number, number>;
     p1Grenades: GrenadeInventory;
     grenadePickups: GrenadePickupEntity[];
     smokeClouds: SmokeCloudEntity[];
@@ -1390,27 +1395,38 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
    * su temporizador para el siguiente reemplazo.
    */
   const initializeWeaponSpawnSlots = (worldCfg: WorldConfig): WeaponSpawnSlot[] => {
+    const isGym = worldCfg.id === 'training';
     return worldCfg.weaponSpawns.map((pos, idx) => ({
       slotIndex: idx,
       x: pos.x,
       y: pos.y,
       currentWeaponId: null,
-      timer: idx * 180, // Escalonamiento inicial para que las armas no ciclen en el mismo fotograma
-      spawnInterval: 780 + (idx % 3) * 60, // Ciclo individual de ~13 a 15 segundos (a 60 FPS)
+      timer: 0, // Inicia en 0 para que las armas iniciales permanezcan su ciclo completo antes de rotar
+      spawnInterval: (isGym ? 540 : 720) + idx * 120, // Ciclo escalonado natural (~9–15s a 60 FPS)
       lastWeaponType: undefined,
     }));
   };
 
   /**
-   * Destruye de forma segura el arma presente en un punto de spawn específico.
-   * REGLA ESTRICTA: El arma anterior se elimina automáticamente antes de instanciar la nueva.
-   * Incluye comprobaciones estrictas de nulidad (null-checks): si el combatiente ya había
-   * recogido el arma antes del ciclo de spawn, la referencia nula se gestiona limpiamente sin errores.
-   *
-   * @param s Estado activo de la partida
-   * @param slotIndex Índice del punto de spawn designado
-   * @param triggerVisuals Determina si genera partículas de desvanecimiento
-   * @returns Entidad eliminada o null si no había ninguna arma tirada en el punto
+   * Libera el punto de spawn cuando un combatiente recoge su arma y reinicia
+   * su temporizador para evitar reapariciones instantáneas en el mismo punto.
+   */
+  const clearSpawnSlotForWeapon = (
+    s: NonNullable<typeof stateRef.current>,
+    weapon: WorldWeaponEntity
+  ): void => {
+    if (weapon.spawnSlotIndex === undefined || !s.weaponSlots) return;
+    const slot = s.weaponSlots[weapon.spawnSlotIndex];
+    if (!slot) return;
+    if (slot.currentWeaponId === weapon.id || slot.currentWeaponId === null) {
+      slot.currentWeaponId = null;
+      slot.timer = 0; // Tiempo de enfriamiento completo antes de generar la siguiente arma
+    }
+  };
+
+  /**
+   * Destruye de forma segura cualquier arma presente en un punto de spawn específico.
+   * Elimina también duplicados rezagados en el mismo radio del punto de spawn.
    */
   const destroyWeaponAtSpawnSlot = (
     s: NonNullable<typeof stateRef.current>,
@@ -1419,54 +1435,33 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
   ): WorldWeaponEntity | null => {
     if (!s || !s.weaponSlots || !s.weaponSlots[slotIndex]) return null;
     const slot = s.weaponSlots[slotIndex];
-
-    // Validación de nulidad: si no hay arma registrada actualmente en este slot, salir limpiamente
-    if (slot.currentWeaponId === null) {
-      return null;
-    }
-
-    // Buscar el índice del arma en la lista del mundo por ID o proximidad al spawn point
     const targetId = slot.currentWeaponId;
-    const weaponIdx = s.worldWeapons.findIndex(
-      (w) => w && (w.id === targetId || (w.spawnSlotIndex === slotIndex && Math.hypot(w.x - slot.x, w.baseY - slot.y) < 26))
-    );
+    let removedWeapon: WorldWeaponEntity | null = null;
 
-    // Validación de nulidad: si el arma ya fue recogida o eliminada previamente
-    if (weaponIdx === -1) {
-      slot.currentWeaponId = null;
-      return null;
+    for (let i = s.worldWeapons.length - 1; i >= 0; i--) {
+      const w = s.worldWeapons[i];
+      if (!w) continue;
+      const matchesSlot =
+        (targetId !== null && w.id === targetId) ||
+        w.spawnSlotIndex === slotIndex ||
+        (w.spawnSlotIndex !== undefined && Math.hypot(w.x - slot.x, w.baseY - slot.y) < 34);
+      if (matchesSlot) {
+        if (!removedWeapon) removedWeapon = w;
+        if (triggerVisuals) {
+          addSparks(w.x, w.y, '#94a3b8', 8);
+          addSparks(w.x, w.y, '#38bdf8', 6);
+        }
+        s.worldWeapons.splice(i, 1);
+      }
     }
 
-    const removedWeapon = s.worldWeapons[weaponIdx];
-    if (!removedWeapon) {
-      slot.currentWeaponId = null;
-      return null;
-    }
-
-    // Efecto visual sutil de desmaterialización / reemplazo del arma obsoleta
-    if (triggerVisuals) {
-      addSparks(removedWeapon.x, removedWeapon.y, '#94a3b8', 8);
-      addSparks(removedWeapon.x, removedWeapon.y, '#38bdf8', 6);
-    }
-
-    // Destrucción y eliminación limpia del arreglo del mundo
-    s.worldWeapons.splice(weaponIdx, 1);
     slot.currentWeaponId = null;
-
     return removedWeapon;
   };
 
   /**
    * Instancia una nueva arma en el punto de spawn designado.
-   * Cumple con la regla estricta:
-   * 1. Destruye automáticamente cualquier arma previa en este punto exacto (si aún sigue allí).
-   * 2. Instancia la nueva arma en las coordenadas exactas del spawn point.
-   * 3. Reinicia el temporizador del ciclo de vida para este punto.
-   *
-   * @param s Estado activo de la partida
-   * @param slotIndex Índice del punto de spawn designado
-   * @param forcedWeaponType Tipo opcional forzado de arma
-   * @returns La nueva entidad WorldWeaponEntity instanciada
+   * Limpia cualquier arma previa en ese punto antes de crear la nueva.
    */
   const instantiateWeaponAtSpawnSlot = (
     s: NonNullable<typeof stateRef.current>,
@@ -1476,7 +1471,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     if (!s || !s.weaponSlots || !s.weaponSlots[slotIndex]) return null;
     const slot = s.weaponSlots[slotIndex];
 
-    // 1. DESTRUCCIÓN PREVIA: Asegurar que el arma anterior desaparezca antes de generar la nueva
+    // 1. DESTRUCCIÓN PREVIA: Garantizar que nunca queden dos armas en el mismo spawn
     destroyWeaponAtSpawnSlot(s, slotIndex, true);
 
     // 2. SELECCIÓN DE ARMA: Elegir un arma aleatoria del catálogo (priorizando variedad)
@@ -1497,39 +1492,296 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       baseY: slot.y,
       bobTicks: slotIndex * 15,
       spawnSlotIndex: slotIndex,
+      ageTicks: 0,
     };
 
-    // 4. REGISTRO EN EL MUNDO Y SLOT:
+    // 4. REGISTRO EN EL MUNDO Y SLOT
     s.worldWeapons.push(newWeapon);
     slot.currentWeaponId = newId;
     slot.lastWeaponType = selectedWeaponType;
-    slot.timer = 0; // Reinicio estricto del temporizador del ciclo
+    slot.timer = 0;
 
-    // Efecto visual de aparición del arma
     addSparks(slot.x, slot.y, '#38bdf8', 12);
-
     return newWeapon;
   };
 
   /**
-   * Actualiza el ciclo de vida y temporizadores de todos los puntos de spawn en el mapa.
-   * Ejecutado en el tick principal a 60Hz. Cuando un punto cumple su tiempo de ciclo,
-   * reemplaza el arma automáticamente llamando a `instantiateWeaponAtSpawnSlot`.
+   * Actualiza el envejecimiento/despawn de armas caídas en el suelo y los ciclos
+   * de aparición/reemplazo de todos los puntos de spawn del mapa.
    */
   const updateWeaponSpawns = (s: NonNullable<typeof stateRef.current>): void => {
-    if (!s || !s.weaponSlots || s.weaponSlots.length === 0) return;
+    if (!s) return;
 
+    // 1. Envejecimiento, cooldown y despawn limpio de armas sueltas/cajas en el suelo
+    for (let i = s.worldWeapons.length - 1; i >= 0; i--) {
+      const w = s.worldWeapons[i];
+      if (!w) continue;
+      w.ageTicks = (w.ageTicks ?? 0) + 1;
+      if (w.pickupCooldownTicks && w.pickupCooldownTicks > 0) {
+        w.pickupCooldownTicks--;
+      }
+      if (w.maxLifeTicks !== undefined && w.ageTicks >= w.maxLifeTicks) {
+        addSparks(w.x, w.y, '#94a3b8', 7);
+        s.worldWeapons.splice(i, 1);
+      }
+    }
+
+    if (!s.weaponSlots || s.weaponSlots.length === 0) return;
+
+    // 2. Ciclo de puntos de spawn designados (aparición tras recogida o reemplazo periódico)
     for (let i = 0; i < s.weaponSlots.length; i++) {
       const slot = s.weaponSlots[i];
       if (!slot) continue;
 
+      // Verificar si el arma registrada aún existe en el mundo (desincronización defensiva)
+      if (
+        slot.currentWeaponId !== null &&
+        !s.worldWeapons.some((w) => w.id === slot.currentWeaponId)
+      ) {
+        slot.currentWeaponId = null;
+      }
+
       slot.timer++;
 
-      // Al cumplirse el temporizador del ciclo para este punto exacto:
-      if (slot.timer >= slot.spawnInterval) {
+      if (slot.currentWeaponId === null) {
+        // Si el punto está vacío (fue recogida), reaparece tras ~70% del intervalo
+        const respawnTicks = Math.round(slot.spawnInterval * 0.72);
+        if (slot.timer >= respawnTicks) {
+          instantiateWeaponAtSpawnSlot(s, i);
+        }
+      } else if (slot.timer >= slot.spawnInterval) {
+        // Si nadie la recogió durante el ciclo, desaparece y aparece otra nueva
         instantiateWeaponAtSpawnSlot(s, i);
       }
     }
+  };
+
+  /**
+   * Recogida determinista de armas del suelo (P1, J2 y Bots):
+   * - Selecciona solo 1 arma (la más cercana y elegible) por combatiente y tick.
+   * - Evalúa la ranura única de arma de fuego (`handgun || primary`) para evitar bucles.
+   * - Si ya lleva la misma arma de fuego y le falta munición, recarga sin duplicar.
+   */
+  const tryPickupNearestWorldWeapon = (
+    s: NonNullable<typeof stateRef.current>,
+    fighter: PlayerState,
+    controller: PlayerController | undefined,
+    grenades: GrenadeInventory,
+    wantsSwapPressed: boolean,
+    allowInventoryPickup: boolean,
+    fallbackTextColor: string
+  ): boolean => {
+    if (!fighter.isAlive) return false;
+    const lastTick = s.lastPickupTickByFighter[fighter.id] ?? -999;
+    if (s.worldTick - lastTick < 22) return false;
+
+    let bestIdx = -1;
+    let bestDist = 32;
+    let bestMode: 'pickup' | 'refill' = 'pickup';
+
+    for (let i = 0; i < s.worldWeapons.length; i++) {
+      const w = s.worldWeapons[i];
+      if (!w || (w.pickupCooldownTicks ?? 0) > 0) continue;
+
+      const dist = Math.hypot(w.x - fighter.x, w.y - fighter.y);
+      if (dist >= bestDist) continue;
+
+      const wData = getWeapon(w.weaponType);
+      const wSlot = slotForWeapon(w.weaponType);
+      let mode: 'pickup' | 'refill' | null = null;
+
+      if (wSlot === 'throwable') {
+        if (canAddGrenade(grenades)) {
+          mode = 'pickup';
+        }
+      } else if (allowInventoryPickup && fighter.inventory) {
+        const currentFirearm = fighter.inventory.primary || fighter.inventory.handgun;
+        if (wSlot === 'melee') {
+          if (fighter.inventory.melee !== w.weaponType) {
+            const isSlotEmpty = fighter.inventory.melee === WeaponType.Fists;
+            if (isSlotEmpty || wantsSwapPressed) {
+              mode = 'pickup';
+            }
+          }
+        } else if (wSlot === 'handgun' || wSlot === 'primary') {
+          if (currentFirearm && currentFirearm.type === w.weaponType) {
+            const curAmmo =
+              fighter.inventory.activeSlot === 'primary' || fighter.inventory.activeSlot === 'handgun'
+                ? fighter.ammo
+                : currentFirearm.ammo;
+            if (curAmmo < wData.magSize) {
+              mode = 'refill';
+            }
+          } else {
+            const isFirearmEmpty = currentFirearm === null;
+            if (isFirearmEmpty || wantsSwapPressed) {
+              mode = 'pickup';
+            }
+          }
+        }
+      } else {
+        // Bot IA convencional (vsBot)
+        const isSameWithAmmo =
+          fighter.equippedWeapon === w.weaponType &&
+          fighter.ammo >= Math.ceil(wData.magSize * 0.5);
+        if (!isSameWithAmmo && (fighter.fsm === PlayerFSMState.Crouch || fighter.equippedWeapon === WeaponType.Fists)) {
+          mode = 'pickup';
+        }
+      }
+
+      if (mode !== null) {
+        bestIdx = i;
+        bestDist = dist;
+        bestMode = mode;
+      }
+    }
+
+    if (bestIdx === -1) return false;
+
+    const w = s.worldWeapons[bestIdx];
+    const wData = getWeapon(w.weaponType);
+    const wSlot = slotForWeapon(w.weaponType);
+    s.lastPickupTickByFighter[fighter.id] = s.worldTick;
+
+    if (wSlot === 'throwable') {
+      const gType = w.weaponType === WeaponType.Molotov ? GrenadeType.Molotov : GrenadeType.Frag;
+      const added = addGrenades(grenades, gType, 2);
+      sounds.playPickup();
+      addSparks(w.x, w.y, '#38bdf8', 12);
+      s.floatingTexts.push({
+        id: s.nextEntityId++,
+        text: `+${added} ${wData.name} (${grenades.ammo[gType]}/${GRENADE_MAX_CAPACITY})`,
+        x: fighter.x,
+        y: fighter.y - 35,
+        color: '#38bdf8',
+        life: 45,
+      });
+      clearSpawnSlotForWeapon(s, w);
+      s.worldWeapons.splice(bestIdx, 1);
+      return true;
+    }
+
+    if (allowInventoryPickup && fighter.inventory) {
+      if (bestMode === 'refill') {
+        const currentFirearm = fighter.inventory.primary || fighter.inventory.handgun;
+        if (currentFirearm) {
+          const prevAmmo =
+            fighter.inventory.activeSlot === 'primary' || fighter.inventory.activeSlot === 'handgun'
+              ? fighter.ammo
+              : currentFirearm.ammo;
+          const addedSource = w.ammo ?? wData.magSize;
+          const nextAmmo = Math.min(wData.magSize, prevAmmo + addedSource);
+          const gained = Math.max(0, nextAmmo - prevAmmo);
+          currentFirearm.ammo = nextAmmo;
+          if (fighter.inventory.activeSlot === 'primary' || fighter.inventory.activeSlot === 'handgun') {
+            fighter.ammo = nextAmmo;
+          }
+          sounds.playPickup();
+          addSparks(w.x, w.y, '#facc15', 10);
+          s.floatingTexts.push({
+            id: s.nextEntityId++,
+            text: `+${gained} BALAS (${wData.name})`,
+            x: fighter.x,
+            y: fighter.y - 35,
+            color: '#facc15',
+            life: 45,
+          });
+          clearSpawnSlotForWeapon(s, w);
+          s.worldWeapons.splice(bestIdx, 1);
+          return true;
+        }
+      }
+
+      // Guardar munición del arma de fuego activa antes de cambiar
+      if (fighter.inventory.activeSlot === 'handgun' && fighter.inventory.handgun) {
+        fighter.inventory.handgun.ammo = fighter.ammo;
+      } else if (fighter.inventory.activeSlot === 'primary' && fighter.inventory.primary) {
+        fighter.inventory.primary.ammo = fighter.ammo;
+      }
+
+      const dropX = Math.max(40, Math.min(920, fighter.x + (fighter.facingRight ? -18 : 18)));
+      const newWeaponAmmo = w.ammo ?? wData.magSize;
+
+      if (wSlot === 'melee') {
+        if (fighter.inventory.melee !== WeaponType.Fists) {
+          s.worldWeapons.push({
+            id: s.nextEntityId++,
+            weaponType: fighter.inventory.melee,
+            x: dropX,
+            y: fighter.y,
+            baseY: fighter.y,
+            bobTicks: 0,
+            ageTicks: 0,
+            maxLifeTicks: 900,
+            pickupCooldownTicks: 42,
+          });
+        }
+        fighter.inventory.melee = w.weaponType;
+        fighter.inventory.activeSlot = 'melee';
+        fighter.ammo = 0;
+        equipWeaponState(fighter, w.weaponType, controller);
+      } else if (wSlot === 'handgun' || wSlot === 'primary') {
+        const prevFirearm = fighter.inventory.primary || fighter.inventory.handgun;
+        if (prevFirearm !== null && prevFirearm.ammo > 0) {
+          s.worldWeapons.push({
+            id: s.nextEntityId++,
+            weaponType: prevFirearm.type,
+            x: dropX,
+            y: fighter.y,
+            baseY: fighter.y,
+            bobTicks: 0,
+            ageTicks: 0,
+            maxLifeTicks: 900,
+            pickupCooldownTicks: 42,
+            ammo: prevFirearm.ammo,
+          });
+        }
+        if (wSlot === 'handgun') {
+          fighter.inventory.handgun = { type: w.weaponType, ammo: newWeaponAmmo };
+          fighter.inventory.primary = null;
+          fighter.inventory.activeSlot = 'handgun';
+        } else {
+          fighter.inventory.primary = { type: w.weaponType, ammo: newWeaponAmmo };
+          fighter.inventory.handgun = null;
+          fighter.inventory.activeSlot = 'primary';
+        }
+        fighter.ammo = newWeaponAmmo;
+        equipWeaponState(fighter, w.weaponType, controller);
+      }
+
+      sounds.playPickup();
+      s.floatingTexts.push({
+        id: s.nextEntityId++,
+        text: `¡${wData.name}!`,
+        x: fighter.x,
+        y: fighter.y - 35,
+        color: wSlot === 'primary' ? '#eab308' : wSlot === 'handgun' ? '#38bdf8' : '#f97316',
+        life: 45,
+      });
+
+      clearSpawnSlotForWeapon(s, w);
+      s.worldWeapons.splice(bestIdx, 1);
+      return true;
+    }
+
+    // Bot IA convencional (vsBot)
+    fighter.equippedWeapon = w.weaponType;
+    fighter.ammo = w.ammo ?? wData.magSize;
+    sounds.playPickup();
+    equipWeaponState(fighter, w.weaponType, undefined);
+
+    s.floatingTexts.push({
+      id: s.nextEntityId++,
+      text: `¡${wData.name}!`,
+      x: fighter.x,
+      y: fighter.y - 35,
+      color: fallbackTextColor,
+      life: 45,
+    });
+
+    clearSpawnSlotForWeapon(s, w);
+    s.worldWeapons.splice(bestIdx, 1);
+    return true;
   };
 
   /**
@@ -1714,6 +1966,9 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       y: groundY,
       baseY: groundY,
       bobTicks: 0,
+      ageTicks: 0,
+      maxLifeTicks: 1080,
+      pickupCooldownTicks: 20,
     });
 
     s.worldWeapons.push({
@@ -1723,6 +1978,9 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       y: groundY,
       baseY: groundY,
       bobTicks: 20,
+      ageTicks: 0,
+      maxLifeTicks: 1080,
+      pickupCooldownTicks: 20,
     });
 
     s.medkits.push({
@@ -2007,6 +2265,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         baseY: slot.y,
         bobTicks: idx * 20,
         spawnSlotIndex: idx,
+        ageTicks: 0,
       });
       slot.currentWeaponId = wId;
       slot.lastWeaponType = weaponType;
@@ -2045,6 +2304,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       projectiles: [],
       worldWeapons,
       weaponSlots,
+      lastPickupTickByFighter: {},
       p1Grenades: initialP1Grenades,
       grenadePickups: [],
       smokeClouds: [],
@@ -2239,6 +2499,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     // Reinicializar puntos de spawn y armas en plataformas
     s.weaponSlots = initializeWeaponSpawnSlots(worldCfg);
     s.worldWeapons = [];
+    s.lastPickupTickByFighter = {};
     s.weaponSlots.forEach((slot, idx) => {
       const weaponType = SpawnableWeaponsList[Math.floor(Math.random() * SpawnableWeaponsList.length)];
       const wId = s.nextEntityId++;
@@ -2250,6 +2511,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         baseY: slot.y,
         bobTicks: idx * 20,
         spawnSlotIndex: idx,
+        ageTicks: 0,
       });
       slot.currentWeaponId = wId;
       slot.lastWeaponType = weaponType;
@@ -7626,6 +7888,9 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
               y: crate.y,
               baseY: crate.y,
               bobTicks: 0,
+              ageTicks: 0,
+              maxLifeTicks: 900,
+              pickupCooldownTicks: 25,
             });
             s.floatingTexts.push({
               id: s.nextEntityId++,
@@ -7798,329 +8063,43 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         }
       }
 
-      // Recolección de armas
-      for (let i = s.worldWeapons.length - 1; i >= 0; i--) {
-        const w = s.worldWeapons[i];
+      // Animación vertical de armas en el suelo y recolección determinista (1 arma más cercana por tick/cooldown)
+      for (const w of s.worldWeapons) {
         w.bobTicks++;
         w.y = w.baseY + Math.sin(w.bobTicks * 0.08) * 5;
-
-        const wData = getWeapon(w.weaponType);
-        const wSlot = slotForWeapon(w.weaponType);
-
-        // P1 pickup
-        const d1 = Math.hypot(w.x - p1.x, w.y - p1.y);
-        const p1Controls = gameMode === 'local1v1' ? CONTROLS.LOCAL_1V1_P1 : CONTROLS.SOLO;
-
-        let isP1SlotEmpty = false;
-        if (p1.inventory) {
-          if (wSlot === 'melee') {
-            isP1SlotEmpty = p1.inventory.melee === WeaponType.Fists;
-          } else if (wSlot === 'handgun') {
-            isP1SlotEmpty = p1.inventory.handgun === null;
-          } else if (wSlot === 'primary') {
-            isP1SlotEmpty = p1.inventory.primary === null;
-          } else if (wSlot === 'throwable') {
-            isP1SlotEmpty = canAddGrenade(s.p1Grenades);
-          }
-        }
-
-        const canP1Pickup =
-          p1.fsm === PlayerFSMState.Crouch ||
-          p1.equippedWeapon === WeaponType.Fists ||
-          isAnyPressed(keys, p1Controls.down) ||
-          isP1SlotEmpty;
-
-        if (d1 < 32 && canP1Pickup) {
-          if (wSlot === 'throwable') {
-            const gType = w.weaponType === WeaponType.Molotov ? GrenadeType.Molotov : GrenadeType.Frag;
-            if (canAddGrenade(s.p1Grenades)) {
-              const added = addGrenades(s.p1Grenades, gType, 2);
-              sounds.playPickup();
-              addSparks(w.x, w.y, '#38bdf8', 12);
-              s.floatingTexts.push({
-                id: s.nextEntityId++,
-                text: `+${added} ${wData.name} (${s.p1Grenades.ammo[gType]}/${GRENADE_MAX_CAPACITY})`,
-                x: p1.x,
-                y: p1.y - 35,
-                color: '#38bdf8',
-                life: 45,
-              });
-              if (w.spawnSlotIndex !== undefined && s.weaponSlots && s.weaponSlots[w.spawnSlotIndex]) {
-                if (s.weaponSlots[w.spawnSlotIndex].currentWeaponId === w.id) {
-                  s.weaponSlots[w.spawnSlotIndex].currentWeaponId = null;
-                }
-              }
-              s.worldWeapons.splice(i, 1);
-              continue;
-            }
-          } else if (p1.inventory) {
-            // Guardar munición del arma previa si dejamos una ranura de fuego
-            if (p1.inventory.activeSlot === 'handgun' && p1.inventory.handgun) {
-              p1.inventory.handgun.ammo = p1.ammo;
-            } else if (p1.inventory.activeSlot === 'primary' && p1.inventory.primary) {
-              p1.inventory.primary.ammo = p1.ammo;
-            }
-
-            if (wSlot === 'melee') {
-              if (p1.inventory.melee !== WeaponType.Fists) {
-                // Suelta el arma cuerpo a cuerpo anterior en los pies
-                s.worldWeapons.push({
-                  id: s.nextEntityId++,
-                  weaponType: p1.inventory.melee,
-                  x: p1.x,
-                  y: p1.y,
-                  baseY: p1.y,
-                  bobTicks: 0,
-                });
-              }
-              p1.inventory.melee = w.weaponType;
-              p1.inventory.activeSlot = 'melee';
-              p1.ammo = 0;
-              equipWeaponState(p1, w.weaponType, s.p1Controller);
-            } else if (wSlot === 'handgun') {
-              const prevFirearm = p1.inventory.handgun || p1.inventory.primary;
-              if (prevFirearm !== null) {
-                // Suelta el arma de fuego anterior en los pies (ranura única de arma de fuego)
-                s.worldWeapons.push({
-                  id: s.nextEntityId++,
-                  weaponType: prevFirearm.type,
-                  x: p1.x,
-                  y: p1.y,
-                  baseY: p1.y,
-                  bobTicks: 0,
-                });
-              }
-              p1.inventory.handgun = { type: w.weaponType, ammo: wData.magSize };
-              p1.inventory.primary = null;
-              p1.inventory.activeSlot = 'handgun';
-              p1.ammo = wData.magSize;
-              equipWeaponState(p1, w.weaponType, s.p1Controller);
-            } else if (wSlot === 'primary') {
-              const prevFirearm = p1.inventory.primary || p1.inventory.handgun;
-              if (prevFirearm !== null) {
-                // Suelta el arma de fuego anterior en los pies (ranura única de arma de fuego)
-                s.worldWeapons.push({
-                  id: s.nextEntityId++,
-                  weaponType: prevFirearm.type,
-                  x: p1.x,
-                  y: p1.y,
-                  baseY: p1.y,
-                  bobTicks: 0,
-                });
-              }
-              p1.inventory.primary = { type: w.weaponType, ammo: wData.magSize };
-              p1.inventory.handgun = null;
-              p1.inventory.activeSlot = 'primary';
-              p1.ammo = wData.magSize;
-              equipWeaponState(p1, w.weaponType, s.p1Controller);
-            }
-
-            sounds.playPickup();
-            s.floatingTexts.push({
-              id: s.nextEntityId++,
-              text: `¡${wData.name}!`,
-              x: p1.x,
-              y: p1.y - 35,
-              color: wSlot === 'primary' ? '#eab308' : wSlot === 'handgun' ? '#38bdf8' : '#f97316',
-              life: 45,
-            });
-
-            if (w.spawnSlotIndex !== undefined && s.weaponSlots && s.weaponSlots[w.spawnSlotIndex]) {
-              if (s.weaponSlots[w.spawnSlotIndex].currentWeaponId === w.id) {
-                s.weaponSlots[w.spawnSlotIndex].currentWeaponId = null;
-              }
-            }
-
-            s.worldWeapons.splice(i, 1);
-            continue;
-          } else {
-            p1.equippedWeapon = w.weaponType;
-            p1.ammo = wData.magSize;
-            sounds.playPickup();
-            equipWeaponState(p1, w.weaponType, s.p1Controller);
-
-            s.floatingTexts.push({
-              id: s.nextEntityId++,
-              text: `¡${wData.name}!`,
-              x: p1.x,
-              y: p1.y - 35,
-              color: '#38bdf8',
-              life: 45,
-            });
-
-            if (w.spawnSlotIndex !== undefined && s.weaponSlots && s.weaponSlots[w.spawnSlotIndex]) {
-              if (s.weaponSlots[w.spawnSlotIndex].currentWeaponId === w.id) {
-                s.weaponSlots[w.spawnSlotIndex].currentWeaponId = null;
-              }
-            }
-
-            s.worldWeapons.splice(i, 1);
-            continue;
-          }
-        }
-
-        // Bot / J2 pickup: soporte multi-bot para que cualquier bot pueda recoger armas
-        let weaponPickedByBot = false;
-        for (const inst of s.bots) {
-          const bState = inst.state;
-          if (!bState.isAlive) continue;
-
-          const d2 = Math.hypot(w.x - bState.x, w.y - bState.y);
-          let isP2SlotEmpty = false;
-          if (bState.inventory) {
-            if (wSlot === 'melee') {
-              isP2SlotEmpty = bState.inventory.melee === WeaponType.Fists;
-            } else if (wSlot === 'handgun') {
-              isP2SlotEmpty = bState.inventory.handgun === null;
-            } else if (wSlot === 'primary') {
-              isP2SlotEmpty = bState.inventory.primary === null;
-            } else if (wSlot === 'throwable') {
-              isP2SlotEmpty = canAddGrenade(inst.grenades);
-            }
-          }
-
-          const canBotPickup =
-            bState.fsm === PlayerFSMState.Crouch ||
-            bState.equippedWeapon === WeaponType.Fists ||
-            (gameMode === 'local1v1' && (isAnyPressed(keys, CONTROLS.LOCAL_1V1_P2.down) || isP2SlotEmpty));
-
-          if (d2 < 32 && canBotPickup) {
-            if (wSlot === 'throwable') {
-              const gType = w.weaponType === WeaponType.Molotov ? GrenadeType.Molotov : GrenadeType.Frag;
-              if (canAddGrenade(inst.grenades)) {
-                const added = addGrenades(inst.grenades, gType, 2);
-                sounds.playPickup();
-                addSparks(w.x, w.y, inst.color, 12);
-                s.floatingTexts.push({
-                  id: s.nextEntityId++,
-                  text: `+${added} ${wData.name} (${inst.grenades.ammo[gType]}/${GRENADE_MAX_CAPACITY})`,
-                  x: bState.x,
-                  y: bState.y - 35,
-                  color: inst.color,
-                  life: 45,
-                });
-                if (w.spawnSlotIndex !== undefined && s.weaponSlots && s.weaponSlots[w.spawnSlotIndex]) {
-                  if (s.weaponSlots[w.spawnSlotIndex].currentWeaponId === w.id) {
-                    s.weaponSlots[w.spawnSlotIndex].currentWeaponId = null;
-                  }
-                }
-                s.worldWeapons.splice(i, 1);
-                weaponPickedByBot = true;
-                break;
-              }
-            } else if (bState.inventory) {
-              // J2 en local1v1 con inventario por ranuras
-              if (bState.inventory.activeSlot === 'handgun' && bState.inventory.handgun) {
-                bState.inventory.handgun.ammo = bState.ammo;
-              } else if (bState.inventory.activeSlot === 'primary' && bState.inventory.primary) {
-                bState.inventory.primary.ammo = bState.ammo;
-              }
-
-              if (wSlot === 'melee') {
-                if (bState.inventory.melee !== WeaponType.Fists) {
-                  s.worldWeapons.push({
-                    id: s.nextEntityId++,
-                    weaponType: bState.inventory.melee,
-                    x: bState.x,
-                    y: bState.y,
-                    baseY: bState.y,
-                    bobTicks: 0,
-                  });
-                }
-                bState.inventory.melee = w.weaponType;
-                bState.inventory.activeSlot = 'melee';
-                bState.ammo = 0;
-                equipWeaponState(bState, w.weaponType, inst.controller || s.p2Controller);
-              } else if (wSlot === 'handgun') {
-                const prevFirearm = bState.inventory.handgun || bState.inventory.primary;
-                if (prevFirearm !== null) {
-                  s.worldWeapons.push({
-                    id: s.nextEntityId++,
-                    weaponType: prevFirearm.type,
-                    x: bState.x,
-                    y: bState.y,
-                    baseY: bState.y,
-                    bobTicks: 0,
-                  });
-                }
-                bState.inventory.handgun = { type: w.weaponType, ammo: wData.magSize };
-                bState.inventory.primary = null;
-                bState.inventory.activeSlot = 'handgun';
-                bState.ammo = wData.magSize;
-                equipWeaponState(bState, w.weaponType, inst.controller || s.p2Controller);
-              } else if (wSlot === 'primary') {
-                const prevFirearm = bState.inventory.primary || bState.inventory.handgun;
-                if (prevFirearm !== null) {
-                  s.worldWeapons.push({
-                    id: s.nextEntityId++,
-                    weaponType: prevFirearm.type,
-                    x: bState.x,
-                    y: bState.y,
-                    baseY: bState.y,
-                    bobTicks: 0,
-                  });
-                }
-                bState.inventory.primary = { type: w.weaponType, ammo: wData.magSize };
-                bState.inventory.handgun = null;
-                bState.inventory.activeSlot = 'primary';
-                bState.ammo = wData.magSize;
-                equipWeaponState(bState, w.weaponType, inst.controller || s.p2Controller);
-              }
-
-              sounds.playPickup();
-              s.floatingTexts.push({
-                id: s.nextEntityId++,
-                text: `¡${wData.name}!`,
-                x: bState.x,
-                y: bState.y - 35,
-                color: wSlot === 'primary' ? '#eab308' : wSlot === 'handgun' ? '#38bdf8' : '#f97316',
-                life: 45,
-              });
-
-              if (w.spawnSlotIndex !== undefined && s.weaponSlots && s.weaponSlots[w.spawnSlotIndex]) {
-                if (s.weaponSlots[w.spawnSlotIndex].currentWeaponId === w.id) {
-                  s.weaponSlots[w.spawnSlotIndex].currentWeaponId = null;
-                }
-              }
-
-              s.worldWeapons.splice(i, 1);
-              weaponPickedByBot = true;
-              break;
-            } else {
-              // Bot IA convencional (vsBot): un solo equippedWeapon
-              bState.equippedWeapon = w.weaponType;
-              bState.ammo = wData.magSize;
-              sounds.playPickup();
-              equipWeaponState(bState, w.weaponType, undefined);
-
-              s.floatingTexts.push({
-                id: s.nextEntityId++,
-                text: `¡${wData.name}!`,
-                x: bState.x,
-                y: bState.y - 35,
-                color: inst.color || '#f87171',
-                life: 45,
-              });
-
-              if (w.spawnSlotIndex !== undefined && s.weaponSlots && s.weaponSlots[w.spawnSlotIndex]) {
-                if (s.weaponSlots[w.spawnSlotIndex].currentWeaponId === w.id) {
-                  s.weaponSlots[w.spawnSlotIndex].currentWeaponId = null;
-                }
-              }
-
-              s.worldWeapons.splice(i, 1);
-              weaponPickedByBot = true;
-              break;
-            }
-          }
-        }
-        if (weaponPickedByBot) continue;
       }
 
-      // 4.4. CICLOS DE REEMPLAZO DE ARMAS EN PUNTOS DE SPAWN DESIGNADOS
-      // Regla estricta: Cada arma permanece indefinidamente en su punto exacto
-      // hasta que el ciclo de spawn genere una nueva arma en esa misma ubicación,
-      // momento en el cual el arma anterior se destruye automáticamente antes de crear la nueva.
+      const p1Controls = gameMode === 'local1v1' ? CONTROLS.LOCAL_1V1_P1 : CONTROLS.SOLO;
+      const p1WantsSwap =
+        p1.fsm === PlayerFSMState.Crouch || isAnyPressed(keys, p1Controls.down);
+      tryPickupNearestWorldWeapon(
+        s,
+        p1,
+        s.p1Controller,
+        s.p1Grenades,
+        p1WantsSwap,
+        true,
+        '#38bdf8'
+      );
+
+      for (const inst of s.bots) {
+        const bState = inst.state;
+        if (!bState.isAlive) continue;
+        const botWantsSwap =
+          bState.fsm === PlayerFSMState.Crouch ||
+          (gameMode === 'local1v1' && isAnyPressed(keys, CONTROLS.LOCAL_1V1_P2.down));
+        tryPickupNearestWorldWeapon(
+          s,
+          bState,
+          inst.controller || s.p2Controller,
+          inst.grenades,
+          botWantsSwap,
+          Boolean(bState.inventory),
+          inst.color || '#f87171'
+        );
+      }
+
+      // 4.4. CICLOS DE APARICIÓN Y DESAPARICIÓN DE ARMAS (SPAWNS Y ARMAS CAÍDAS)
       updateWeaponSpawns(s);
 
       // ─────────────────────────────────────────────────────────
@@ -9752,13 +9731,41 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         ctx.fillRect(med.x - 6, med.y - 2 + bobY, 12, 4);
       });
 
-      // 8. ARMAS EN EL MUNDO
+      // 8. ARMAS EN EL MUNDO (con pulso de aparición y parpadeo previo a desaparecer)
       for (const w of s.worldWeapons) {
         const wData = getWeapon(w.weaponType);
         const wImg = s.weaponImages[w.weaponType];
         const bobY = Math.sin(w.bobTicks * 0.1) * 4;
 
-        ctx.fillStyle = 'rgba(56, 189, 248, 0.25)';
+        let remainingTicks = Infinity;
+        if (w.maxLifeTicks !== undefined) {
+          remainingTicks = w.maxLifeTicks - (w.ageTicks ?? 0);
+        } else if (w.spawnSlotIndex !== undefined && s.weaponSlots && s.weaponSlots[w.spawnSlotIndex]) {
+          const slot = s.weaponSlots[w.spawnSlotIndex];
+          if (slot.currentWeaponId === w.id) {
+            remainingTicks = slot.spawnInterval - slot.timer;
+          }
+        }
+
+        const isExpiringSoon = remainingTicks <= 150;
+        const isBlinkDimmed = isExpiringSoon && Math.floor(w.bobTicks / 6) % 2 === 0;
+        const isJustSpawned = (w.ageTicks ?? 99) < 18;
+
+        ctx.save();
+        if (isBlinkDimmed) {
+          ctx.globalAlpha = 0.35;
+        }
+
+        if (isJustSpawned) {
+          const spawnPulseRadius = 18 + (18 - (w.ageTicks ?? 0)) * 0.8;
+          ctx.strokeStyle = 'rgba(56, 189, 248, 0.7)';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.arc(w.x, w.y + bobY, spawnPulseRadius, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+
+        ctx.fillStyle = isExpiringSoon ? 'rgba(245, 158, 11, 0.28)' : 'rgba(56, 189, 248, 0.25)';
         ctx.beginPath();
         ctx.arc(w.x, w.y + bobY, 18, 0, Math.PI * 2);
         ctx.fill();
@@ -9786,8 +9793,9 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           displayName += '…';
         }
         ctx.fillText(displayName, w.x, w.y + 14 + bobY);
-        ctx.fillStyle = wData.color;
+        ctx.fillStyle = isExpiringSoon ? '#fbbf24' : wData.color;
         ctx.fillText('▼', w.x, w.y - 14 + bobY);
+        ctx.restore();
       }
 
       // 8.5. PAQUETES DE GRANADAS EN EL MUNDO

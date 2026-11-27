@@ -577,6 +577,8 @@ const trainingWorld: WorldConfig = {
   ],
   weaponSpawns: [
     { x: 480, y: 320 },
+    { x: 180, y: 390 },
+    { x: 780, y: 390 },
   ],
   hazards: [],
   ambientSound: 'warehouse',

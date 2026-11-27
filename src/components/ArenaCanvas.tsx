@@ -721,6 +721,9 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     screenShake: number;
     hitStopTicks: number;
     weaponSpawnTimer: number;
+    p1StrengthTicks?: number;
+    p1BaseDamageModifier?: number;
+    slowMoTicks?: number;
     round: number;
     p1Score: number;
     roundActive: boolean;
@@ -1196,6 +1199,149 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     isBlade?: boolean;
     floatingTextPrefix?: string;
   }
+
+  /**
+   * Perfil de combate específico para armas cuerpo a cuerpo especiales (Motosierra,
+   * Látigo, Cadena, Silla, Asta de Bandera, Almohada Cósmica y armas estándar).
+   */
+  const getMeleeWeaponCombatProfile = (
+    weaponType: WeaponType,
+    isSanta: boolean,
+    isGymrat: boolean,
+    isTwoHand: boolean
+  ): {
+    reachX: number;
+    reachY: number;
+    baseDamage: number;
+    kbX: number;
+    kbY?: number;
+    stunTicks: number;
+    hitStop: number;
+    screenShake: number;
+    causedKnockdown: boolean;
+    prefix: string;
+    sparkColor: string;
+  } => {
+    const wpn = getWeapon(weaponType);
+    const dmgScale = isSanta ? 1.5 : 1.0;
+
+    switch (weaponType) {
+      case WeaponType.Chainsaw:
+        return {
+          reachX: 78,
+          reachY: 54,
+          baseDamage: 14 * dmgScale,
+          kbX: 110,
+          kbY: -40,
+          stunTicks: 14,
+          hitStop: 1,
+          screenShake: 9,
+          causedKnockdown: false,
+          prefix: '¡MOTOSIERRA! ',
+          sparkColor: '#fbbf24',
+        };
+      case WeaponType.Chain:
+        return {
+          reachX: 112,
+          reachY: 64,
+          baseDamage: (wpn.damage || 22) * (isSanta ? 1.8 : 1.35),
+          kbX: 330,
+          kbY: -120,
+          stunTicks: 34,
+          hitStop: 5,
+          screenShake: 16,
+          causedKnockdown: true,
+          prefix: '¡CADENAZO! ',
+          sparkColor: '#cbd5e1',
+        };
+      case WeaponType.Whip:
+        return {
+          reachX: 104,
+          reachY: 44,
+          baseDamage: (wpn.damage || 16) * (isGymrat ? 1.25 : 1.1),
+          kbX: 240,
+          kbY: -70,
+          stunTicks: 28,
+          hitStop: 4,
+          screenShake: 10,
+          causedKnockdown: false,
+          prefix: '¡LATIGAZO! ',
+          sparkColor: '#f59e0b',
+        };
+      case WeaponType.Flagpole:
+        return {
+          reachX: 120,
+          reachY: 66,
+          baseDamage: (wpn.damage || 22) * (isSanta ? 1.9 : 1.45),
+          kbX: 360,
+          kbY: -140,
+          stunTicks: 32,
+          hitStop: 5,
+          screenShake: 15,
+          causedKnockdown: true,
+          prefix: '¡ASTAZO! ',
+          sparkColor: '#38bdf8',
+        };
+      case WeaponType.Chair:
+        return {
+          reachX: 106,
+          reachY: 74,
+          baseDamage: (wpn.damage || 24) * (isSanta ? 1.9 : 1.5),
+          kbX: 370,
+          kbY: -180,
+          stunTicks: 38,
+          hitStop: 7,
+          screenShake: 20,
+          causedKnockdown: true,
+          prefix: '¡SILLAZO! ',
+          sparkColor: '#f97316',
+        };
+      case WeaponType.Pillow:
+        return {
+          reachX: 90,
+          reachY: 60,
+          baseDamage: 6,
+          kbX: 470,
+          kbY: -225,
+          stunTicks: 30,
+          hitStop: 4,
+          screenShake: 14,
+          causedKnockdown: true,
+          prefix: '¡ALMOHADAZO CÓSMICO! ',
+          sparkColor: '#f8fafc',
+        };
+      default:
+        if (isTwoHand) {
+          return {
+            reachX: isSanta ? 114 : 98,
+            reachY: isSanta ? 78 : 62,
+            baseDamage: (wpn.damage || 25) * (isSanta ? 2.2 : 1.6),
+            kbX: isSanta ? 390 : 340,
+            kbY: isSanta ? 220 : 150,
+            stunTicks: isSanta ? 42 : 32,
+            hitStop: isSanta ? 8 : 6,
+            screenShake: isSanta ? 24 : 16,
+            causedKnockdown: true,
+            prefix: isSanta
+              ? `¡AZOTE DEVASTADOR (${wpn.name.toUpperCase()})! `
+              : `¡AZOTE PESADO (${wpn.name.toUpperCase()})! `,
+            sparkColor: isSanta ? '#ef4444' : '#f97316',
+          };
+        }
+        return {
+          reachX: isGymrat ? 65 : 58,
+          reachY: 34,
+          baseDamage: wpn.damage || 16,
+          kbX: 170,
+          stunTicks: GameConstants.HitstunTicksLight,
+          hitStop: 4,
+          screenShake: 7,
+          causedKnockdown: false,
+          prefix: `¡${wpn.name.toUpperCase()}! `,
+          sparkColor: '#38bdf8',
+        };
+    }
+  };
 
   const resolveMeleeHits = (
     s: NonNullable<typeof stateRef.current>,
@@ -2530,6 +2676,8 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     s.projectiles = [];
     s.particles = [];
     s.fireZones = [];
+    s.p1StrengthTicks = 0;
+    s.slowMoTicks = 0;
     s.floatingTexts = [];
     s.p1Grenades = createGrenadeInventory(GRENADE_MAX_CAPACITY, GrenadeType.Frag, START_WITH_GRENADES ? GRENADE_INITIAL_COUNT : 0);
     s.grenadePickups = [];
@@ -2565,7 +2713,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     sounds.playRoundGong(true);
   }, [botFaction, playerFaction, createWorldHazards, botSlots, gameMode]);
 
-  // Manejador para equipar armas en Modo Práctica con munición infinita
+  // Manejador para equipar armas y consumibles en Modo Práctica
   const handleEquipPracticeWeapon = useCallback((weaponType: WeaponType) => {
     const s = stateRef.current;
     if (!s) return;
@@ -2573,6 +2721,41 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     const wData = getWeapon(weaponType);
     if (!wData) return;
     const wSlot = slotForWeapon(weaponType);
+
+    if (wSlot === 'powerup') {
+      if (weaponType === WeaponType.StrengthBoost) {
+        if (s.p1BaseDamageModifier === undefined) {
+          s.p1BaseDamageModifier = p1.damageDealtModifier || 1.0;
+        }
+        s.p1StrengthTicks = 600; // 10 segundos de super fuerza
+        p1.damageDealtModifier = (s.p1BaseDamageModifier || 1.0) * 2.5;
+        addSparks(p1.x, p1.y, '#a855f7', 24);
+        sounds.playPickup();
+        s.floatingTexts.push({
+          id: s.nextEntityId++,
+          text: '¡SUPER FUERZA x2.5 ACTIVADA! (10s)',
+          x: p1.x,
+          y: p1.y - 38,
+          color: '#c084fc',
+          life: 65,
+        });
+      } else if (weaponType === WeaponType.SloMo10) {
+        s.slowMoTicks = 360; // 6 segundos de tiempo bala
+        addSparks(p1.x, p1.y, '#06b6d4', 24);
+        sounds.playPickup();
+        s.floatingTexts.push({
+          id: s.nextEntityId++,
+          text: '¡ESTIMULANTE SLO-MO ACTIVADO! (6s)',
+          x: p1.x,
+          y: p1.y - 38,
+          color: '#22d3ee',
+          life: 65,
+        });
+      }
+      setShowPracticeArsenal(false);
+      tutorialInputProgressRef.current.hasOpenedRack = true;
+      return;
+    }
 
     if (p1.inventory) {
       if (wSlot === 'melee') {
@@ -2590,17 +2773,21 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         p1.inventory.activeSlot = 'primary';
         p1.ammo = 999;
       } else if (wSlot === 'throwable') {
-        const gType =
-          weaponType === WeaponType.Molotov ? GrenadeType.Molotov : GrenadeType.Frag;
-        s.p1Grenades.activeType = gType;
-        s.p1Grenades.ammo[gType] = Math.max(3, s.p1Grenades.ammo[gType] || 0);
         p1.inventory.activeSlot = 'throwable';
+        if (weaponType === WeaponType.Molotov || weaponType === WeaponType.Grenade) {
+          const gType = weaponType === WeaponType.Molotov ? GrenadeType.Molotov : GrenadeType.Frag;
+          s.p1Grenades.activeType = gType;
+          s.p1Grenades.ammo[gType] = Math.max(3, s.p1Grenades.ammo[gType] || 0);
+        }
         p1.ammo = 999;
       }
     }
     p1.equippedWeapon = weaponType;
     p1.ammo = wSlot === 'melee' ? 0 : 999;
     equipWeaponState(p1, weaponType, s.p1Controller);
+    p1.weaponGuardTicks = 150;
+    p1.weaponPickupAnimTicks = 8;
+    p1.equipState = 'drawing';
     sounds.playPickup();
     s.floatingTexts.push({
       id: s.nextEntityId++,
@@ -3533,7 +3720,8 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         // - Pulsación rápida (< 8 ticks) y soltar: dispara de inmediato en la dirección actual.
         // - Mantener M / G (>= 8 ticks): desenfunda y entra en apunte con flechas; al soltar dispara en el ángulo graduado.
         const p1FireHeld = p1Combat.fire;
-        if (p1FireHeld && p1.isAlive && s.roundActive && !isNinjaComboLocked) {
+        const p1HasThrowableInHand = isThrowableWeapon(p1.equippedWeapon) && p1.ammo > 0;
+        if (p1FireHeld && p1.isAlive && s.roundActive && !isNinjaComboLocked && !p1HasThrowableInHand) {
           ensureSlotActiveForAction(p1, 'firearm', s.p1Controller);
         }
         const p1CanAim =
@@ -3549,10 +3737,35 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           p1.equippedWeapon !== WeaponType.Fists &&
           getWeapon(p1.equippedWeapon).category === 'Firearm';
 
+        const p1IsFlamethrower = p1.equippedWeapon === WeaponType.Flamethrower;
         let p1ReleaseFire = false;
+        let p1FlameStreamPulse = false;
+
         if (p1CanAim && p1FireHeld) {
           p1.fireHoldTicks = (p1.fireHoldTicks || 0) + 1;
-          if (p1.fireHoldTicks >= 8) {
+
+          // Lanzallamas Napalm: dispara un chorro continuo de fuego real mientras se mantiene M / ○
+          if (p1IsFlamethrower && p1.ammo > 0) {
+            p1.isAiming = true;
+            p1.equipState = 'firing';
+            if (p1.aimFacingRight === undefined) {
+              p1.aimFacingRight = p1.facingRight;
+            }
+            if (isAnyPressed(keys, p1Controls.left)) {
+              p1.aimFacingRight = false;
+            } else if (isAnyPressed(keys, p1Controls.right)) {
+              p1.aimFacingRight = true;
+            }
+            const curAngle = p1.aimAngle || 0;
+            if (isAnyPressed(keys, p1Controls.up)) {
+              p1.aimAngle = Math.max(-1.48, curAngle - 0.065);
+            } else if (isAnyPressed(keys, p1Controls.down)) {
+              p1.aimAngle = Math.min(1.48, curAngle + 0.065);
+            }
+            if (p1.fireHoldTicks === 1 || p1.fireHoldTicks % 4 === 0) {
+              p1FlameStreamPulse = true;
+            }
+          } else if (p1.fireHoldTicks >= 8) {
             if (!p1.isAiming) {
               p1.isAiming = true;
               p1.equipState = 'aiming';
@@ -3577,18 +3790,19 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             }
           }
         } else {
-          if (p1CanAim && !p1FireHeld && (p1.fireHoldTicks || 0) > 0) {
+          if (p1CanAim && !p1FireHeld && (p1.fireHoldTicks || 0) > 0 && !(p1IsFlamethrower && (p1.fireHoldTicks || 0) >= 6)) {
             p1ReleaseFire = true;
           }
           p1.fireHoldTicks = 0;
           p1.isAiming = false;
           if (!p1ReleaseFire && !p1.isPistolShooting && !p1.isRifleShooting && (p1.burstRemaining || 0) <= 0) {
             p1.aimAngle = 0;
-            if (!isNinjaComboLocked) {
+            if ((p1.weaponGuardTicks || 0) > 0) {
+              p1.weaponGuardTicks = (p1.weaponGuardTicks || 0) - 1;
+            } else if (!isNinjaComboLocked) {
               p1.equipState = 'holstered';
             }
           }
-          p1.weaponGuardTicks = 0;
         }
 
         if (s.p1Controller) {
@@ -4162,14 +4376,29 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           }
         }
 
+        // Temporizadores de estimulantes activos (Super Fuerza y Slo-Mo)
+        if ((s.p1StrengthTicks || 0) > 0) {
+          s.p1StrengthTicks = (s.p1StrengthTicks || 0) - 1;
+          if (s.worldTick % 4 === 0) {
+            addSparks(p1.x + (Math.random() - 0.5) * 16, p1.y - Math.random() * 20, '#c084fc', 1);
+          }
+          if ((s.p1StrengthTicks || 0) <= 0) {
+            p1.damageDealtModifier = s.p1BaseDamageModifier || 1.0;
+          }
+        }
+        if ((s.slowMoTicks || 0) > 0) {
+          s.slowMoTicks = (s.slowMoTicks || 0) - 1;
+        }
+
         const clickFireJust = Boolean(s.mouseFireJust);
         const isAutoFirearmP1 = isFirearm && isAutomaticFirearm(p1.equippedWeapon);
         const canStartAutoBurst =
           !isAutoFirearmP1 || ((p1.burstCooldownTicks || 0) <= 0 && (p1.burstRemaining || 0) <= 0);
         const shouldTriggerFireP1 =
+          p1FlameStreamPulse ||
           (p1ReleaseFire && canStartAutoBurst) ||
           (clickFireJust && Boolean(p1.isAiming) && canStartAutoBurst) ||
-          (fireJustPressed && (!isFirearm || p1.ammo <= 0));
+          (!p1HasThrowableInHand && fireJustPressed && (!isFirearm || p1.ammo <= 0));
 
         if (
           shouldTriggerFireP1 &&
@@ -4183,8 +4412,20 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           !p1.isThrowing
         ) {
           if (isFirearm && isRifle) {
-            // Disparo de rifles/escopetas a dos manos (rifle_shoot - 4 frames con retroceso en frame 3)
-            if (p1.attackCooldown <= 0 && !p1.isRifleShooting) {
+            if (p1IsFlamethrower && p1FlameStreamPulse && p1.ammo > 0) {
+              // Emisión continua sostenida del Lanzallamas Napalm mientras se mantiene pulsado M / ○
+              const wpn = getWeapon(p1.equippedWeapon);
+              p1.isRifleShooting = true;
+              p1.rifleAnimFrame = 1;
+              p1.rifleAnimTimer = 0;
+              p1.rifleHasFired = true;
+              p1.ammo--;
+              PlayerFSM.tryTransition(p1, PlayerFSMState.RangedFire);
+              const dir = (p1.aimFacingRight ?? p1.facingRight) ? 1 : -1;
+              const muzzleX = p1.x + dir * 34;
+              const muzzleY = p1.y - 7;
+              emitWeaponFire(p1, muzzleX, muzzleY, s.p1Controller, wpn.color);
+            } else if (p1.attackCooldown <= 0 && !p1.isRifleShooting) {
               if (p1.ammo > 0) {
                 const wpn = getWeapon(p1.equippedWeapon);
                 p1.isRifleShooting = true;
@@ -4197,8 +4438,8 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                   const highRateAuto =
                     p1.equippedWeapon === WeaponType.M60 ||
                     p1.equippedWeapon === WeaponType.Flamethrower;
-                  p1.burstRemaining = highRateAuto ? 3 : 2;
-                  p1.burstTickTimer = 4;
+                  p1.burstRemaining = p1.equippedWeapon === WeaponType.Flamethrower ? 4 : highRateAuto ? 3 : 2;
+                  p1.burstTickTimer = p1.equippedWeapon === WeaponType.Flamethrower ? 3 : 4;
                 }
 
                 if (gameMode === 'practice' && tutorialStepRef.current === 5) {
@@ -4342,59 +4583,92 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           const p1IsSanta =
             (playerFaction || BotFaction.Ninja) === BotFaction.Santa ||
             p1.name.toUpperCase().includes('SANTA');
-          const charPrefix = p1IsSanta ? 'santaclo_' : (s.p1Faction === BotFaction.Gymrat ? 'gymrat_' : 'ninja_');
+          const p1IsGymrat =
+            (playerFaction || BotFaction.Ninja) === BotFaction.Gymrat ||
+            p1.name.toUpperCase().includes('GYMRAT');
+          const charPrefix = p1IsSanta ? 'santaclo_' : (p1IsGymrat ? 'gymrat_' : 'ninja_');
           const totalTwoHandFrames = p1IsSanta ? 5 : (s.p1SheetConfig?.twoHandTotalFrames || 6);
+          const isChainsaw = p1.equippedWeapon === WeaponType.Chainsaw;
 
           p1.twoHandAnimTimer = (p1.twoHandAnimTimer || 0) + 1;
-          // Duración dinámica ponderada (windup lento, impacto veloz, recuperación pesada)
-          const ticksPerFrame = getFrameDuration(`${charPrefix}two_hand_attack`, p1.twoHandAnimFrame || 0, p1IsSanta ? 5 : 4);
-          if (p1.twoHandAnimTimer >= ticksPerFrame) {
-            p1.twoHandAnimTimer = 0;
-            p1.twoHandAnimFrame = (p1.twoHandAnimFrame || 0) + 1;
 
-            if (p1.twoHandAnimFrame >= totalTwoHandFrames) {
-              // Al terminar el último frame (One Shot: frame 5 para Santa), vuelve al estado normal (Idle)
-              p1.isTwoHandAttacking = false;
-              p1.twoHandAnimFrame = 0;
+          if (isChainsaw && meleeHeld && (p1.twoHandAnimFrame || 0) >= 2) {
+            // Motosierra encendida: mantiene la hoja al frente vibrando, rugiendo y cortando cada 9 ticks
+            p1.equipState = 'using';
+            if ((p1.twoHandAnimTimer || 0) >= 9) {
               p1.twoHandAnimTimer = 0;
+              p1.twoHandAnimFrame = (p1.twoHandAnimFrame || 2) === 2 ? 3 : 2;
               p1.twoHandHasHit = false;
-              p1.weaponGuardTicks = 0;
-              p1.equipState = p1.isAiming ? 'aiming' : 'holstered';
-              p1.fsm = PlayerFSMState.Idle;
+              sounds.playChainsawAttack();
+              addSparks(p1.x + p1FacingDir * 36, p1.y - 2, '#fbbf24', 5);
+            }
+          } else {
+            // Duración dinámica ponderada (windup lento, impacto veloz, recuperación pesada)
+            const ticksPerFrame = getFrameDuration(`${charPrefix}two_hand_attack`, p1.twoHandAnimFrame || 0, p1IsSanta ? 5 : 4);
+            if (p1.twoHandAnimTimer >= ticksPerFrame) {
+              p1.twoHandAnimTimer = 0;
+              p1.twoHandAnimFrame = (p1.twoHandAnimFrame || 0) + 1;
+
+              if (p1.twoHandAnimFrame >= totalTwoHandFrames) {
+                p1.isTwoHandAttacking = false;
+                p1.twoHandAnimFrame = 0;
+                p1.twoHandAnimTimer = 0;
+                p1.twoHandHasHit = false;
+                p1.weaponGuardTicks = 90;
+                p1.equipState = p1.isAiming ? 'aiming' : 'drawing';
+                p1.fsm = PlayerFSMState.Idle;
+              }
             }
           }
 
-          // Detección de impacto calibrado por tipo de arma (FASE 3 Motor v2):
-          // Hacha/Martillo en frame 4 (idx 3), Bate/Tubo en frame 3, Katana en frame 2
           const targetHitFrame = getWeaponHitFrame(p1.equippedWeapon, p1IsSanta ? 3 : 3);
-          if (!p1.twoHandHasHit && (p1.twoHandAnimFrame || 0) === targetHitFrame) {
+          const shouldHitThisFrame = isChainsaw
+            ? !p1.twoHandHasHit && ((p1.twoHandAnimFrame || 0) === 2 || (p1.twoHandAnimFrame || 0) === 3)
+            : !p1.twoHandHasHit && (p1.twoHandAnimFrame || 0) === targetHitFrame;
+
+          if (shouldHitThisFrame) {
             p1.twoHandHasHit = true;
-            const wpn = getWeapon(p1.equippedWeapon);
-            const isBlade = isBladeWeapon(p1.equippedWeapon);
-            const baseDmg = (wpn.damage || 25) * (p1IsSanta ? 2.2 : 1.6); // Golpe pesado devastador para Santa
+            const profile = getMeleeWeaponCombatProfile(p1.equippedWeapon, p1IsSanta, p1IsGymrat, true);
+            const isBlade = isBladeWeapon(p1.equippedWeapon) || isChainsaw;
 
             resolveMeleeHits(s, p1, {
-              reachX: p1IsSanta ? 114 : 98,
-              reachY: p1IsSanta ? 78 : 62,
-              baseDamage: baseDmg,
-              kbX: p1IsSanta ? 390 : 340,
-              kbY: p1IsSanta ? 220 : 150, // Golpe hacia abajo y hacia adelante (azotando contra el suelo)
-              causedKnockdown: true,
-              stunTicks: p1IsSanta ? 42 : 32,
-              hitStop: p1IsSanta ? 8 : 6,
-              screenShake: p1IsSanta ? 24 : 16,
+              reachX: profile.reachX,
+              reachY: profile.reachY,
+              baseDamage: profile.baseDamage,
+              kbX: profile.kbX,
+              kbY: profile.kbY,
+              causedKnockdown: profile.causedKnockdown,
+              stunTicks: profile.stunTicks,
+              hitStop: profile.hitStop,
+              screenShake: profile.screenShake,
               isBlade,
-              floatingTextPrefix: p1IsSanta
-                ? `¡AZOTE DEVASTADOR (${wpn.name.toUpperCase()})! `
-                : `¡AZOTE PESADO (${wpn.name.toUpperCase()})! `,
+              floatingTextPrefix: profile.prefix,
             });
-            sounds.playPunch();
+            if (!isChainsaw) {
+              sounds.playWeaponSound(getWeaponSoundProfile(p1.equippedWeapon));
+            }
             addSparks(
               p1.x + (p1.facingRight ? 45 : -45),
-              p1.y + 18,
-              p1IsSanta ? '#ef4444' : '#f97316',
-              p1IsSanta ? 24 : 18
+              p1.y + (isChainsaw ? 0 : 14),
+              profile.sparkColor,
+              isChainsaw ? 10 : 18
             );
+            s.crates.forEach((c) => {
+              if (Math.hypot(p1.x + p1FacingDir * 38 - (c.x + c.w / 2), p1.y - (c.y + c.h / 2)) < 58) {
+                c.health -= profile.baseDamage * 1.4;
+                c.vx = p1FacingDir * 320;
+                sounds.playHit();
+                addSparks(c.x + 16, c.y + 16, profile.sparkColor, 10);
+              }
+            });
+            s.barrels.forEach((b) => {
+              if (Math.hypot(p1.x + p1FacingDir * 38 - (b.x + b.w / 2), p1.y - (b.y + b.h / 2)) < 58) {
+                b.health -= profile.baseDamage * 1.2;
+                b.vx = p1FacingDir * 360;
+                sounds.playHit();
+                addSparks(b.x + 12, b.y + 16, '#ef4444', 10);
+              }
+            });
           }
         }
 
@@ -4618,27 +4892,28 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           if (!p1.oneHandHasHit && isOneHandImpactFrame) {
             p1.oneHandHasHit = true;
             const p1FacingDir = p1.facingRight ? 1 : -1;
-            // Alcance mayor que el de los puños (puños = 50-55 px, One Hand = 65 px para Gymrat)
-            const hitReach = isGymratP1 ? 65 : 58;
-            const wpn = getWeapon(p1.equippedWeapon);
+            const profile = getMeleeWeaponCombatProfile(p1.equippedWeapon, isSantaP1, isGymratP1, false);
             const isBlade = isBladeWeapon(p1.equippedWeapon);
-            const baseDmg = wpn.damage || 16;
 
             resolveMeleeHits(s, p1, {
-              reachX: hitReach,
-              reachY: 34,
-              baseDamage: baseDmg,
-              kbX: 170,
-              stunTicks: GameConstants.HitstunTicksLight,
-              screenShake: 7,
+              reachX: profile.reachX,
+              reachY: profile.reachY,
+              baseDamage: profile.baseDamage,
+              kbX: profile.kbX,
+              kbY: profile.kbY,
+              stunTicks: profile.stunTicks,
+              hitStop: profile.hitStop,
+              screenShake: profile.screenShake,
+              causedKnockdown: profile.causedKnockdown,
               isBlade,
-              floatingTextPrefix: `¡${wpn.name.toUpperCase()}! `,
+              floatingTextPrefix: profile.prefix,
             });
+            addSparks(p1.x + p1FacingDir * (profile.reachX * 0.5), p1.y, profile.sparkColor, 10);
 
             // Impacto en cajas del escenario
             s.crates.forEach((c) => {
-              if (Math.hypot(p1.x + p1FacingDir * 30 - (c.x + c.w / 2), p1.y - (c.y + c.h / 2)) < 48) {
-                c.health -= baseDmg * 1.2;
+              if (Math.hypot(p1.x + p1FacingDir * 30 - (c.x + c.w / 2), p1.y - (c.y + c.h / 2)) < Math.max(48, profile.reachX * 0.65)) {
+                c.health -= profile.baseDamage * 1.2;
                 c.vx = p1FacingDir * 290;
                 sounds.playHit();
                 addSparks(c.x + 16, c.y + 16, '#d97706', 12);
@@ -4647,8 +4922,8 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
             // Impacto en barriles
             s.barrels.forEach((b) => {
-              if (Math.hypot(p1.x + p1FacingDir * 30 - (b.x + b.w / 2), p1.y - (b.y + b.h / 2)) < 48) {
-                b.health -= baseDmg;
+              if (Math.hypot(p1.x + p1FacingDir * 30 - (b.x + b.w / 2), p1.y - (b.y + b.h / 2)) < Math.max(48, profile.reachX * 0.65)) {
+                b.health -= profile.baseDamage;
                 b.vx = p1FacingDir * 330;
                 sounds.playHit();
                 addSparks(b.x + 12, b.y + 16, '#ef4444', 12);
@@ -6217,31 +6492,30 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             const targetBotHitFrame = getWeaponHitFrame(bot.equippedWeapon, botIsSanta ? 3 : 3);
             if (!bot.twoHandHasHit && (bot.twoHandAnimFrame || 0) === targetBotHitFrame) {
               bot.twoHandHasHit = true;
-              const hitReach = botIsSanta ? 114 : 98;
-              const hitHeight = botIsSanta ? 78 : 62;
-              const wpn = getWeapon(bot.equippedWeapon);
-              const isBlade = isBladeWeapon(bot.equippedWeapon);
-              const baseDmg = (wpn.damage || 25) * (botIsSanta ? 2.2 : 1.6);
+              const botIsGymrat = s.botFaction === BotFaction.Gymrat || bot.name.toUpperCase().includes('GYMRAT');
+              const profile = getMeleeWeaponCombatProfile(bot.equippedWeapon, botIsSanta, botIsGymrat, true);
+              const baseDmg = profile.baseDamage;
+              const isBlade = isBladeWeapon(bot.equippedWeapon) || bot.equippedWeapon === WeaponType.Chainsaw;
 
               resolveMeleeHits(s, bot, {
-                reachX: hitReach,
-                reachY: hitHeight,
+                reachX: profile.reachX,
+                reachY: profile.reachY,
                 baseDamage: baseDmg,
-                kbX: botIsSanta ? 380 : 340,
-                kbY: botIsSanta ? 210 : 150,
-                causedKnockdown: true,
-                stunTicks: botIsSanta ? 40 : 32,
-                hitStop: botIsSanta ? 8 : 6,
-                screenShake: botIsSanta ? 24 : 16,
+                kbX: profile.kbX,
+                kbY: profile.kbY,
+                causedKnockdown: profile.causedKnockdown,
+                stunTicks: profile.stunTicks,
+                hitStop: profile.hitStop,
+                screenShake: profile.screenShake,
                 isBlade,
-                floatingTextPrefix: `¡GOLPE PESADO (${wpn.name.toUpperCase()})! `,
+                floatingTextPrefix: profile.prefix,
               });
-              sounds.playPunch();
+              sounds.playWeaponSound(getWeaponSoundProfile(bot.equippedWeapon));
               addSparks(
                 bot.x + (bot.facingRight ? 45 : -45),
-                bot.y + 18,
-                botIsSanta ? '#ef4444' : '#f97316',
-                botIsSanta ? 24 : 18
+                bot.y + 14,
+                profile.sparkColor,
+                18
               );
 
               s.crates.forEach((c) => {
@@ -6398,25 +6672,29 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             const targetBotOneHandHitFrame = getWeaponHitFrame(bot.equippedWeapon, 2);
             if (!bot.oneHandHasHit && (bot.oneHandAnimFrame || 0) === targetBotOneHandHitFrame) {
               bot.oneHandHasHit = true;
-              const hitReach = 58;
-              const wpn = getWeapon(bot.equippedWeapon);
+              const botIsSanta = s.botFaction === BotFaction.Santa || bot.name.toUpperCase().includes('SANTA');
+              const botIsGymrat = s.botFaction === BotFaction.Gymrat || bot.name.toUpperCase().includes('GYMRAT');
+              const profile = getMeleeWeaponCombatProfile(bot.equippedWeapon, botIsSanta, botIsGymrat, false);
               const isBlade = isBladeWeapon(bot.equippedWeapon);
-              const baseDmg = wpn.damage || 16;
 
               resolveMeleeHits(s, bot, {
-                reachX: hitReach,
-                reachY: 34,
-                baseDamage: baseDmg,
-                kbX: 170,
-                stunTicks: GameConstants.HitstunTicksLight,
-                screenShake: 7,
+                reachX: profile.reachX,
+                reachY: profile.reachY,
+                baseDamage: profile.baseDamage,
+                kbX: profile.kbX,
+                kbY: profile.kbY,
+                stunTicks: profile.stunTicks,
+                hitStop: profile.hitStop,
+                screenShake: profile.screenShake,
+                causedKnockdown: profile.causedKnockdown,
                 isBlade,
-                floatingTextPrefix: `¡${wpn.name.toUpperCase()}! `,
+                floatingTextPrefix: profile.prefix,
               });
+              addSparks(bot.x + p2FacingDir * (profile.reachX * 0.5), bot.y, profile.sparkColor, 10);
 
               s.crates.forEach((c) => {
-                if (Math.hypot(bot.x + p2FacingDir * 30 - (c.x + c.w / 2), bot.y - (c.y + c.h / 2)) < 48) {
-                  c.health -= baseDmg * 1.2;
+                if (Math.hypot(bot.x + p2FacingDir * 30 - (c.x + c.w / 2), bot.y - (c.y + c.h / 2)) < Math.max(48, profile.reachX * 0.65)) {
+                  c.health -= profile.baseDamage * 1.2;
                   c.vx = p2FacingDir * 290;
                   sounds.playHit();
                   addSparks(c.x + 16, c.y + 16, '#d97706', 12);
@@ -6424,8 +6702,8 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
               });
 
               s.barrels.forEach((b) => {
-                if (Math.hypot(bot.x + p2FacingDir * 30 - (b.x + b.w / 2), bot.y - (b.y + b.h / 2)) < 48) {
-                  b.health -= baseDmg;
+                if (Math.hypot(bot.x + p2FacingDir * 30 - (b.x + b.w / 2), bot.y - (b.y + b.h / 2)) < Math.max(48, profile.reachX * 0.65)) {
+                  b.health -= profile.baseDamage;
                   b.vx = p2FacingDir * 330;
                   sounds.playHit();
                   addSparks(b.x + 12, b.y + 16, '#ef4444', 12);
@@ -8691,8 +8969,20 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           if (wallHit) {
             if (pr.explosionRadius > 0) {
               createExplosion(pr.x, pr.y, pr.explosionRadius, pr.damage * 0.85, Boolean(pr.isRocket), pr.shooterId);
+            } else if (pr.isFlame) {
+              addSparks(pr.x, pr.y, '#f97316', 3);
+              addSparks(pr.x, pr.y, '#fde047', 2);
+              const hasNearbyFire = s.fireZones.some((fz) => Math.hypot(fz.x - pr.x, fz.y - pr.y) < 34);
+              if (!hasNearbyFire && Math.random() < 0.35) {
+                s.fireZones.push({
+                  x: pr.x,
+                  y: pr.y,
+                  radius: 30,
+                  remainingTicks: 85,
+                });
+              }
             } else {
-              addSparks(pr.x, pr.y, pr.isLaser ? '#22d3ee' : '#cbd5e1', pr.isFlame ? 2 : 4);
+              addSparks(pr.x, pr.y, pr.isLaser ? '#22d3ee' : '#cbd5e1', 4);
             }
             s.projectiles.splice(i, 1);
             continue;
@@ -8777,22 +9067,29 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             const effectiveDamage = pr.ballisticType === 'pellet_spread'
               ? pr.damage * (1 - distRatio * 0.6)
               : pr.damage;
+            const isFlameHit = Boolean(pr.isFlame);
             const hitRes = CombatSystem.applyHit(hitTarget, {
               damage: effectiveDamage,
-              kbX: dir * (pr.ballisticType === 'pellet_spread' ? 32 : 65),
-              stunTicks: GameConstants.HitstunTicksLight,
+              kbX: dir * (isFlameHit ? 14 : pr.ballisticType === 'pellet_spread' ? 32 : 65),
+              stunTicks: isFlameHit ? 4 : GameConstants.HitstunTicksLight,
               attacker,
-              screenShake: 5,
+              hitStop: isFlameHit ? 0 : undefined,
+              screenShake: isFlameHit ? 2 : 5,
               weaponType: pr.weaponType,
             });
             hitTarget.fireTicks = Math.max(hitTarget.fireTicks, pr.onFireDuration);
             hitTarget.isOnFire = hitTarget.fireTicks > 0;
 
-            sounds.playHit();
-            addSparks(pr.x, pr.y, '#ef4444', 10);
-            s.screenShake = hitRes.screenShake;
-            s.hitStopTicks = hitRes.hitStop;
-            addBloodParticles(hitTarget.x, hitTarget.y, dir, hitRes.finalDamage);
+            if (isFlameHit) {
+              addSparks(pr.x, pr.y, '#f97316', 5);
+              addSparks(pr.x, pr.y, '#fde047', 4);
+            } else {
+              sounds.playHit();
+              addSparks(pr.x, pr.y, '#ef4444', 10);
+              s.hitStopTicks = hitRes.hitStop;
+              addBloodParticles(hitTarget.x, hitTarget.y, dir, hitRes.finalDamage);
+            }
+            s.screenShake = Math.max(s.screenShake, hitRes.screenShake);
 
             if (hitTarget.id === p1.id) {
               s.p1Controller.setPosition(p1.x, p1.y);
@@ -10235,12 +10532,37 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             (isP1 && (playerFaction || BotFaction.Ninja) === BotFaction.Santa) ||
             (is1v1 && s.botFaction === BotFaction.Santa);
 
-          // Estela pesada de impacto / onda expansiva
-          if (currentF >= 2 && currentF <= 4) {
+          // Estela pesada de impacto / onda expansiva / latigazo / sierra encendida
+          if (p.equippedWeapon === WeaponType.Chainsaw) {
+            ctx.save();
+            ctx.strokeStyle = '#fbbf24';
+            ctx.lineWidth = 2.2;
+            for (let sp = 0; sp < 3; sp++) {
+              const sy = -6 + Math.sin((s.worldTick + sp) * 1.9) * 8;
+              ctx.beginPath();
+              ctx.moveTo(28, sy);
+              ctx.lineTo(38 + Math.random() * 10, sy - 4 + Math.random() * 8);
+              ctx.stroke();
+            }
+            ctx.restore();
+          } else if (p.equippedWeapon === WeaponType.Chain || p.equippedWeapon === WeaponType.Flagpole) {
+            if (currentF >= 2 && currentF <= 4) {
+              ctx.save();
+              ctx.lineWidth = p.equippedWeapon === WeaponType.Chain ? 4 : 3.5;
+              ctx.strokeStyle = p.equippedWeapon === WeaponType.Chain ? '#cbd5e1' : '#38bdf8';
+              ctx.shadowColor = ctx.strokeStyle;
+              ctx.shadowBlur = 12;
+              ctx.beginPath();
+              ctx.moveTo(14, -4);
+              ctx.quadraticCurveTo(58, currentF === 3 ? 6 : -14, 108, currentF === 3 ? 12 : -4);
+              ctx.stroke();
+              ctx.restore();
+            }
+          } else if (currentF >= 2 && currentF <= 4) {
             ctx.save();
             ctx.lineWidth = isSantaFighter ? 5.2 : 4.5;
-            ctx.strokeStyle = isSantaFighter ? '#ef4444' : '#f97316';
-            ctx.shadowColor = isSantaFighter ? '#dc2626' : '#f97316';
+            ctx.strokeStyle = p.equippedWeapon === WeaponType.Pillow ? '#f8fafc' : (isSantaFighter ? '#ef4444' : '#f97316');
+            ctx.shadowColor = p.equippedWeapon === WeaponType.Pillow ? '#e2e8f0' : (isSantaFighter ? '#dc2626' : '#f97316');
             ctx.shadowBlur = isSantaFighter ? 20 : 16;
             ctx.beginPath();
             if (currentF === 3) {
@@ -10263,7 +10585,11 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             let tx = 14;
             let ty = 0;
             let tAngle = 0.1;
-            if (currentF === 0) {
+            if (p.equippedWeapon === WeaponType.Chainsaw && currentF >= 2) {
+              tx = 18 + (s.worldTick % 2 === 0 ? 1.5 : -1.5);
+              ty = 2 + (s.worldTick % 3 === 0 ? -1 : 1);
+              tAngle = 0.08;
+            } else if (currentF === 0) {
               tx = 14; ty = -2; tAngle = -0.3;
             } else if (currentF === 1) {
               tx = 10; ty = -26; tAngle = -1.2;
@@ -10314,7 +10640,15 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             ctx.shadowColor = isGymratFighter ? '#fb923c' : trailColor;
             ctx.shadowBlur = isShockWeapon ? 18 : 14;
             ctx.beginPath();
-            if (isGymratFighter && (p.oneHandAnimFrame || 0) === 2) {
+            if (p.equippedWeapon === WeaponType.Whip) {
+              // Latigazo largo de cuero trenzado
+              ctx.lineWidth = 3.2;
+              ctx.strokeStyle = '#f59e0b';
+              ctx.shadowColor = '#fbbf24';
+              ctx.shadowBlur = 12;
+              ctx.moveTo(14, -2);
+              ctx.quadraticCurveTo(56, (p.oneHandAnimFrame || 0) === 2 ? -12 : 10, 96, 2);
+            } else if (isGymratFighter && (p.oneHandAnimFrame || 0) === 2) {
               ctx.moveTo(14, -4);
               ctx.lineTo(48, -4);
             } else {
@@ -11017,13 +11351,39 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           ctx.fillRect(-12, -1, 24, 2);
           ctx.restore();
         } else if (pr.isFlame) {
-          const lifeRatio = 1 - pr.lifeTicks / pr.maxLifeTicks;
-          const r = 4 + (1 - lifeRatio) * 8;
+          // Fuego Napalm vivo multicapa: halo rojo exterior, cuerpo naranja y núcleo blanco-amarillo incandescente
+          const progress = Math.min(1, pr.lifeTicks / Math.max(1, pr.maxLifeTicks));
+          const lifeRatio = 1 - progress;
+          const rOuter = 6 + progress * 14;
+          const rMid = rOuter * 0.68;
+          const rCore = rOuter * 0.36;
+          const tailX = pr.x - pr.vx * 0.025;
+          const tailY = pr.y - pr.vy * 0.025;
+
           ctx.save();
-          ctx.globalAlpha = Math.max(0.15, lifeRatio * 0.9);
-          ctx.fillStyle = pr.color;
+          ctx.shadowColor = '#f97316';
+          ctx.shadowBlur = 14;
+
+          // Capa 1: halo rojo-naranja exterior
+          ctx.globalAlpha = Math.max(0.22, lifeRatio * 0.78);
+          ctx.fillStyle = '#ef4444';
           ctx.beginPath();
-          ctx.arc(pr.x, pr.y, r, 0, Math.PI * 2);
+          ctx.arc(tailX, tailY, rOuter * 0.85, 0, Math.PI * 2);
+          ctx.arc(pr.x, pr.y, rOuter, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Capa 2: cuerpo fuego naranja brillante
+          ctx.globalAlpha = Math.max(0.35, lifeRatio * 0.92);
+          ctx.fillStyle = '#f97316';
+          ctx.beginPath();
+          ctx.arc(pr.x, pr.y, rMid, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Capa 3: núcleo incandescente blanco-amarillo
+          ctx.globalAlpha = Math.max(0.45, lifeRatio);
+          ctx.fillStyle = '#fef08a';
+          ctx.beginPath();
+          ctx.arc(pr.x + pr.vx * 0.008, pr.y + pr.vy * 0.008, rCore, 0, Math.PI * 2);
           ctx.fill();
           ctx.restore();
         } else if (pr.isArrow) {
@@ -11116,7 +11476,13 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         ctx.fillText(ft.text, ft.x, ft.y);
       }
 
-      // 13.5. DESTELLO DE CEGADORA (FLASHBANG SCREEN FLASH OVERLAY)
+      // 13.5. DESTELLO DE CEGADORA Y TINTE SLO-MO
+      if ((s.slowMoTicks || 0) > 0) {
+        ctx.save();
+        ctx.fillStyle = 'rgba(6, 182, 212, 0.08)';
+        ctx.fillRect(0, 0, ARENA_WIDTH, ARENA_HEIGHT);
+        ctx.restore();
+      }
       if (s.flashbangFlash > 0.01) {
         ctx.save();
         ctx.fillStyle = `rgba(255, 255, 255, ${Math.min(0.92, s.flashbangFlash)})`;
@@ -11214,10 +11580,12 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       lastTime = now;
 
       if (!isPausedRef.current) {
+        const isSlowMo = (stateRef.current?.slowMoTicks || 0) > 0;
+        const stepMs = isSlowMo ? FIXED_STEP_MS * 1.9 : FIXED_STEP_MS;
         accumulator += frameTime;
-        while (accumulator >= FIXED_STEP_MS) {
+        while (accumulator >= stepMs) {
           updateGame();
-          accumulator -= FIXED_STEP_MS;
+          accumulator -= stepMs;
         }
       } else {
         accumulator = 0;

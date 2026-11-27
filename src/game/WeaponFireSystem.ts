@@ -159,27 +159,30 @@ export function fireWeaponProjectiles(params: FireWeaponParams): FireWeaponResul
   }
 
   if (ballisticType === 'flame_stream') {
-    const flameCount = 3;
-    const speed = wpn.projectileSpeed || 360;
+    // Chorro denso de llamas reales en cono sobre un rango medio (~200-245px) entre tirador y enemigo
+    const flameCount = 7;
+    const speed = wpn.projectileSpeed || 390;
+    const flamePalette = ['#ef4444', '#f97316', '#fb923c', '#facc15', '#fef08a'];
     for (let i = 0; i < flameCount; i++) {
-      const spread = (Math.random() - 0.5) * 0.34;
-      const spd = speed * (0.85 + Math.random() * 0.3);
-      const angle = baseAim + spread;
+      const coneNorm = flameCount > 1 ? (i / (flameCount - 1)) - 0.5 : 0;
+      const jitter = (Math.random() - 0.5) * 0.08;
+      const angle = baseAim + coneNorm * 0.26 + jitter;
+      const spd = speed * (0.86 + Math.random() * 0.28);
       projectiles.push({
         id: nextEntityId(),
-        x: muzzleX,
-        y: muzzleY + (Math.random() - 0.5) * 4,
+        x: muzzleX + dir * (4 + Math.random() * 10),
+        y: muzzleY + (Math.random() - 0.5) * 6,
         vx: dir * spd * Math.cos(angle),
-        vy: spd * Math.sin(angle) - 18,
-        damage: totalDamage / flameCount,
-        onFireDuration: wpn.onFireDuration || 160,
+        vy: spd * Math.sin(angle) - 14 - Math.random() * 18,
+        damage: Math.max(2.2, (totalDamage / flameCount) * 1.4),
+        onFireDuration: wpn.onFireDuration || 180,
         explosionRadius: 0,
         shooterId,
         weaponType,
         pelletCount: flameCount,
         lifeTicks: 0,
-        maxLifeTicks: 18,
-        color: i % 2 === 0 ? '#fb923c' : '#fde047',
+        maxLifeTicks: 28 + Math.floor(Math.random() * 9),
+        color: flamePalette[i % flamePalette.length],
         ballisticType,
         isFlame: true,
       });
@@ -188,10 +191,10 @@ export function fireWeaponProjectiles(params: FireWeaponParams): FireWeaponResul
     return {
       projectiles,
       ballisticType,
-      recoilForce: 12,
-      screenShake: 2,
-      sparkColor: '#fb923c',
-      sparkCount: 4,
+      recoilForce: 10,
+      screenShake: 2.5,
+      sparkColor: '#f97316',
+      sparkCount: 6,
     };
   }
 

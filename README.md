@@ -3,6 +3,16 @@
 🎮 **Juega ahora directamente desde tu navegador (sin descargar nada ni clonar el repositorio):**  
 👉 **[https://supern01.vercel.app/](https://supern01.vercel.app/)**
 
+<p align="left">
+  <img src="https://img.shields.io/badge/React_19-20232A?style=for-the-badge&logo=react&logoColor=61DAFB" alt="React 19" />
+  <img src="https://img.shields.io/badge/TypeScript_5-3178C6?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript 5" />
+  <img src="https://img.shields.io/badge/Tailwind_CSS_v4-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white" alt="Tailwind CSS v4" />
+  <img src="https://img.shields.io/badge/HTML5_Canvas_2D-E34F26?style=for-the-badge&logo=html5&logoColor=white" alt="HTML5 Canvas 2D" />
+  <img src="https://img.shields.io/badge/Three.js-000000?style=for-the-badge&logo=threedotjs&logoColor=white" alt="Three.js" />
+  <img src="https://img.shields.io/badge/Vite_6-646CFF?style=for-the-badge&logo=vite&logoColor=white" alt="Vite 6" />
+  <img src="https://img.shields.io/badge/Vercel-000000?style=for-the-badge&logo=vercel&logoColor=white" alt="Vercel" />
+</p>
+
 **superN** es un juego web de acción, plataformas y combate táctico 2D inspirado en *Superfighters Deluxe*. Funciona directamente en navegadores de escritorio y teléfonos móviles (con controles táctiles estilo PSP), ejecutando una simulación determinista a **60 Hz** con física arcade, arsenal variado, inventario de 3 ranuras activas y combates contra bots de IA o en modo práctica.
 
 ---
@@ -18,15 +28,15 @@ No necesitas instalar programas ni descargar código fuente para jugar:
 
 ## 🛠️ Tecnologías Utilizadas (Formulación del Juego y Despliegue)
 
-| Área | Tecnología / Herramienta | Función en el proyecto |
-|---|---|---|
-| **Interfaz & Estado** | **React 19** + **TypeScript 5** | Arquitectura modular de pantallas, HUD reactivo (`FighterBar`), armería interactiva y tipado estricto. |
-| **Estilos & Iconos** | **Tailwind CSS v4** + **Lucide React** | Diseño retro arcade responsivo, modales apaisados y controles táctiles adaptados a móviles. |
-| **Motor 2D (60 Hz)** | **HTML5 Canvas 2D** | Simulación física de paso fijo (`1000 / 60 ms`), partículas, fuego multicapa, hit-stop, screen-shake y pixel-art nítido (`imageSmoothingEnabled = false`). |
-| **Escena 3D (Escritorio)** | **Three.js** (`WebGLRenderer` + `RoomEnvironment`) | Portada 3D PBR atmosférica con niebla, luces dinámicas, lluvia y reflejos en navegadores de escritorio. |
-| **Audio Procedural** | **Web Audio API** (`SoundEffects.ts`) | Síntesis de disparos, explosiones, motosierra, látigo, golpes y gong en tiempo real sin descarga de audios pesados. |
-| **Empaquetado** | **Vite 6** + **tsc** | Compilación rápida, tree-shaking y verificación de tipos (`npm run lint` / `npm run build`). |
-| **Despliegue / Hosting** | **Vercel** | Despliegue web continuo accesible al instante desde **[https://supern01.vercel.app/](https://supern01.vercel.app/)**. |
+| Área | Icono | Tecnología / Herramienta | Función en el proyecto |
+|---|---|---|---|
+| **Interfaz & Estado** | <img src="https://cdn.simpleicons.org/react/61DAFB" width="20" height="20" alt="React" /> <img src="https://cdn.simpleicons.org/typescript/3178C6" width="20" height="20" alt="TypeScript" /> | **React 19** + **TypeScript 5** | Arquitectura modular de pantallas, HUD reactivo (`FighterBar`), armería interactiva y tipado estricto. |
+| **Estilos & Iconos** | <img src="https://cdn.simpleicons.org/tailwindcss/06B6D4" width="20" height="20" alt="Tailwind CSS" /> <img src="https://cdn.simpleicons.org/lucide/F56565" width="20" height="20" alt="Lucide" /> | **Tailwind CSS v4** + **Lucide React** | Diseño retro arcade responsivo, modales apaisados y controles táctiles adaptados a móviles. |
+| **Motor 2D (60 Hz)** | <img src="https://cdn.simpleicons.org/html5/E34F26" width="20" height="20" alt="HTML5 Canvas" /> | **HTML5 Canvas 2D** | Simulación física de paso fijo (`1000 / 60 ms`), partículas, fuego multicapa, hit-stop, screen-shake y pixel-art nítido (`imageSmoothingEnabled = false`). |
+| **Escena 3D (Escritorio)** | <img src="https://cdn.simpleicons.org/threedotjs/ffffff" width="20" height="20" alt="Three.js" /> | **Three.js** (`WebGLRenderer` + `RoomEnvironment`) | Portada 3D PBR atmosférica con niebla, luces dinámicas, lluvia y reflejos en navegadores de escritorio. |
+| **Audio Procedural** | 🔊 | **Web Audio API** (`SoundEffects.ts`) | Síntesis de disparos, explosiones, motosierra, látigo, golpes y gong en tiempo real sin descarga de audios pesados. |
+| **Empaquetado** | <img src="https://cdn.simpleicons.org/vite/646CFF" width="20" height="20" alt="Vite" /> | **Vite 6** + **tsc** | Compilación rápida, tree-shaking y verificación de tipos (`npm run lint` / `npm run build`). |
+| **Despliegue / Hosting** | <img src="https://cdn.simpleicons.org/vercel/ffffff" width="20" height="20" alt="Vercel" /> | **Vercel** | Despliegue web continuo accesible al instante desde **[https://supern01.vercel.app/](https://supern01.vercel.app/)**. |
 
 ---
 

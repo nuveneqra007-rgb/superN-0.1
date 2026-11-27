@@ -12,7 +12,7 @@ import { GameConstants } from '../game/GameConstants';
 import { PhysicsRect, PhysicsStep } from '../game/PhysicsStep';
 import { PlayerFSM } from '../game/PlayerFSM';
 import { createPlayerState, PlayerFSMState, PlayerState, WeaponSlotType, PlayerInventory } from '../game/PlayerState';
-import { getWeapon, isBladeWeapon, isOneHandWeapon, isOneHandBladeWeapon, isOneHandBluntWeapon, isPistolWeapon, isRifleWeapon, isSwordWeapon, isThrowableWeapon, isTwoHandWeapon, SpawnableWeaponsList, WeaponCategory, WeaponDatabase, WeaponType, getWeaponStunData, slotForWeapon, WeaponSlot, getWeaponGrip, getWeaponHitFrame, getWeaponSoundProfile } from '../game/WeaponData';
+import { getWeapon, isBladeWeapon, isOneHandWeapon, isOneHandBladeWeapon, isOneHandBluntWeapon, isPistolWeapon, isRifleWeapon, isSwordWeapon, isThrowableWeapon, isTwoHandWeapon, isAutomaticFirearm, SpawnableWeaponsList, WeaponCategory, WeaponDatabase, WeaponType, getWeaponStunData, slotForWeapon, WeaponSlot, getWeaponGrip, getWeaponHitFrame, getWeaponSoundProfile } from '../game/WeaponData';
 import { PlayerController, PlayerInput, PlayerState as ControllerState, PLAYER_CONFIG } from '../game/PlayerController';
 import { sounds } from '../game/SoundEffects';
 import { getWorldConfig, WorldConfig, HazardCfg, PlatformRect } from '../game/WorldData';
@@ -891,6 +891,7 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       damageMultiplier: shooter.damageDealtModifier,
       nextEntityId: () => s.nextEntityId++,
       bulletColor,
+      aimAngle: shooter.aimAngle || 0,
     });
 
     for (const proj of res.projectiles) {
@@ -3062,17 +3063,69 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         const isNinjaComboLocked = !!p1.isSwordAttacking || !!p1.isMeleeComboAttacking || !!p1.isOneHandAttacking || !!p1.isTwoHandAttacking || !!p1.isThrowing;
         const isShootingPistol = !!p1.isPistolShooting;
 
+        // Postura de apuntado direccional (mantener M/G con arma de fuego)
+        const p1FireHeld = p1Combat.fire;
+        const p1CanAim =
+          p1.isAlive &&
+          s.roundActive &&
+          p1.fsm !== PlayerFSMState.KnockedDown &&
+          p1.fsm !== PlayerFSMState.GetUp &&
+          p1.fsm !== PlayerFSMState.Hitstun &&
+          p1.fsm !== PlayerFSMState.Roll &&
+          !p1.isGrappling &&
+          !p1.isThrowing &&
+          !isNinjaComboLocked &&
+          p1.equippedWeapon !== WeaponType.Fists &&
+          getWeapon(p1.equippedWeapon).category === 'Firearm' &&
+          p1.ammo > 0;
+
+        let p1SemiReleaseFire = false;
+        if (p1CanAim && p1FireHeld) {
+          p1.fireHoldTicks = (p1.fireHoldTicks || 0) + 1;
+          const isAuto = isAutomaticFirearm(p1.equippedWeapon);
+          if (isAuto || p1.fireHoldTicks >= 4) {
+            p1.isAiming = true;
+            if (leftKey) {
+              p1.facingRight = false;
+              s.p1Controller.facingRight = false;
+            } else if (rightKey) {
+              p1.facingRight = true;
+              s.p1Controller.facingRight = true;
+            }
+            const upAimHeld = isAnyPressed(keys, p1Controls.up);
+            const curAngle = p1.aimAngle || 0;
+            if (upAimHeld) {
+              p1.aimAngle = Math.max(-1.38, curAngle - 0.065);
+            } else if (crouchHeld) {
+              p1.aimAngle = Math.min(1.15, curAngle + 0.065);
+            }
+          }
+        } else {
+          if (p1CanAim && !p1FireHeld && (p1.fireHoldTicks || 0) > 0 && !isAutomaticFirearm(p1.equippedWeapon)) {
+            p1SemiReleaseFire = true;
+          }
+          p1.fireHoldTicks = 0;
+          if (!p1FireHeld) {
+            p1.isAiming = false;
+            if (!p1SemiReleaseFire) {
+              p1.aimAngle = 0;
+            }
+          }
+        }
+
+        const isP1AimLocked = Boolean(p1.isAiming);
+
         if (s.p1Controller) {
           s.p1Controller.hasHeavyRifleEquipped = isRifleWeapon(p1.equippedWeapon);
         }
 
         const p1Input: PlayerInput = {
-          moveDir: isNinjaComboLocked ? 0 : moveDir,
-          run: (isNinjaComboLocked || isShootingPistol) ? false : runHeld,
-          jump: isNinjaComboLocked ? false : jumpJustPressed,
-          jumpHeld: isNinjaComboLocked ? false : jumpHeld,
-          roll: isNinjaComboLocked ? false : rollPressed,
-          dropThrough: isNinjaComboLocked ? false : dropThrough,
+          moveDir: (isNinjaComboLocked || isP1AimLocked) ? 0 : moveDir,
+          run: (isNinjaComboLocked || isShootingPistol || isP1AimLocked) ? false : runHeld,
+          jump: (isNinjaComboLocked || isP1AimLocked) ? false : jumpJustPressed,
+          jumpHeld: (isNinjaComboLocked || isP1AimLocked) ? false : jumpHeld,
+          roll: (isNinjaComboLocked || isP1AimLocked) ? false : rollPressed,
+          dropThrough: (isNinjaComboLocked || isP1AimLocked) ? false : dropThrough,
         };
 
         // Recuperación activa de derribo para P1 mediante teclas de movimiento (Flechas, salto, rodada)
@@ -3591,9 +3644,17 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
         // ═════════════════════════════════════════════════════════
         // 2. TECLA "M": EXCLUSIVA PARA DISPARAR ARMAS DE FUEGO
+        // Semiautomáticas: toque rápido o soltar tras apuntar; Automáticas: ráfaga continua
         // ═════════════════════════════════════════════════════════
+        const isAutoFirearmP1 = isFirearm && isAutomaticFirearm(p1.equippedWeapon);
+        const shouldTriggerFireP1 =
+          p1SemiReleaseFire ||
+          (isAutoFirearmP1 && firePressed) ||
+          (fireJustPressed && (!isFirearm || p1.ammo <= 0)) ||
+          (firePressed && (p1.isRifleShooting || p1.isPistolShooting));
+
         if (
-          (fireJustPressed || (firePressed && (p1.isRifleShooting || p1.isPistolShooting))) &&
+          shouldTriggerFireP1 &&
           p1.isAlive &&
           s.roundActive &&
           p1.fsm !== PlayerFSMState.KnockedDown &&
@@ -3684,6 +3745,10 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             p1.attackCooldown = 20;
             sounds.playDryFire();
           }
+        }
+
+        if (!p1.isAiming && !p1.isPistolShooting && !p1.isRifleShooting) {
+          p1.aimAngle = 0;
         }
 
         // ═════════════════════════════════════════════════════════

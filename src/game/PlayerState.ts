@@ -83,6 +83,7 @@ export interface PlayerState {
   weaponGuardTicks?: number;
   isAiming?: boolean;
   aimAngle?: number;
+  fireHoldTicks?: number;
 
   // Contadores de estado
   rollTicks: number;

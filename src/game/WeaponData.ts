@@ -1339,6 +1339,24 @@ export function isThrowableWeapon(type: string | WeaponType): boolean {
   return THROWABLE_WEAPONS.has(type as WeaponType);
 }
 
+const AUTOMATIC_FIREARM_WEAPONS: ReadonlySet<WeaponType> = new Set([
+  WeaponType.MachinePistol,
+  WeaponType.Uzi,
+  WeaponType.SilencedUzi,
+  WeaponType.TommyGun,
+  WeaponType.SMG,
+  WeaponType.MP50,
+  WeaponType.Rifle,
+  WeaponType.Assault,
+  WeaponType.Carbine,
+  WeaponType.M60,
+  WeaponType.Flamethrower,
+]);
+
+export function isAutomaticFirearm(type: WeaponType): boolean {
+  return AUTOMATIC_FIREARM_WEAPONS.has(type);
+}
+
 export interface WeaponStunData {
   stunLight: number;
   stunMedium: number;

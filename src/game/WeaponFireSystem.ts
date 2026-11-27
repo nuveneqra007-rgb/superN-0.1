@@ -53,6 +53,7 @@ export interface FireWeaponParams {
   damageMultiplier: number;
   nextEntityId: () => number;
   bulletColor?: string;
+  aimAngle?: number;
 }
 
 export interface FireWeaponResult {

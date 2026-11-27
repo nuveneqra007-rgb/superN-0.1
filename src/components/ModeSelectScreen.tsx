@@ -13,6 +13,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { sounds } from '../game/SoundEffects';
 import { Volume2, VolumeX, BookOpen, Settings, Swords, ChevronRight, X } from 'lucide-react';
 import { CONTROLS_TEXT } from '../game/Controls';
+import { useMobileDevice } from '../hooks/useMobileDevice';
 
 export type GameMode = 'vsBot' | 'local1v1' | 'practice' | 'coop';
 
@@ -40,6 +41,7 @@ export const ModeSelectScreen: React.FC<ModeSelectScreenProps> = ({
   onConfirmMode,
   onBackToLanding,
 }) => {
+  const { isMobile } = useMobileDevice();
   const [muted, setMuted] = useState<boolean>(sounds.getMuted());
   const [activePrimaryIdx, setActivePrimaryIdx] = useState<number>(
     selectedMode === 'local1v1' || selectedMode === 'coop' ? 1 : selectedMode === 'practice' ? 0 : 0
@@ -84,7 +86,8 @@ export const ModeSelectScreen: React.FC<ModeSelectScreenProps> = ({
   }, [onSelectMode, onConfirmMode]);
 
   // Definición de las opciones y sus sub-menús contextuales
-  const primaryOptions: PrimaryOption[] = [
+  // En dispositivos móviles solo se muestra el modo 1 Jugador (vs Bot y Práctica)
+  const allPrimaryOptions: PrimaryOption[] = [
     {
       id: 'solo',
       title: '1 JUGADOR',
@@ -164,7 +167,12 @@ export const ModeSelectScreen: React.FC<ModeSelectScreenProps> = ({
     },
   ];
 
-  const currentPrimary = primaryOptions[activePrimaryIdx];
+  // En móvil/táctil se habilita únicamente 1 JUGADOR (VS Bot y Práctica)
+  const primaryOptions = isMobile
+    ? allPrimaryOptions.filter((opt) => opt.id !== 'versus')
+    : allPrimaryOptions;
+
+  const currentPrimary = primaryOptions[activePrimaryIdx] ?? primaryOptions[0];
 
   // Navegación por teclado arcade (estilo Duck Game)
   useEffect(() => {

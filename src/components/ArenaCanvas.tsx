@@ -18,6 +18,8 @@ import { sounds } from '../game/SoundEffects';
 import { getWorldConfig, WorldConfig, HazardCfg, PlatformRect } from '../game/WorldData';
 import { GameMode } from './ModeSelectScreen';
 import { FighterBar, FighterBarData, FighterSlotInfo, SHOW_ENERGY_BAR } from './FighterBar';
+import { useMobileDevice } from '../hooks/useMobileDevice';
+import { MobilePSPControls } from './MobilePSPControls';
 import { getFighterSheetConfig, FighterSheetConfig, getCharacterDefByFaction, getUniformScaleConfig, UniformScaleAnchor, frameMetaData, getCharacterHandProfile } from '../game/CharacterData';
 import { renderEquippedWeaponIdle, renderWeaponAtHand } from '../game/WeaponRenderer';
 import { fireWeaponProjectiles, FiredProjectileSpec } from '../game/WeaponFireSystem';
@@ -568,6 +570,9 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
   useEffect(() => {
     controlSchemeRef.current = controlScheme;
   }, [controlScheme]);
+
+  // Detección de dispositivo móvil para controles táctiles PSP y viewport adaptativo
+  const { isMobile } = useMobileDevice();
 
   // Menú de pausa y modales retro
   const [isPaused, setIsPaused] = useState(false);
@@ -2352,6 +2357,67 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       life: 45,
     });
   }, []);
+
+  // Puente táctil PSP -> teclas virtuales del motor (Multi-Touch Móvil)
+  const handleVirtualKey = useCallback(
+    (code: string, pressed: boolean) => {
+      const s = stateRef.current;
+      if (!s) return;
+
+      if (pressed) {
+        sounds.resumeAudio();
+
+        if (code === 'Escape') {
+          if (showPracticeArsenalRef.current) {
+            setShowPracticeArsenal(false);
+            s.keys = {};
+            s.keysJustPressed = {};
+            return;
+          }
+          if (showExitConfirmRef.current) {
+            setShowExitConfirm(false);
+            return;
+          }
+          if (showControlsModalRef.current) {
+            setShowControlsModal(false);
+            return;
+          }
+          if (isMatchOverRef.current) return;
+          setIsPaused((prev) => {
+            const next = !prev;
+            if (!next && stateRef.current) {
+              stateRef.current.keysJustPressed = {};
+            }
+            return next;
+          });
+          return;
+        }
+
+        if (gameMode === 'practice' && code === 'KeyE' && s.p1) {
+          const distToRack = Math.hypot(s.p1.x - 140, s.p1.y - 470);
+          if (distToRack < 95) {
+            s.keys = {};
+            s.keysJustPressed = {};
+            s.mouseFireJust = false;
+            setShowPracticeArsenal((prev) => !prev);
+            tutorialInputProgressRef.current.hasOpenedRack = true;
+            if (tutorialStepRef.current === 4) {
+              setTutorialStep(5);
+            }
+            return;
+          }
+        }
+
+        if (!s.keys[code]) {
+          s.keysJustPressed[code] = true;
+        }
+        s.keys[code] = true;
+      } else {
+        s.keys[code] = false;
+      }
+    },
+    [gameMode]
+  );
 
   // Teclado y control de eventos
   useEffect(() => {
@@ -11067,9 +11133,17 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
   }, [maxRounds, restartRound]);
 
   return (
-    <div className="relative w-full h-full flex flex-col items-center justify-center p-2 select-none overflow-hidden bg-neutral-950">
+    <div
+      className={`relative w-full h-full flex flex-col items-center justify-center select-none overflow-hidden bg-neutral-950 ${
+        isMobile ? 'p-1' : 'p-2'
+      }`}
+    >
       {/* HUD Superior: Nombre del Mundo, P1 vs COM central y botón Salir */}
-      <div className="w-full max-w-[1240px] bg-black/90 border-2 border-white border-b-0 px-4 py-2.5 flex items-center justify-between text-[10px] font-pixel shadow-lg">
+      <div
+        className={`w-full max-w-[1240px] bg-black/90 border-2 border-white border-b-0 flex items-center justify-between font-pixel shadow-lg ${
+          isMobile ? 'px-2 py-1 text-[8px]' : 'px-4 py-2.5 text-[10px]'
+        }`}
+      >
         <div className="flex items-center gap-2.5 text-neutral-300">
           <span className="text-cyan-400 font-bold uppercase tracking-wider">{hudState.worldName}</span>
           <span className="text-neutral-600">|</span>
@@ -11179,9 +11253,19 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             }
           }}
           tabIndex={0}
-          className="w-full max-w-[1240px] max-h-[75vh] aspect-[16/9] object-contain block focus:outline-none"
+          className={`w-full max-w-[1240px] aspect-[16/9] object-contain block focus:outline-none ${
+            isMobile ? 'max-h-[82dvh]' : 'max-h-[75vh]'
+          }`}
           style={{ imageRendering: 'pixelated' }}
         />
+
+        {/* Controles Táctiles PSP para Móvil (Solo 1 Jugador) */}
+        {isMobile && !isPaused && !showPracticeArsenal && !hudState.isMatchOver && (
+          <MobilePSPControls
+            onVirtualKey={handleVirtualKey}
+            isPracticeMode={gameMode === 'practice'}
+          />
+        )}
 
         {/* Cuadro Tutorial de Pasos Estilo Superfighters */}
         {gameMode === 'practice' && tutorialVisible && (

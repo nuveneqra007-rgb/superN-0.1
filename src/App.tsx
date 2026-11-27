@@ -6,6 +6,7 @@ import { MainMenu } from './components/MainMenu';
 import { WorldSelectScreen } from './components/WorldSelectScreen';
 import { ArenaCanvas } from './components/ArenaCanvas';
 import { ArsenalView } from './components/ArsenalView';
+import { MobileOrientationGuard } from './components/MobileOrientationGuard';
 
 export type Screen = 'landing' | 'mode' | 'select' | 'world' | 'arena';
 export type { GameMode };
@@ -119,7 +120,8 @@ export const App: React.FC = () => {
   const bArch = getBotArchetype(botFaction);
 
   return (
-    <div className="w-screen h-screen bg-neutral-950 text-neutral-100 flex flex-col justify-center items-center overflow-hidden">
+    <MobileOrientationGuard>
+      <div className="w-screen h-dvh bg-neutral-950 text-neutral-100 flex flex-col justify-center items-center overflow-hidden">
       <div
         className={`w-full h-full flex flex-col justify-center items-center transition-opacity duration-300 ${
           isTransitioning ? 'opacity-0 pointer-events-none' : 'opacity-100'
@@ -164,6 +166,7 @@ export const App: React.FC = () => {
         )}
       </div>
     </div>
+    </MobileOrientationGuard>
   );
 };
 

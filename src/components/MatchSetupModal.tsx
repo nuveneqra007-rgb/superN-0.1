@@ -13,6 +13,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { sounds } from '../game/SoundEffects';
 import { BATTLE_WORLDS } from '../game/WorldData';
+import { useMobileDevice } from '../hooks/useMobileDevice';
 
 export type GameModeOption = 'INFINITE' | '5 ROUNDS' | '3 ROUNDS' | '7 ROUNDS' | '1 ROUND';
 
@@ -52,6 +53,7 @@ export const MatchSetupModal: React.FC<MatchSetupModalProps> = ({
   onClose,
   onStartFight,
 }) => {
+  const { isMobile } = useMobileDevice();
   // Cursor de selección (0: FIGHT!, 1: MAP, 2: GAME MODE, 3: RESET)
   const [selectedRow, setSelectedRow] = useState<number>(0);
 
@@ -185,40 +187,45 @@ export const MatchSetupModal: React.FC<MatchSetupModalProps> = ({
         }}
       />
 
-      {/* ── CAJA CENTRAL RECTANGULAR CON BORDE BLANCO SÓLIDO ── */}
+      {/* ── CAJA CENTRAL RECTANGULAR CON BORDE BLANCO SÓLIDO (2 columnas en móvil landscape) ── */}
       <div
-        className="relative z-10 w-full max-w-[460px] bg-black border-2 border-white p-4 sm:p-5 text-white font-pixel shadow-[0_0_24px_rgba(0,0,0,0.95)]"
+        className={`relative z-10 w-full bg-black border-2 border-white text-white font-pixel shadow-[0_0_24px_rgba(0,0,0,0.95)] max-h-[92dvh] overflow-y-auto ${
+          isMobile ? 'max-w-[560px] p-3' : 'max-w-[460px] p-4 sm:p-5'
+        }`}
         onClick={(e) => e.stopPropagation()}
       >
-        {/* ── CAJA SUPERIOR: VISTA PREVIA DEL MAPA (O ? SI ES RANDOM) ── */}
-        <div className="w-full h-36 sm:h-40 border-2 border-white bg-black flex items-center justify-center relative overflow-hidden mb-5">
-          {currentMap.id === 'RANDOM' ? (
-            /* Icono de ? enmarcado en cuadrado con esquinas redondeadas estilo Superfighters */
-            <div className="w-16 h-16 border-2 border-white rounded-xl flex items-center justify-center shadow-inner">
-              <span className="text-4xl font-black text-white select-none animate-pulse">
-                ?
-              </span>
-            </div>
-          ) : currentMap.previewUrl ? (
-            /* Miniatura del mapa seleccionado */
-            <div className="w-full h-full relative flex items-center justify-center">
-              <img
-                src={currentMap.previewUrl}
-                alt={currentMap.name}
-                className="w-full h-full object-cover [image-rendering:pixelated]"
-              />
-              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent pointer-events-none" />
-              <div className="absolute bottom-1.5 left-2 right-2 text-center text-[10px] text-yellow-300 font-black tracking-widest uppercase bg-black/60 py-0.5 border-t border-white/30">
-                {currentMap.name}
+        <div className={isMobile ? 'flex flex-row items-stretch gap-3' : 'flex flex-col'}>
+          {/* ── VISTA PREVIA DEL MAPA (O ? SI ES RANDOM) ── */}
+          <div
+            className={`border-2 border-white bg-black flex items-center justify-center relative overflow-hidden ${
+              isMobile ? 'w-[42%] min-h-[165px] shrink-0' : 'w-full h-36 sm:h-40 mb-5'
+            }`}
+          >
+            {currentMap.id === 'RANDOM' ? (
+              <div className="w-16 h-16 border-2 border-white rounded-xl flex items-center justify-center shadow-inner">
+                <span className="text-4xl font-black text-white select-none animate-pulse">
+                  ?
+                </span>
               </div>
-            </div>
-          ) : (
-            <div className="text-xs text-neutral-500">MAPA SIN PREVIEW</div>
-          )}
-        </div>
+            ) : currentMap.previewUrl ? (
+              <div className="w-full h-full relative flex items-center justify-center">
+                <img
+                  src={currentMap.previewUrl}
+                  alt={currentMap.name}
+                  className="w-full h-full object-cover [image-rendering:pixelated]"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent pointer-events-none" />
+                <div className="absolute bottom-1.5 left-2 right-2 text-center text-[10px] text-yellow-300 font-black tracking-widest uppercase bg-black/60 py-0.5 border-t border-white/30">
+                  {currentMap.name}
+                </div>
+              </div>
+            ) : (
+              <div className="text-xs text-neutral-500">MAPA SIN PREVIEW</div>
+            )}
+          </div>
 
-        {/* ── LISTA DE OPCIONES Y VALORES ── */}
-        <div className="space-y-3.5 text-xs sm:text-sm tracking-widest uppercase">
+          {/* ── LISTA DE OPCIONES Y VALORES ── */}
+          <div className={`flex-1 flex flex-col justify-between tracking-widest uppercase ${isMobile ? 'space-y-2 text-[11px]' : 'space-y-3.5 text-xs sm:text-sm'}`}>
           {/* 1. FIGHT! */}
           <div
             onClick={() => {
@@ -362,37 +369,55 @@ export const MatchSetupModal: React.FC<MatchSetupModalProps> = ({
             </div>
           </div>
 
-          {/* 4. RESET */}
-          <div
-            onClick={() => {
-              setSelectedRow(3);
-              handleReset();
-            }}
-            onMouseEnter={() => setSelectedRow(3)}
-            className={`flex items-center justify-between cursor-pointer py-1.5 px-2 transition rounded ${
-              selectedRow === 3 ? 'bg-neutral-900 border border-white shadow-[0_0_8px_rgba(255,255,255,0.3)] text-yellow-300' : 'border border-transparent text-neutral-200'
-            }`}
-          >
-            <div className="flex items-center gap-2">
-              <span className={selectedRow === 3 ? 'text-white font-black' : 'text-neutral-200'}>
-                RESET
-              </span>
-              {selectedRow === 3 && (
-                <span className="text-yellow-400 text-base font-black animate-pulse leading-none">
-                  ◄
+          {/* 4. RESET (y CERRAR en móvil) */}
+          <div className="flex items-center gap-2">
+            <div
+              onClick={() => {
+                setSelectedRow(3);
+                handleReset();
+              }}
+              onMouseEnter={() => setSelectedRow(3)}
+              className={`flex-1 flex items-center justify-between cursor-pointer py-1.5 px-2 transition rounded ${
+                selectedRow === 3 ? 'bg-neutral-900 border border-white shadow-[0_0_8px_rgba(255,255,255,0.3)] text-yellow-300' : 'border border-transparent text-neutral-200'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <span className={selectedRow === 3 ? 'text-white font-black' : 'text-neutral-200'}>
+                  RESET
                 </span>
-              )}
+                {selectedRow === 3 && (
+                  <span className="text-yellow-400 text-base font-black animate-pulse leading-none">
+                    ◄
+                  </span>
+                )}
+              </div>
             </div>
+
+            {isMobile && (
+              <button
+                type="button"
+                onClick={() => {
+                  sounds.playPickup();
+                  onClose();
+                }}
+                className="px-3 py-1.5 bg-neutral-900 border border-white/60 text-neutral-300 text-[10px] font-bold uppercase rounded cursor-pointer"
+              >
+                VOLVER
+              </button>
+            )}
           </div>
         </div>
-
-        {/* ── GUÍA RÁPIDA DE TECLAS EN EL PIE DEL POP-UP (UI-09: >= 12px) ── */}
-        <div className="mt-5 pt-3 border-t border-white/20 flex items-center justify-between text-xs text-neutral-300 tracking-wider">
-          <span>▲▼ SELECT</span>
-          <span>◄► CHANGE</span>
-          <span>ENTER OK</span>
-          <span>ESC CLOSE</span>
         </div>
+
+        {/* ── GUÍA RÁPIDA DE TECLAS EN EL PIE DEL POP-UP (solo escritorio) ── */}
+        {!isMobile && (
+          <div className="mt-5 pt-3 border-t border-white/20 flex items-center justify-between text-xs text-neutral-300 tracking-wider">
+            <span>▲▼ SELECT</span>
+            <span>◄► CHANGE</span>
+            <span>ENTER OK</span>
+            <span>ESC CLOSE</span>
+          </div>
+        )}
       </div>
     </div>
   );

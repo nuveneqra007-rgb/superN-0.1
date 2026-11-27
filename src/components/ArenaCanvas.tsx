@@ -571,8 +571,43 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
     controlSchemeRef.current = controlScheme;
   }, [controlScheme]);
 
-  // Detección de dispositivo móvil para controles táctiles PSP y viewport adaptativo
-  const { isMobile } = useMobileDevice();
+  // Detección de dispositivo móvil para controles táctiles PSP y resolución exacta adaptativa
+  const { isMobile, viewportWidth, viewportHeight } = useMobileDevice();
+  const isMobileRef = useRef(isMobile);
+  useEffect(() => {
+    isMobileRef.current = isMobile;
+  }, [isMobile]);
+
+  const [mobileCameraMode, setMobileCameraMode] = useState<'adaptive' | 'classic'>('adaptive');
+  const mobileCameraModeRef = useRef<'adaptive' | 'classic'>('adaptive');
+  useEffect(() => {
+    mobileCameraModeRef.current = mobileCameraMode;
+  }, [mobileCameraMode]);
+
+  const canvasViewportRef = useRef<HTMLDivElement | null>(null);
+  const mobileCanvasSizeRef = useRef<{ w: number; h: number }>({ w: ARENA_WIDTH, h: ARENA_HEIGHT });
+  const mobileCamPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  useEffect(() => {
+    const el = canvasViewportRef.current;
+    if (!el) return;
+
+    const updateBoxSize = () => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width > 10 && rect.height > 10) {
+        mobileCanvasSizeRef.current = { w: rect.width, h: rect.height };
+      }
+    };
+
+    updateBoxSize();
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(updateBoxSize) : null;
+    ro?.observe(el);
+    window.addEventListener('resize', updateBoxSize);
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener('resize', updateBoxSize);
+    };
+  }, [isMobile, mobileCameraMode, viewportWidth, viewportHeight]);
 
   // Menú de pausa y modales retro
   const [isPaused, setIsPaused] = useState(false);
@@ -8989,7 +9024,63 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
 
-      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+      // Resolución adaptativa exacta para móvil: ajusta el buffer al tamaño real del dispositivo
+      // y aplica cámara clamped a la arena para apreciar todos los detalles sin franjas negras.
+      if (isMobileRef.current && mobileCameraModeRef.current === 'adaptive') {
+        const box = mobileCanvasSizeRef.current;
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        const targetW = Math.max(320, Math.round(box.w * dpr));
+        const targetH = Math.max(180, Math.round(box.h * dpr));
+        if (canvas.width !== targetW || canvas.height !== targetH) {
+          canvas.width = targetW;
+          canvas.height = targetH;
+        }
+
+        const zoom = Math.max(targetW / ARENA_WIDTH, (targetH / ARENA_HEIGHT) * 1.06);
+        const viewW = targetW / zoom;
+        const viewH = targetH / zoom;
+
+        let focusX = s.p1.x;
+        let focusY = s.p1.y - 16;
+        let nearestBotX: number | null = null;
+        let nearestBotY: number | null = null;
+        let bestDist = Infinity;
+        for (const b of s.bots) {
+          if (!b.state.isAlive) continue;
+          const d = Math.hypot(b.state.x - s.p1.x, b.state.y - s.p1.y);
+          if (d < bestDist) {
+            bestDist = d;
+            nearestBotX = b.state.x;
+            nearestBotY = b.state.y - 16;
+          }
+        }
+        if (nearestBotX !== null && nearestBotY !== null) {
+          focusX = s.p1.x * 0.72 + nearestBotX * 0.28;
+          focusY = (s.p1.y - 16) * 0.72 + nearestBotY * 0.28;
+        }
+
+        const maxCamX = Math.max(0, ARENA_WIDTH - viewW);
+        const maxCamY = Math.max(0, ARENA_HEIGHT - viewH);
+        const targetCamX = Math.max(0, Math.min(maxCamX, focusX - viewW / 2));
+        const targetCamY = Math.max(0, Math.min(maxCamY, focusY - viewH / 2));
+
+        mobileCamPosRef.current.x += (targetCamX - mobileCamPosRef.current.x) * 0.14;
+        mobileCamPosRef.current.y += (targetCamY - mobileCamPosRef.current.y) * 0.14;
+
+        ctx.clearRect(0, 0, targetW, targetH);
+        ctx.save();
+        ctx.scale(zoom, zoom);
+        ctx.translate(-mobileCamPosRef.current.x, -mobileCamPosRef.current.y);
+      } else {
+        if (canvas.width !== ARENA_WIDTH || canvas.height !== ARENA_HEIGHT) {
+          canvas.width = ARENA_WIDTH;
+          canvas.height = ARENA_HEIGHT;
+        }
+        ctx.save();
+      }
+
       ctx.imageSmoothingEnabled = false;
       (ctx as any).webkitImageSmoothingEnabled = false;
       (ctx as any).mozImageSmoothingEnabled = false;
@@ -11286,8 +11377,9 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
         </>
       )}
 
-      {/* Viewport del Canvas Retro (Escritorio: max 1240px / Móvil: ocupa todo el alto útil 16:9) */}
+      {/* Viewport del Canvas Retro (Escritorio: max 1240px / Móvil: resolución exacta del dispositivo) */}
       <div
+        ref={canvasViewportRef}
         className={
           isMobile
             ? 'relative flex-1 min-h-0 w-full flex items-center justify-center bg-black overflow-hidden'
@@ -11313,7 +11405,9 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           tabIndex={0}
           className={
             isMobile
-              ? 'h-full w-auto max-w-full max-h-full aspect-[16/9] object-contain block focus:outline-none border-x border-white/25'
+              ? mobileCameraMode === 'adaptive'
+                ? 'w-full h-full block focus:outline-none'
+                : 'h-full w-auto max-w-full max-h-full aspect-[16/9] object-contain block focus:outline-none border-x border-white/25'
               : 'w-full max-w-[1240px] max-h-[75vh] aspect-[16/9] object-contain block focus:outline-none'
           }
           style={{ imageRendering: 'pixelated' }}
@@ -11542,6 +11636,20 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
                   <span>MODO PRÁCTICA:</span>
                   <span className={botPracticeMode ? 'text-cyan-400 font-bold' : 'text-neutral-500'}>
                     [{botPracticeMode ? 'BOT QUIETO' : 'IA ACTIVA'}]
+                  </span>
+                </button>
+              )}
+
+              {isMobile && (
+                <button
+                  onClick={() =>
+                    setMobileCameraMode((prev) => (prev === 'adaptive' ? 'classic' : 'adaptive'))
+                  }
+                  className="w-full px-4 py-2 bg-neutral-900 hover:bg-neutral-800 text-neutral-200 font-pixel text-[9px] border border-white/60 transition cursor-pointer flex items-center justify-between"
+                >
+                  <span>RESOLUCIÓN MÓVIL:</span>
+                  <span className="text-cyan-400 font-bold">
+                    [{mobileCameraMode === 'adaptive' ? 'EXACTA (ZOOM+)' : 'CLÁSICA 16:9'}]
                   </span>
                 </button>
               )}

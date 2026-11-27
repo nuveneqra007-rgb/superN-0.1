@@ -18,6 +18,7 @@ import { sounds } from '../game/SoundEffects';
 import { Swords, Volume2, VolumeX } from 'lucide-react';
 import { GameMode } from './ModeSelectScreen';
 import { MatchSetupModal, GameModeOption } from './MatchSetupModal';
+import { useMobileDevice } from '../hooks/useMobileDevice';
 
 interface MainMenuProps {
   gameMode: GameMode;
@@ -98,6 +99,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
   const isLocal1v1 = gameMode === 'local1v1';
   const isCoop = gameMode === 'coop';
   const isTwoPlayers = isLocal1v1 || isCoop;
+  const { isMobile, viewportWidth, viewportHeight } = useMobileDevice();
   const [muted, setMuted] = useState<boolean>(sounds.getMuted());
   const [showMatchSetup, setShowMatchSetup] = useState<boolean>(initialShowMatchSetup);
 
@@ -416,51 +418,276 @@ export const MainMenu: React.FC<MainMenuProps> = ({
       />
 
       {/* ── CABECERA / LOGO ESTILO SUPERFIGHTERS CLÁSICO ── */}
-      <header className="w-full max-w-5xl flex items-center justify-between px-3 pt-2 pb-1 shrink-0 z-10">
+      <header className={`w-full max-w-5xl flex items-center justify-between px-2 sm:px-3 shrink-0 z-10 ${isMobile ? 'pt-1 pb-0.5' : 'pt-2 pb-1'}`}>
         <button
           onClick={() => {
             sounds.playPickup();
             onBackToLanding();
           }}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-black/80 backdrop-blur-sm border-2 border-white hover:bg-white hover:text-black transition text-[10px] cursor-pointer"
+          className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1 sm:py-1.5 bg-black/80 backdrop-blur-sm border-2 border-white hover:bg-white hover:text-black transition text-[9px] sm:text-[10px] cursor-pointer"
           title="Volver (ESC)"
         >
-          <span>[ESC] BACK</span>
+          <span>{isMobile ? '◄ BACK' : '[ESC] BACK'}</span>
         </button>
 
-        <div className="text-center">
-          <div className="border-t-2 border-b-2 border-white py-0.5 px-6 tracking-[0.25em] text-lg sm:text-2xl font-black text-white drop-shadow-[0_2px_4px_rgba(255,255,255,0.25)]">
+        <div className="text-center flex items-center gap-2 sm:block">
+          <div className={`border-t-2 border-b-2 border-white px-4 sm:px-6 tracking-[0.25em] font-black text-white drop-shadow-[0_2px_4px_rgba(255,255,255,0.25)] ${isMobile ? 'py-0 text-sm' : 'py-0.5 text-lg sm:text-2xl'}`}>
             super<span className="text-red-500">N</span>
           </div>
-          <div className="text-[11px] text-red-500 tracking-[0.25em] mt-0.5 font-bold uppercase">
-            {isCoop ? 'COOPERATIVO — SUPERVIVENCIA (HORDA)' : isLocal1v1 ? 'DUEL 1 VS 1 — LOCAL MODE' : 'CUSTOM FIGHT — BATTLE ARENA'}
+          <div className={`text-red-500 tracking-[0.2em] font-bold uppercase ${isMobile ? 'text-[8px] mt-0' : 'text-[11px] mt-0.5 tracking-[0.25em]'}`}>
+            {isCoop ? 'COOPERATIVO — HORDA' : isLocal1v1 ? 'DUEL 1 VS 1' : '1 VS BOT — ARENA'}
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 sm:gap-2">
           <button
             onClick={() => {
               sounds.playPickup();
               onOpenArsenal();
             }}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-black/80 backdrop-blur-sm border-2 border-white hover:bg-white hover:text-black transition text-xs cursor-pointer"
+            className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1 sm:py-1.5 bg-black/80 backdrop-blur-sm border-2 border-white hover:bg-white hover:text-black transition text-[10px] sm:text-xs cursor-pointer"
             title="Ver Arsenal"
           >
             <Swords className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">ARSENAL</span>
+            <span className={isMobile ? 'inline text-[9px]' : 'hidden sm:inline'}>ARSENAL</span>
           </button>
 
           <button
             onClick={toggleSound}
-            className="p-1.5 bg-black/80 backdrop-blur-sm border-2 border-white hover:bg-white hover:text-black transition text-white cursor-pointer"
+            className="p-1 sm:p-1.5 bg-black/80 backdrop-blur-sm border-2 border-white hover:bg-white hover:text-black transition text-white cursor-pointer"
             title={muted ? 'Activar sonido' : 'Silenciar'}
           >
-            {muted ? <VolumeX className="w-4 h-4 text-red-400" /> : <Volume2 className="w-4 h-4 text-green-400" />}
+            {muted ? <VolumeX className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-red-400" /> : <Volume2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-green-400" />}
           </button>
         </div>
       </header>
 
       {/* ── CONTENIDO PRINCIPAL ── */}
+      {isMobile && !isTwoPlayers ? (
+        /* LAYOUT ESPECIAL MÓVIL LANDSCAPE (1 VS BOT): Escala exacta al viewport sin ningún corte */
+        <main className="w-full flex-1 flex items-center justify-center px-2 py-1 min-h-0 overflow-hidden z-10">
+          <div
+            style={{
+              transform: `scale(${Math.min(1, Math.max(0.68, Math.min((viewportWidth - 16) / 760, (viewportHeight - 48) / 270)))})`,
+              transformOrigin: 'center center',
+            }}
+            className="w-[750px] flex flex-row items-stretch justify-center gap-2.5 shrink-0"
+          >
+            {/* Columna Izquierda: P1 + Selector de Bots + Botón Accept */}
+            <div className="w-[205px] shrink-0 flex flex-col justify-between gap-1.5">
+              {/* Tarjeta P1 */}
+              <div
+                onClick={() => setFocusedPanel('p1')}
+                className={`bg-black/85 border-2 p-2 flex flex-col items-center text-center transition cursor-pointer ${
+                  focusedPanel === 'p1' ? 'border-yellow-400 shadow-[0_0_12px_rgba(250,204,21,0.45)]' : 'border-white'
+                }`}
+              >
+                <div className="text-[10px] font-black tracking-widest text-white border-b border-white/40 pb-0.5 w-full uppercase flex items-center justify-between">
+                  <span>PLAYER 1</span>
+                  <span className="text-[8px] text-yellow-300 font-bold">[ P1 ]</span>
+                </div>
+                <div className="relative w-14 h-14 my-1 rounded border border-white/80 bg-black flex items-center justify-center p-1 overflow-hidden">
+                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(239,68,68,0.35)_0%,transparent_75%)]" />
+                  <img
+                    src={currentProtagonist.spriteUrl}
+                    alt={currentProtagonist.name}
+                    onError={(e) => {
+                      const img = e.currentTarget;
+                      if (currentProtagonist.fallbackUrl && img.src !== currentProtagonist.fallbackUrl) {
+                        img.src = currentProtagonist.fallbackUrl;
+                      }
+                    }}
+                    className="relative z-10 max-h-full max-w-full object-contain [image-rendering:pixelated]"
+                  />
+                </div>
+                <div className="flex items-center justify-between w-full px-1">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setFocusedPanel('p1');
+                      cyclePlayerProtagonist(-1);
+                    }}
+                    className="text-xs text-neutral-300 hover:text-white px-1.5 py-0.5 font-bold cursor-pointer active:scale-125"
+                  >
+                    ◀
+                  </button>
+                  <div className="text-[11px] font-black tracking-wider uppercase truncate text-yellow-300">
+                    {currentProtagonist.name}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setFocusedPanel('p1');
+                      cyclePlayerProtagonist(1);
+                    }}
+                    className="text-xs text-neutral-300 hover:text-white px-1.5 py-0.5 font-bold cursor-pointer active:scale-125"
+                  >
+                    ▶
+                  </button>
+                </div>
+                <div className="text-[8px] tracking-wider uppercase font-bold text-emerald-400">
+                  {currentProtagonist.tag}
+                </div>
+              </div>
+
+              {/* Selector Número de Bots */}
+              <div className="bg-black/85 border-2 border-white px-2 py-1.5 flex flex-col items-center">
+                <div className="text-[8px] tracking-widest text-neutral-300 uppercase mb-1 font-bold">
+                  BOTS EN ARENA:
+                </div>
+                <div className="flex items-center justify-between w-full gap-1">
+                  {Array.from({ length: MAX_BOTS }, (_, i) => i + 1).map((num) => (
+                    <button
+                      key={num}
+                      type="button"
+                      onClick={() => {
+                        sounds.playPickup();
+                        setNumBots(num);
+                      }}
+                      className={`flex-1 py-1 text-[10px] font-black transition cursor-pointer ${
+                        numBots === num
+                          ? 'border border-yellow-400 bg-yellow-950/70 text-yellow-300'
+                          : 'border border-neutral-700 text-neutral-400 bg-neutral-950'
+                      }`}
+                    >
+                      {num}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Botón Accept */}
+              <button
+                onClick={handleConfirm}
+                disabled={!canStartMatch}
+                className={`w-full py-2 px-2 border-2 text-[10px] font-black tracking-wider uppercase transition cursor-pointer active:scale-95 ${
+                  canStartMatch
+                    ? 'border-yellow-400 bg-yellow-400 text-black shadow-[0_0_12px_rgba(250,204,21,0.45)]'
+                    : 'border-neutral-700 text-neutral-500 bg-neutral-900 opacity-60'
+                }`}
+              >
+                {canStartMatch ? 'SIGUIENTE: MAPA ➔' : 'BLOQUEADO'}
+              </button>
+            </div>
+
+            {/* Columna Derecha: 5 Slots COM en horizontal */}
+            <div className="flex-1 min-w-0 grid grid-cols-5 gap-1.5 items-stretch">
+              {Array.from({ length: MAX_BOTS }).map((_, slotIdx) => {
+                const isActive = slotIdx < numBots;
+                const slot = botSlots[slotIdx] || { faction: 'RANDOM', difficulty: 'normal', team: 'independent' };
+                const isRandom = slot.faction === 'RANDOM';
+                const arch = isRandom ? null : getBotArchetype(slot.faction as BotFaction);
+                const isSlotFocused = focusedPanel === 'com' && focusedSlotIdx === slotIdx;
+
+                if (!isActive) {
+                  return (
+                    <div
+                      key={slotIdx}
+                      onClick={() => {
+                        sounds.playPickup();
+                        setNumBots(slotIdx + 1);
+                      }}
+                      className="border-2 border-dashed border-neutral-700/70 bg-black/50 flex flex-col items-center justify-center p-1.5 opacity-55 cursor-pointer"
+                    >
+                      <span className="text-[9px] text-neutral-500 font-black tracking-widest uppercase mb-1.5">
+                        COM {slotIdx + 1}
+                      </span>
+                      <div className="w-12 h-12 rounded border border-neutral-700 bg-black/60 flex items-center justify-center">
+                        <span className="text-2xl font-black text-neutral-600">?</span>
+                      </div>
+                      <span className="text-[7px] text-neutral-500 font-mono-code uppercase mt-2">
+                        TOCAR +
+                      </span>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div
+                    key={slotIdx}
+                    onClick={() => {
+                      setFocusedPanel('com');
+                      setFocusedSlotIdx(slotIdx);
+                    }}
+                    className={`bg-black/85 border-2 p-1.5 flex flex-col items-center justify-between text-center cursor-pointer ${
+                      isSlotFocused ? 'border-yellow-400 shadow-[0_0_10px_rgba(250,204,21,0.4)]' : 'border-white'
+                    }`}
+                  >
+                    <div className="text-[9px] font-black tracking-widest text-white border-b border-white/30 pb-0.5 w-full uppercase">
+                      COM {slotIdx + 1}
+                    </div>
+                    <div className="w-12 h-12 my-1 rounded border border-white/80 bg-black flex items-center justify-center p-1">
+                      {isRandom ? (
+                        <div className="text-xl font-black text-white">?</div>
+                      ) : arch?.spriteUrl ? (
+                        <img src={arch.spriteUrl} alt={arch.name} className="max-h-full max-w-full object-contain [image-rendering:pixelated]" />
+                      ) : (
+                        <div className="text-lg font-black text-neutral-400">?</div>
+                      )}
+                    </div>
+                    <div className="w-full flex items-center justify-between">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setFocusedSlotIdx(slotIdx);
+                          cycleSlotFaction(slotIdx, -1);
+                        }}
+                        className="text-white hover:text-yellow-300 font-black text-[10px] px-1 cursor-pointer"
+                      >
+                        ◀
+                      </button>
+                      <div className="text-[9px] font-black text-yellow-300 uppercase truncate">
+                        {isRandom ? 'RANDOM' : arch?.name || slot.faction}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setFocusedSlotIdx(slotIdx);
+                          cycleSlotFaction(slotIdx, 1);
+                        }}
+                        className="text-white hover:text-yellow-300 font-black text-[10px] px-1 cursor-pointer"
+                      >
+                        ▶
+                      </button>
+                    </div>
+                    <div className="w-full flex items-center justify-between border-t border-white/20 pt-1 mt-0.5">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setFocusedSlotIdx(slotIdx);
+                          cycleSlotDifficulty(slotIdx, -1);
+                        }}
+                        className="text-neutral-400 hover:text-white font-black text-[10px] px-1 cursor-pointer"
+                      >
+                        ◄
+                      </button>
+                      <span className="text-[8px] font-bold text-neutral-200 uppercase">
+                        {slot.difficulty}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setFocusedSlotIdx(slotIdx);
+                          cycleSlotDifficulty(slotIdx, 1);
+                        }}
+                        className="text-neutral-400 hover:text-white font-black text-[10px] px-1 cursor-pointer"
+                      >
+                        ►
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </main>
+      ) : (
       <main className="w-full max-w-5xl flex-1 flex flex-col justify-start sm:justify-center items-center py-1 px-1 min-h-0 overflow-y-auto z-10">
         {/* ── ÁREA DE PREVISUALIZACIÓN CENTRAL CON RIM LIGHT ── */}
         <div className="flex items-center justify-center gap-3 sm:gap-6 mb-1.5 sm:mb-2.5">
@@ -835,11 +1062,14 @@ export const MainMenu: React.FC<MainMenuProps> = ({
           </span>
         </button>
       </main>
+      )}
 
-      {/* ── BARRA INFERIOR / INSTRUCCIONES (UI-09: oculta en móvil horizontal corto) ── */}
-      <footer className="hidden md:block w-full max-w-4xl text-center py-1.5 text-xs text-neutral-300 tracking-wider font-mono-code uppercase shrink-0">
-        ↑↓←→ NAVEGAR · SPACE ACEPTAR · ESC VOLVER
-      </footer>
+      {/* ── BARRA INFERIOR / INSTRUCCIONES (solo escritorio; en móvil nunca tapa contenido) ── */}
+      {!isMobile && (
+        <footer className="w-full max-w-4xl text-center py-1.5 text-xs text-neutral-300 tracking-wider font-mono-code uppercase shrink-0">
+          ↑↓←→ NAVEGAR · SPACE ACEPTAR · ESC VOLVER
+        </footer>
+      )}
 
       {/* ── POP-UP MODAL DE CONFIGURACIÓN DE COMBATE (ROUNDS Y MAPA) ── */}
       <MatchSetupModal

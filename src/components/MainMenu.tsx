@@ -358,7 +358,7 @@ export const MainMenu: React.FC<MainMenuProps> = ({
   ]);
 
   return (
-    <div className="relative w-full h-full max-h-screen flex flex-col justify-between items-center bg-black text-white font-pixel overflow-hidden p-2 sm:p-3 select-none">
+    <div className="relative w-full h-dvh max-h-dvh flex flex-col justify-between items-center bg-black text-white font-pixel overflow-hidden p-1.5 sm:p-3 select-none">
       {/* ── FONDO PARALLAX DE CIUDAD NOIR (MISMO FONDO DE PORTADA) ── */}
       <div
         className="absolute inset-0 pointer-events-none -z-30"
@@ -461,23 +461,23 @@ export const MainMenu: React.FC<MainMenuProps> = ({
       </header>
 
       {/* ── CONTENIDO PRINCIPAL ── */}
-      <main className="w-full max-w-5xl flex-1 flex flex-col justify-center items-center py-1 px-1 min-h-0 overflow-y-auto z-10">
+      <main className="w-full max-w-5xl flex-1 flex flex-col justify-start sm:justify-center items-center py-1 px-1 min-h-0 overflow-y-auto z-10">
         {/* ── ÁREA DE PREVISUALIZACIÓN CENTRAL CON RIM LIGHT ── */}
-        <div className="flex items-center justify-center gap-6 mb-2.5">
+        <div className="flex items-center justify-center gap-3 sm:gap-6 mb-1.5 sm:mb-2.5">
           {/* Tarjeta de Selección PLAYER 1 */}
           <div
             onClick={() => setFocusedPanel('p1')}
-            className={`w-48 sm:w-56 bg-black/75 backdrop-blur-sm border-2 p-2.5 flex flex-col items-center justify-between text-center transition cursor-pointer ${
+            className={`w-44 sm:w-56 bg-black/75 backdrop-blur-sm border-2 p-1.5 sm:p-2.5 flex flex-col items-center justify-between text-center transition cursor-pointer ${
               focusedPanel === 'p1' ? 'border-yellow-400 shadow-[0_0_16px_rgba(250,204,21,0.45)] ring-1 ring-yellow-400' : 'border-white hover:border-neutral-300'
             }`}
           >
-            <div className="text-xs font-black tracking-widest text-white border-b border-white/40 pb-1 w-full uppercase flex items-center justify-between">
+            <div className="text-[10px] sm:text-xs font-black tracking-widest text-white border-b border-white/40 pb-0.5 sm:pb-1 w-full uppercase flex items-center justify-between">
               <span>PLAYER 1</span>
-              <span className="text-[9px] text-yellow-300 font-bold">[ P1 ]</span>
+              <span className="text-[8px] sm:text-[9px] text-yellow-300 font-bold">[ P1 ]</span>
             </div>
 
             {/* Avatar / Sprite con Rim Light */}
-            <div className="relative w-24 h-24 my-1.5 rounded border border-white/80 bg-black/80 flex items-center justify-center p-1.5 shadow-inner overflow-hidden">
+            <div className="relative w-16 h-16 sm:w-20 sm:h-20 md:w-24 md:h-24 my-1 rounded border border-white/80 bg-black/80 flex items-center justify-center p-1 shadow-inner overflow-hidden">
               {/* Rim light halo rojo */}
               <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(239,68,68,0.35)_0%,transparent_75%)]" />
               <img
@@ -836,8 +836,8 @@ export const MainMenu: React.FC<MainMenuProps> = ({
         </button>
       </main>
 
-      {/* ── BARRA INFERIOR / INSTRUCCIONES (UI-09: >= 12px) ── */}
-      <footer className="w-full max-w-4xl text-center py-1.5 text-xs text-neutral-300 tracking-wider font-mono-code uppercase shrink-0">
+      {/* ── BARRA INFERIOR / INSTRUCCIONES (UI-09: oculta en móvil horizontal corto) ── */}
+      <footer className="hidden md:block w-full max-w-4xl text-center py-1.5 text-xs text-neutral-300 tracking-wider font-mono-code uppercase shrink-0">
         ↑↓←→ NAVEGAR · SPACE ACEPTAR · ESC VOLVER
       </footer>
 

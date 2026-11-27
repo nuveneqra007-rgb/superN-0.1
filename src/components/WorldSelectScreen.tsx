@@ -89,25 +89,25 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
   };
 
   return (
-    <div className="relative w-full h-screen flex flex-col justify-between items-center bg-neutral-950 text-neutral-100 overflow-y-auto p-4 select-none">
+    <div className="relative w-full h-dvh flex flex-col justify-between items-center bg-neutral-950 text-neutral-100 overflow-y-auto p-2.5 sm:p-4 select-none">
       {/* Fondo ambiental */}
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-sky-950/40 via-neutral-950 to-neutral-950 -z-10 pointer-events-none" />
 
       {/* Barra superior con Volver y resumen de match */}
-      <div className="w-full max-w-5xl flex items-center justify-between mb-3 px-1">
+      <div className="w-full max-w-5xl flex items-center justify-between mb-1.5 sm:mb-3 px-1 shrink-0">
         <button
           onClick={() => {
             sounds.playPickup();
             onBackToSelect();
           }}
-          className="flex items-center gap-1.5 px-4 min-h-[48px] bg-neutral-900/90 hover:bg-neutral-800 border border-neutral-800 hover:border-neutral-700 rounded-xl text-xs sm:text-sm font-bold text-neutral-300 hover:text-white transition shadow-sm cursor-pointer touch-manipulation"
+          className="flex items-center gap-1.5 px-3 sm:px-4 min-h-[38px] sm:min-h-[48px] bg-neutral-900/90 hover:bg-neutral-800 border border-neutral-800 hover:border-neutral-700 rounded-xl text-xs sm:text-sm font-bold text-neutral-300 hover:text-white transition shadow-sm cursor-pointer touch-manipulation"
           title="Volver a la selección de combatientes"
         >
           <ArrowLeft className="w-4 h-4 text-cyan-400" />
           <span>Volver</span>
         </button>
 
-        <div className="flex items-center gap-2 text-xs font-mono-code text-neutral-400 bg-neutral-900/80 border border-neutral-800 px-3 py-2 rounded-xl">
+        <div className="flex items-center gap-2 text-[10px] sm:text-xs font-mono-code text-neutral-400 bg-neutral-900/80 border border-neutral-800 px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl">
           <span className="text-cyan-300 font-bold">{playerFactionName}</span>
           <span className="text-neutral-500 font-bold">VS</span>
           <span className="text-rose-400 font-bold">{botFactionName}</span>
@@ -117,26 +117,26 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
       </div>
 
       {/* Encabezado Principal */}
-      <div className="text-center my-2">
-        <h1 className="text-3xl sm:text-4xl md:text-5xl font-black tracking-tight bg-gradient-to-r from-sky-400 via-cyan-200 to-emerald-300 bg-clip-text text-transparent drop-shadow-[0_0_20px_rgba(6,182,212,0.4)]">
+      <div className="text-center my-0.5 sm:my-2 shrink-0">
+        <h1 className="text-xl sm:text-4xl md:text-5xl font-black tracking-tight bg-gradient-to-r from-sky-400 via-cyan-200 to-emerald-300 bg-clip-text text-transparent drop-shadow-[0_0_20px_rgba(6,182,212,0.4)]">
           ELIGE TU MUNDO
         </h1>
-        <p className="mt-1 text-xs sm:text-sm text-neutral-400 tracking-wide font-medium">
+        <p className="hidden sm:block mt-1 text-xs sm:text-sm text-neutral-400 tracking-wide font-medium">
           Selecciona el campo de batalla táctico para la contienda
         </p>
       </div>
 
-      {/* Grilla de 3 tarjetas de mundos */}
-      <div className="w-full max-w-5xl grid grid-cols-1 md:grid-cols-3 gap-4 my-auto py-2">
+      {/* Grilla de 3 tarjetas de mundos (en fila también en móvil apaisado) */}
+      <div className="w-full max-w-5xl grid grid-cols-3 gap-2 sm:gap-4 my-auto py-1 sm:py-2">
         {BATTLE_WORLDS.map((world) => {
           const isSelected = world.id === selectedWorldId;
           return (
             <div
               key={world.id}
               onClick={() => handleSelect(world)}
-              className={`relative flex flex-col justify-between rounded-2xl border transition-all duration-200 cursor-pointer overflow-hidden p-4 group touch-manipulation ${
+              className={`relative flex flex-col justify-between rounded-xl sm:rounded-2xl border transition-all duration-200 cursor-pointer overflow-hidden p-2 sm:p-4 group touch-manipulation ${
                 isSelected
-                  ? 'bg-neutral-900/90 border-cyan-400 ring-2 ring-cyan-500/50 shadow-[0_0_30px_rgba(6,182,212,0.35)] -translate-y-1'
+                  ? 'bg-neutral-900/90 border-cyan-400 ring-2 ring-cyan-500/50 shadow-[0_0_30px_rgba(6,182,212,0.35)] -translate-y-0.5 sm:-translate-y-1'
                   : 'bg-neutral-900/70 border-neutral-800 hover:border-neutral-700 hover:bg-neutral-900/90 hover:-translate-y-0.5'
               }`}
             >
@@ -158,24 +158,24 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
 
               {/* Título y etiqueta de mecánica */}
               <div>
-                <div className="flex items-center gap-2 mb-1.5">
-                  <h3 className="text-lg font-black text-white group-hover:text-cyan-300 transition-colors">
+                <div className="flex items-center gap-1.5 mb-1">
+                  <h3 className="text-xs sm:text-lg font-black text-white group-hover:text-cyan-300 transition-colors truncate">
                     {world.name}
                   </h3>
                 </div>
 
-                <div className="flex items-center gap-1.5 text-[11px] font-bold py-1 px-2.5 rounded-lg mb-2.5 bg-neutral-950/80 border border-neutral-800 text-cyan-300">
+                <div className="flex items-center gap-1 text-[9px] sm:text-[11px] font-bold py-0.5 sm:py-1 px-1.5 sm:px-2.5 rounded-lg mb-1.5 sm:mb-2.5 bg-neutral-950/80 border border-neutral-800 text-cyan-300">
                   {getWorldIcon(world.id)}
                   <span className="truncate">{world.mechanicLabel}</span>
                 </div>
 
-                <p className="text-xs text-neutral-400 line-clamp-2 leading-relaxed mb-3">
+                <p className="hidden md:line-clamp-2 text-xs text-neutral-400 leading-relaxed mb-3">
                   {world.description}
                 </p>
               </div>
 
               {/* Caja informativa de mecánicas específicas */}
-              <div className="p-2.5 bg-neutral-950/60 border border-neutral-800/80 rounded-xl text-[11px] text-neutral-400 leading-snug">
+              <div className="hidden sm:block p-2 bg-neutral-950/60 border border-neutral-800/80 rounded-xl text-[10px] sm:text-[11px] text-neutral-400 leading-snug">
                 <span className="font-bold text-neutral-300 block mb-0.5">Mecánica clave:</span>
                 {world.mechanicsDescription}
               </div>
@@ -185,11 +185,11 @@ export const WorldSelectScreen: React.FC<WorldSelectScreenProps> = ({
       </div>
 
       {/* Botón de confirmación ¡ENTRAR A LA ARENA! */}
-      <div className="w-full max-w-5xl mt-3 flex flex-col items-center">
+      <div className="w-full max-w-5xl mt-1.5 sm:mt-3 flex flex-col items-center shrink-0">
         <button
           onClick={handleStart}
           disabled={!selectedWorldId}
-          className={`w-full max-w-md min-h-[48px] h-14 py-3.5 px-6 font-black text-base sm:text-lg tracking-wider uppercase rounded-xl transition-all duration-200 flex items-center justify-center gap-2.5 touch-manipulation ${
+          className={`w-full max-w-md min-h-[42px] sm:min-h-[48px] h-11 sm:h-14 py-2 sm:py-3.5 px-6 font-black text-sm sm:text-lg tracking-wider uppercase rounded-xl transition-all duration-200 flex items-center justify-center gap-2.5 touch-manipulation ${
             selectedWorldId
               ? 'bg-gradient-to-r from-cyan-500 via-sky-400 to-emerald-400 hover:from-cyan-400 hover:to-emerald-300 text-neutral-950 shadow-[0_0_25px_rgba(6,182,212,0.45)] hover:shadow-[0_0_35px_rgba(6,182,212,0.65)] hover:-translate-y-0.5 active:translate-y-0 cursor-pointer'
               : 'bg-neutral-900 border border-neutral-800 text-neutral-500 cursor-not-allowed opacity-50'

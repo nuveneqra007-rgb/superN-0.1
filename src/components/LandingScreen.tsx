@@ -10,12 +10,14 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { sounds } from '../game/SoundEffects';
 import { Warehouse3DCanvas } from './Warehouse3DCanvas';
+import { useMobileDevice } from '../hooks/useMobileDevice';
 
 interface LandingScreenProps {
   onEnter: () => void;
 }
 
 export const LandingScreen: React.FC<LandingScreenProps> = ({ onEnter }) => {
+  const { isMobile } = useMobileDevice();
   const [isHovered, setIsHovered] = useState<boolean>(false);
   const [isFadingOut, setIsFadingOut] = useState<boolean>(false);
   const [webglUnavailable, setWebglUnavailable] = useState<boolean>(false);
@@ -46,8 +48,9 @@ export const LandingScreen: React.FC<LandingScreenProps> = ({ onEnter }) => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleEnter]);
 
-  // Micro-parallax sutil sobre la capa del título sincronizado con el puntero
+  // Micro-parallax sutil sobre la capa del título (solo escritorio para 0 lag en móvil)
   useEffect(() => {
+    if (isMobile) return;
     let rafId = 0;
 
     const tick = () => {
@@ -67,31 +70,36 @@ export const LandingScreen: React.FC<LandingScreenProps> = ({ onEnter }) => {
 
     rafId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafId);
-  }, []);
+  }, [isMobile]);
 
-  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const normX = ((e.clientX - rect.left) / rect.width - 0.5) * 2;
-    const normY = ((e.clientY - rect.top) / rect.height - 0.5) * 2;
-    pointerRef.current = {
-      x: Math.max(-1, Math.min(1, normX)),
-      y: Math.max(-1, Math.min(1, normY)),
-    };
-  }, []);
+  const handleMouseMove = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      if (isMobile) return;
+      const rect = e.currentTarget.getBoundingClientRect();
+      const normX = ((e.clientX - rect.left) / rect.width - 0.5) * 2;
+      const normY = ((e.clientY - rect.top) / rect.height - 0.5) * 2;
+      pointerRef.current = {
+        x: Math.max(-1, Math.min(1, normX)),
+        y: Math.max(-1, Math.min(1, normY)),
+      };
+    },
+    [isMobile]
+  );
 
   const handleMouseLeave = useCallback(() => {
+    if (isMobile) return;
     pointerRef.current = { x: 0, y: 0 };
-  }, []);
+  }, [isMobile]);
 
   return (
     <div
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
-      className="relative w-full h-screen bg-[#060a12] flex items-center justify-center font-pixel select-none overflow-hidden"
+      className="relative w-full h-dvh bg-[#060a12] flex items-center justify-center font-pixel select-none overflow-hidden"
     >
-      {/* Capa de Fondo 3D PBR (Three.js) con respaldo automático si WebGL no está disponible */}
+      {/* Capa de Fondo: En escritorio usa 3D PBR; en móvil usa fondo ligero estático sin WebGL */}
       <div className="absolute inset-0 z-0 pointer-events-none">
-        {!webglUnavailable ? (
+        {!isMobile && !webglUnavailable ? (
           <Warehouse3DCanvas
             pointerRef={pointerRef}
             onUnavailable={() => setWebglUnavailable(true)}
@@ -101,6 +109,8 @@ export const LandingScreen: React.FC<LandingScreenProps> = ({ onEnter }) => {
             src="/assets/backgrounds/warehouse.jpg"
             alt="Almacén Clandestino"
             referrerPolicy="no-referrer"
+            loading="eager"
+            decoding="async"
             className="w-full h-full object-cover select-none"
           />
         )}
@@ -115,16 +125,18 @@ export const LandingScreen: React.FC<LandingScreenProps> = ({ onEnter }) => {
         }}
       />
 
-      {/* Bloque Central-Inferior Estilo Superfighters: Título "SUPER N" + Botón "PLAY" pequeño */}
-      <div className="absolute bottom-[10%] sm:bottom-[12%] inset-x-0 z-20 flex flex-col items-center">
-        <div ref={titleLayerRef} className="flex flex-col items-center will-change-transform">
+      {/* Bloque Central-Inferior Estilo Superfighters: Título "SUPER N" + Botón "PLAY" */}
+      <div className={`absolute inset-x-0 z-20 flex flex-col items-center ${isMobile ? 'bottom-[12%]' : 'bottom-[10%] sm:bottom-[12%]'}`}>
+        <div ref={titleLayerRef} className={`flex flex-col items-center ${isMobile ? '' : 'will-change-transform'}`}>
           {/* Título "SUPER N" con doble barra horizontal y textura pixelada desgastada */}
           <svg
             viewBox="0 0 246 66"
-            className="w-[230px] sm:w-[300px] md:w-[340px] h-auto overflow-visible"
+            className={`${isMobile ? 'w-[220px]' : 'w-[230px] sm:w-[300px] md:w-[340px]'} h-auto overflow-visible`}
             style={{
               shapeRendering: 'crispEdges',
-              filter: 'drop-shadow(0 4px 0 #000000) drop-shadow(0 8px 18px rgba(0,0,0,0.95))',
+              filter: isMobile
+                ? 'drop-shadow(0 3px 0 #000000)'
+                : 'drop-shadow(0 4px 0 #000000) drop-shadow(0 8px 18px rgba(0,0,0,0.95))',
             }}
             aria-label="SUPER N"
           >
@@ -204,7 +216,9 @@ export const LandingScreen: React.FC<LandingScreenProps> = ({ onEnter }) => {
               }
             }}
             onMouseLeave={() => setIsHovered(false)}
-            className={`mt-5 sm:mt-6 px-3 py-1 font-pixel text-[11px] sm:text-xs font-bold tracking-[0.28em] uppercase cursor-pointer outline-none transition-all duration-150 ${
+            className={`mt-4 sm:mt-6 font-pixel font-bold tracking-[0.28em] uppercase cursor-pointer outline-none transition-all duration-150 ${
+              isMobile ? 'px-7 py-2.5 text-sm min-h-[44px]' : 'px-3 py-1 text-[11px] sm:text-xs'
+            } ${
               isHovered
                 ? 'scale-110 text-white'
                 : 'text-[#facc15]'

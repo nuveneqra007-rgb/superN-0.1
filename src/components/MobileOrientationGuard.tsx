@@ -31,15 +31,15 @@ export const MobileOrientationGuard: React.FC<MobileOrientationGuardProps> = ({ 
     >
       {children}
 
-      {/* Botón flotante discreto si el navegador móvil bloqueó fullscreen automático */}
+      {/* Botón flotante discreto abajo-centro (entre controles) si el navegador bloqueó fullscreen automático */}
       {isMobile && !isPortrait && !isFullscreen && (
         <button
           onClick={() => void enterFullscreenLandscape()}
-          className="fixed top-2 right-2 z-[90] flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-black/80 border border-amber-400/70 text-amber-300 text-[10px] font-bold uppercase tracking-wider shadow-lg active:scale-95"
+          className="fixed bottom-1.5 left-1/2 -translate-x-1/2 z-[90] flex items-center gap-1 px-2 py-1 rounded-md bg-black/75 border border-amber-400/60 text-amber-300 text-[9px] font-bold uppercase tracking-wider shadow-lg active:scale-95"
           title="Activar pantalla completa"
         >
-          <Maximize2 className="w-3.5 h-3.5" />
-          <span>Pantalla Completa</span>
+          <Maximize2 className="w-3 h-3" />
+          <span>FullScreen</span>
         </button>
       )}
 

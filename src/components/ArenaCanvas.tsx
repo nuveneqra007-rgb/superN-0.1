@@ -11134,108 +11134,166 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
   return (
     <div
-      className={`relative w-full h-full flex flex-col items-center justify-center select-none overflow-hidden bg-neutral-950 ${
-        isMobile ? 'p-1' : 'p-2'
+      className={`relative w-full h-full flex flex-col items-center select-none overflow-hidden bg-neutral-950 ${
+        isMobile ? 'p-0 justify-between' : 'p-2 justify-center'
       }`}
     >
-      {/* HUD Superior: Nombre del Mundo, P1 vs COM central y botón Salir */}
+      {isMobile ? (
+        /* Header Único Ultra-Compacto para Móvil Horizontal: FighterBar + Acciones sin colisión */
+        <div className="w-full bg-black border-b border-blue-600 px-1.5 py-0.5 flex items-center justify-between gap-1.5 shrink-0 z-20">
+          <div className="flex-1 min-w-0">
+            <FighterBar fighters={hudState.fighters} compactMobile />
+          </div>
+
+          <div className="shrink-0 flex items-center gap-1 font-pixel">
+            <span className="px-1 text-[7px] text-cyan-300 font-bold whitespace-nowrap">
+              {hudState.maxRounds >= 999
+                ? gameMode === 'practice'
+                  ? 'PRÁC'
+                  : `R${hudState.round}`
+                : `R${hudState.round}/${hudState.maxRounds}`}
+            </span>
+
+            {gameMode === 'practice' && (
+              <>
+                <button
+                  onClick={() => {
+                    if (stateRef.current) {
+                      stateRef.current.keys = {};
+                      stateRef.current.keysJustPressed = {};
+                      stateRef.current.mouseFireJust = false;
+                    }
+                    setShowPracticeArsenal((prev) => !prev);
+                    tutorialInputProgressRef.current.hasOpenedRack = true;
+                    if (tutorialStepRef.current === 4) {
+                      setTutorialStep(5);
+                    }
+                  }}
+                  className="px-2 py-1 bg-amber-500 active:bg-amber-400 text-neutral-950 font-bold text-[7px] border border-amber-200 cursor-pointer whitespace-nowrap"
+                >
+                  ARMAS
+                </button>
+                <button
+                  onClick={() => setTutorialVisible((prev) => !prev)}
+                  className="px-1.5 py-1 bg-yellow-400 active:bg-yellow-300 text-black font-bold text-[7px] border border-white cursor-pointer whitespace-nowrap"
+                >
+                  {tutorialVisible ? 'OCULTAR' : 'GUÍA'}
+                </button>
+              </>
+            )}
+
+            <button
+              onClick={() => setIsPaused(true)}
+              className="px-2 py-1 bg-neutral-900 active:bg-neutral-700 text-white border border-white text-[7px] font-pixel cursor-pointer whitespace-nowrap"
+            >
+              PAUSA
+            </button>
+          </div>
+        </div>
+      ) : (
+        <>
+          {/* HUD Superior Escritorio: Nombre del Mundo, P1 vs COM central y botón Pausa */}
+          <div className="w-full max-w-[1240px] bg-black/90 border-2 border-white border-b-0 px-4 py-2.5 flex items-center justify-between text-[10px] font-pixel shadow-lg">
+            <div className="flex items-center gap-2.5 text-neutral-300">
+              <span className="text-cyan-400 font-bold uppercase tracking-wider">{hudState.worldName}</span>
+              <span className="text-neutral-600">|</span>
+              <span className="text-neutral-300">
+                {hudState.maxRounds >= 999
+                  ? `RONDA ${hudState.round} (INFINITO)`
+                  : `RONDA ${hudState.round}/${hudState.maxRounds}`}
+              </span>
+            </div>
+
+            {/* Centro de Pantalla: P1 vs COM (o P1 vs P2 / BOTS en multi-bot / Práctica) */}
+            <div className="flex items-center gap-3 font-pixel text-[10px]">
+              {gameMode === 'practice' ? (
+                <div className="flex items-center gap-2">
+                  <span className="px-2 py-0.5 bg-neutral-900 border border-white/40 text-cyan-300">
+                    P1 (JUGADOR)
+                  </span>
+                  <span className="text-neutral-500 font-bold">VS</span>
+                  <span className="px-2 py-0.5 bg-neutral-900 border border-white/40 text-amber-300">
+                    DUMMY ({practiceBotMode === 'adaptive' ? 'FSM ADAPTATIVO' : practiceBotMode === 'quiet' ? 'BOT QUIETO' : 'AGRESIVO'})
+                  </span>
+                  <button
+                    onClick={() => setTutorialVisible((prev) => !prev)}
+                    className="ml-2 px-2 py-0.5 bg-yellow-400 hover:bg-yellow-300 text-black font-bold text-[9px] border border-white transition cursor-pointer"
+                  >
+                    {tutorialVisible ? 'OCULTAR GUÍA (H)' : 'VER GUÍA (H)'}
+                  </button>
+                </div>
+              ) : hudState.maxRounds >= 999 ? (
+                /* Modo infinito */
+                <div className="flex items-center gap-3">
+                  <span className="text-cyan-400 font-bold">P1 [{hudState.p1Score}]</span>
+                  <span className="text-neutral-400 font-bold px-1">VS</span>
+                  <span className="text-rose-400 font-bold">
+                    [{hudState.botScore}] {gameMode === 'local1v1' ? 'P2' : (hudState.fighters.length > 2 ? `BOTS (${hudState.fighters.length - 1})` : 'COM')}
+                  </span>
+                </div>
+              ) : (
+                /* Modo con rondas: casillas = victorias requeridas (floor(maxRounds/2) + 1) */
+                <>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-cyan-400 font-bold">P1</span>
+                    {Array.from({ length: Math.floor(hudState.maxRounds / 2) + 1 }).map((_, i) => (
+                      <div
+                        key={i}
+                        className={`w-3.5 h-3.5 border border-white flex items-center justify-center ${
+                          i < hudState.p1Score
+                            ? 'bg-yellow-400 text-[8px] font-bold text-black'
+                            : 'bg-neutral-900 text-neutral-600'
+                        }`}
+                      >
+                        {i < hudState.p1Score ? '■' : ''}
+                      </div>
+                    ))}
+                  </div>
+
+                  <span className="text-neutral-400 font-bold px-1">VS</span>
+
+                  <div className="flex items-center gap-1.5">
+                    {Array.from({ length: Math.floor(hudState.maxRounds / 2) + 1 }).map((_, i) => (
+                      <div
+                        key={i}
+                        className={`w-3.5 h-3.5 border border-white flex items-center justify-center ${
+                          i < hudState.botScore
+                            ? 'bg-yellow-400 text-[8px] font-bold text-black'
+                            : 'bg-neutral-900 text-neutral-600'
+                        }`}
+                      >
+                        {i < hudState.botScore ? '■' : ''}
+                      </div>
+                    ))}
+                    <span className="text-rose-400 font-bold">
+                      {gameMode === 'local1v1' ? 'P2' : (hudState.fighters.length > 2 ? `BOTS (${hudState.fighters.length - 1})` : 'COM')}
+                    </span>
+                  </div>
+                </>
+              )}
+            </div>
+
+            <button
+              onClick={() => setIsPaused(true)}
+              className="px-3 py-1 bg-black hover:bg-neutral-800 text-white border-2 border-white text-[9px] font-pixel transition cursor-pointer active:translate-y-0.5 rounded-none"
+            >
+              PAUSA (ESC)
+            </button>
+          </div>
+
+          {/* FASE F2: Barra de Luchadores con Inventario de Ranuras */}
+          <FighterBar fighters={hudState.fighters} />
+        </>
+      )}
+
+      {/* Viewport del Canvas Retro (Escritorio: max 1240px / Móvil: ocupa todo el alto útil 16:9) */}
       <div
-        className={`w-full max-w-[1240px] bg-black/90 border-2 border-white border-b-0 flex items-center justify-between font-pixel shadow-lg ${
-          isMobile ? 'px-2 py-1 text-[8px]' : 'px-4 py-2.5 text-[10px]'
-        }`}
+        className={
+          isMobile
+            ? 'relative flex-1 min-h-0 w-full flex items-center justify-center bg-black overflow-hidden'
+            : 'relative border-2 border-white bg-black'
+        }
       >
-        <div className="flex items-center gap-2.5 text-neutral-300">
-          <span className="text-cyan-400 font-bold uppercase tracking-wider">{hudState.worldName}</span>
-          <span className="text-neutral-600">|</span>
-          <span className="text-neutral-300">
-            {hudState.maxRounds >= 999
-              ? `RONDA ${hudState.round} (INFINITO)`
-              : `RONDA ${hudState.round}/${hudState.maxRounds}`}
-          </span>
-        </div>
-
-        {/* Centro de Pantalla: P1 vs COM (o P1 vs P2 / BOTS en multi-bot / Práctica) */}
-        <div className="flex items-center gap-3 font-pixel text-[10px]">
-          {gameMode === 'practice' ? (
-            <div className="flex items-center gap-2">
-              <span className="px-2 py-0.5 bg-neutral-900 border border-white/40 text-cyan-300">
-                P1 (JUGADOR)
-              </span>
-              <span className="text-neutral-500 font-bold">VS</span>
-              <span className="px-2 py-0.5 bg-neutral-900 border border-white/40 text-amber-300">
-                DUMMY ({practiceBotMode === 'adaptive' ? 'FSM ADAPTATIVO' : practiceBotMode === 'quiet' ? 'BOT QUIETO' : 'AGRESIVO'})
-              </span>
-              <button
-                onClick={() => setTutorialVisible((prev) => !prev)}
-                className="ml-2 px-2 py-0.5 bg-yellow-400 hover:bg-yellow-300 text-black font-bold text-[9px] border border-white transition cursor-pointer"
-              >
-                {tutorialVisible ? 'OCULTAR GUÍA (H)' : 'VER GUÍA (H)'}
-              </button>
-            </div>
-          ) : hudState.maxRounds >= 999 ? (
-            /* Modo infinito */
-            <div className="flex items-center gap-3">
-              <span className="text-cyan-400 font-bold">P1 [{hudState.p1Score}]</span>
-              <span className="text-neutral-400 font-bold px-1">VS</span>
-              <span className="text-rose-400 font-bold">
-                [{hudState.botScore}] {gameMode === 'local1v1' ? 'P2' : (hudState.fighters.length > 2 ? `BOTS (${hudState.fighters.length - 1})` : 'COM')}
-              </span>
-            </div>
-          ) : (
-            /* Modo con rondas: casillas = victorias requeridas (floor(maxRounds/2) + 1) */
-            <>
-              <div className="flex items-center gap-1.5">
-                <span className="text-cyan-400 font-bold">P1</span>
-                {Array.from({ length: Math.floor(hudState.maxRounds / 2) + 1 }).map((_, i) => (
-                  <div
-                    key={i}
-                    className={`w-3.5 h-3.5 border border-white flex items-center justify-center ${
-                      i < hudState.p1Score
-                        ? 'bg-yellow-400 text-[8px] font-bold text-black'
-                        : 'bg-neutral-900 text-neutral-600'
-                    }`}
-                  >
-                    {i < hudState.p1Score ? '■' : ''}
-                  </div>
-                ))}
-              </div>
-
-              <span className="text-neutral-400 font-bold px-1">VS</span>
-
-              <div className="flex items-center gap-1.5">
-                {Array.from({ length: Math.floor(hudState.maxRounds / 2) + 1 }).map((_, i) => (
-                  <div
-                    key={i}
-                    className={`w-3.5 h-3.5 border border-white flex items-center justify-center ${
-                      i < hudState.botScore
-                        ? 'bg-yellow-400 text-[8px] font-bold text-black'
-                        : 'bg-neutral-900 text-neutral-600'
-                    }`}
-                  >
-                    {i < hudState.botScore ? '■' : ''}
-                  </div>
-                ))}
-                <span className="text-rose-400 font-bold">
-                  {gameMode === 'local1v1' ? 'P2' : (hudState.fighters.length > 2 ? `BOTS (${hudState.fighters.length - 1})` : 'COM')}
-                </span>
-              </div>
-            </>
-          )}
-        </div>
-
-        <button
-          onClick={() => setIsPaused(true)}
-          className="px-3 py-1 bg-black hover:bg-neutral-800 text-white border-2 border-white text-[9px] font-pixel transition cursor-pointer active:translate-y-0.5 rounded-none"
-        >
-          PAUSA (ESC)
-        </button>
-      </div>
-
-      {/* FASE F2: Barra de Luchadores con Inventario de Ranuras */}
-      <FighterBar fighters={hudState.fighters} />
-
-      {/* Viewport del Canvas Retro (UI-08: ampliado a pantalla completa manteniendo 16:9) */}
-      <div className="relative border-2 border-white bg-black">
         <canvas
           ref={canvasRef}
           width={ARENA_WIDTH}
@@ -11253,35 +11311,34 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
             }
           }}
           tabIndex={0}
-          className={`w-full max-w-[1240px] aspect-[16/9] object-contain block focus:outline-none ${
-            isMobile ? 'max-h-[82dvh]' : 'max-h-[75vh]'
-          }`}
+          className={
+            isMobile
+              ? 'h-full w-auto max-w-full max-h-full aspect-[16/9] object-contain block focus:outline-none border-x border-white/25'
+              : 'w-full max-w-[1240px] max-h-[75vh] aspect-[16/9] object-contain block focus:outline-none'
+          }
           style={{ imageRendering: 'pixelated' }}
         />
 
-        {/* Controles Táctiles PSP para Móvil (Solo 1 Jugador) */}
+        {/* Controles Táctiles PSP para Móvil (Joystick + Botonera △□○✕) */}
         {isMobile && !isPaused && !showPracticeArsenal && !hudState.isMatchOver && (
-          <MobilePSPControls
-            onVirtualKey={handleVirtualKey}
-            isPracticeMode={gameMode === 'practice'}
-          />
+          <MobilePSPControls onVirtualKey={handleVirtualKey} />
         )}
 
         {/* Cuadro Tutorial de Pasos Estilo Superfighters */}
         {gameMode === 'practice' && tutorialVisible && (
-          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 w-[92%] max-w-[560px] pointer-events-auto">
-            <div className="bg-black/95 border-2 border-white p-4 shadow-[0_4px_25px_rgba(0,0,0,0.95)] flex flex-col items-center text-center">
+          <div className={`absolute left-1/2 -translate-x-1/2 z-20 pointer-events-auto ${isMobile ? 'top-1.5 w-[86%] max-w-[430px]' : 'top-4 w-[92%] max-w-[560px]'}`}>
+            <div className={`bg-black/95 border-2 border-white shadow-[0_4px_25px_rgba(0,0,0,0.95)] flex flex-col items-center text-center max-h-[80dvh] overflow-y-auto ${isMobile ? 'p-2.5' : 'p-4'}`}>
               {/* Encabezado */}
-              <div className="flex items-center justify-between w-full border-b border-white/20 pb-1.5 mb-2.5">
-                <span className="text-[9px] text-neutral-400 font-pixel">
+              <div className="flex items-center justify-between w-full border-b border-white/20 pb-1 mb-1.5">
+                <span className="text-[8px] sm:text-[9px] text-neutral-400 font-pixel">
                   PASO {tutorialStep + 1} / {PRACTICE_TUTORIAL_STEPS.length}
                 </span>
-                <span className="text-yellow-400 font-pixel text-xs tracking-widest font-bold uppercase">
+                <span className="text-yellow-400 font-pixel text-[9px] sm:text-xs tracking-widest font-bold uppercase truncate px-2">
                   {PRACTICE_TUTORIAL_STEPS[tutorialStep]?.title || 'ENTRENAMIENTO'}
                 </span>
                 <button
                   onClick={() => setTutorialVisible(false)}
-                  className="text-neutral-400 hover:text-white text-[9px] font-pixel px-1.5 py-0.5 border border-white/30 hover:border-white transition cursor-pointer"
+                  className="text-neutral-400 hover:text-white text-[9px] font-pixel px-1.5 py-0.5 border border-white/30 hover:border-white transition cursor-pointer shrink-0"
                   title="Ocultar guía (H)"
                 >
                   ✕
@@ -11289,12 +11346,12 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
               </div>
 
               {/* Contenido / Instrucciones estilo Superfighters */}
-              <p className="text-white text-[11px] sm:text-xs font-pixel leading-relaxed my-2 max-w-md">
+              <p className={`text-white font-pixel leading-relaxed max-w-md ${isMobile ? 'text-[9px] my-1' : 'text-[11px] sm:text-xs my-2'}`}>
                 {PRACTICE_TUTORIAL_STEPS[tutorialStep]?.description}
               </p>
 
               {/* Meta objetivo */}
-              <div className="w-full bg-neutral-900/90 border border-white/20 p-2 my-1.5 text-[10px] font-pixel text-cyan-300 flex items-center justify-center gap-2">
+              <div className={`w-full bg-neutral-900/90 border border-white/20 font-pixel text-cyan-300 flex items-center justify-center gap-2 ${isMobile ? 'p-1 my-1 text-[8px]' : 'p-2 my-1.5 text-[10px]'}`}>
                 <span>🎯 {PRACTICE_TUTORIAL_STEPS[tutorialStep]?.goalText}</span>
               </div>
 
@@ -11337,8 +11394,8 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           </div>
         )}
 
-        {/* Botón flotante para mostrar guía si fue ocultada */}
-        {gameMode === 'practice' && !tutorialVisible && (
+        {/* Botón flotante para mostrar guía si fue ocultada (solo escritorio; en móvil está en el header) */}
+        {gameMode === 'practice' && !tutorialVisible && !isMobile && (
           <button
             onClick={() => setTutorialVisible(true)}
             className="absolute top-3 right-4 z-20 px-3 py-1.5 bg-black/90 hover:bg-neutral-800 text-yellow-300 border-2 border-white text-[9px] font-pixel shadow-lg transition cursor-pointer"
@@ -11366,11 +11423,15 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
           </div>
         )}
 
-        {/* Modal de Pausa Retro Superfighters */}
+        {/* Modal de Pausa Retro Superfighters (adaptado a scroll y altura landscape en móvil) */}
         {isPaused && !hudState.isMatchOver && (
-          <div className="absolute inset-0 bg-black/85 flex flex-col items-center justify-center p-4 z-30 font-pixel">
-            <div className="border-2 border-white bg-black p-6 flex flex-col items-center gap-3.5 max-w-sm w-full shadow-[0_0_20px_rgba(0,0,0,0.8)]">
-              <h2 className="text-base font-bold tracking-widest text-yellow-400 text-center uppercase border-b-2 border-white/20 pb-2 w-full">
+          <div className="fixed inset-0 bg-black/85 flex flex-col items-center justify-center p-2 sm:p-4 z-50 font-pixel">
+            <div
+              className={`border-2 border-white bg-black flex flex-col items-center w-full max-h-[92dvh] overflow-y-auto shadow-[0_0_20px_rgba(0,0,0,0.8)] ${
+                isMobile ? 'p-3 gap-2 max-w-md' : 'p-6 gap-3.5 max-w-sm'
+              }`}
+            >
+              <h2 className="text-sm sm:text-base font-bold tracking-widest text-yellow-400 text-center uppercase border-b-2 border-white/20 pb-1.5 w-full shrink-0">
                 PARTIDA EN PAUSA
               </h2>
 
@@ -11504,8 +11565,8 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
         {/* Modal de Confirmación de Salida */}
         {showExitConfirm && (
-          <div className="absolute inset-0 bg-black/95 flex flex-col items-center justify-center p-4 z-40 font-pixel">
-            <div className="border-2 border-rose-500 bg-black p-6 flex flex-col items-center gap-4 max-w-sm w-full text-center shadow-[0_0_30px_rgba(244,63,94,0.3)]">
+          <div className="fixed inset-0 bg-black/95 flex flex-col items-center justify-center p-3 z-50 font-pixel">
+            <div className="border-2 border-rose-500 bg-black p-4 sm:p-6 flex flex-col items-center gap-3 sm:gap-4 max-w-sm w-full max-h-[90dvh] overflow-y-auto text-center shadow-[0_0_30px_rgba(244,63,94,0.3)]">
               <span className="text-rose-400 text-xs font-bold uppercase tracking-wider">
                 ¿ABANDONAR PARTIDA?
               </span>
@@ -11532,8 +11593,8 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
         {/* Modal de Controles */}
         {showControlsModal && (
-          <div className="absolute inset-0 bg-black/95 flex flex-col items-center justify-center p-4 z-40 font-pixel">
-            <div className="border-2 border-white bg-black p-5 flex flex-col items-center gap-3.5 max-w-md w-full shadow-2xl">
+          <div className="fixed inset-0 bg-black/95 flex flex-col items-center justify-center p-3 z-50 font-pixel">
+            <div className="border-2 border-white bg-black p-4 sm:p-5 flex flex-col items-center gap-2.5 sm:gap-3.5 max-w-md w-full max-h-[90dvh] overflow-y-auto shadow-2xl">
               <h3 className="text-xs font-bold text-yellow-300 uppercase tracking-widest border-b border-white/20 pb-1.5 w-full text-center">
                 GUÍA DE CONTROLES
               </h3>
@@ -11568,8 +11629,8 @@ export const ArenaCanvas: React.FC<ArenaCanvasProps> = ({
 
         {/* Modal de Fin de Partida con Revancha (Estilo Retro) */}
         {hudState.isMatchOver && (
-          <div className="absolute inset-0 bg-black/90 flex flex-col items-center justify-center p-6 gap-5 z-20 font-pixel">
-            <div className="border-2 border-white bg-black/95 p-6 flex flex-col items-center gap-4 max-w-md w-full shadow-2xl">
+          <div className="fixed inset-0 bg-black/90 flex flex-col items-center justify-center p-3 sm:p-6 gap-4 z-50 font-pixel">
+            <div className="border-2 border-white bg-black/95 p-4 sm:p-6 flex flex-col items-center gap-3 sm:gap-4 max-w-md w-full max-h-[90dvh] overflow-y-auto shadow-2xl">
               <h2 className="text-2xl sm:text-3xl font-bold tracking-wider text-yellow-400 text-center leading-relaxed">
                 {hudState.matchWinner}
               </h2>

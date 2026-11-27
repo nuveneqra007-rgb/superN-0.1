@@ -270,7 +270,7 @@ export const ModeSelectScreen: React.FC<ModeSelectScreenProps> = ({
   ]);
 
   return (
-    <div className="relative w-full h-full min-h-screen flex flex-col justify-between font-pixel select-none overflow-hidden text-neutral-100">
+    <div className="relative w-full h-dvh flex flex-col justify-between font-pixel select-none overflow-hidden text-neutral-100">
       {/* ─────────────────────────────────────────────────────────────
           CAPA 1: FONDO PARALLAX DE CIUDAD + ESCENARIO ESTÁTICO (PUERTO MALDITO)
           ───────────────────────────────────────────────────────────── */}
@@ -479,7 +479,7 @@ export const ModeSelectScreen: React.FC<ModeSelectScreenProps> = ({
       {/* ─────────────────────────────────────────────────────────────
           HEADER SUPERIOR DISCRETO (LOGO superN)
           ───────────────────────────────────────────────────────────── */}
-      <header className="relative z-30 w-full px-6 pt-5 flex items-center justify-between">
+      <header className={`relative z-30 w-full flex items-center justify-between shrink-0 ${isMobile ? 'px-4 pt-2.5' : 'px-6 pt-5'}`}>
         <div className="flex items-center gap-3">
           <button
             onClick={() => {
@@ -516,10 +516,10 @@ export const ModeSelectScreen: React.FC<ModeSelectScreenProps> = ({
           MENÚ PRINCIPAL FLOTANTE (ESTILO DUCK GAME)
           Lista de texto puro a la izquierda sin recuadros ni cajas pesadas
           ───────────────────────────────────────────────────────────── */}
-      <main className="relative z-30 flex-1 flex items-center px-6 sm:px-12 md:px-16 lg:px-20 min-h-0">
-        <div className="flex flex-col md:flex-row items-start gap-8 md:gap-16 w-full max-w-4xl">
+      <main className={`relative z-30 flex-1 flex items-center min-h-0 overflow-y-auto ${isMobile ? 'px-4 py-2' : 'px-6 sm:px-12 md:px-16 lg:px-20'}`}>
+        <div className={`flex items-center w-full max-w-4xl ${isMobile ? 'flex-row gap-6' : 'flex-col md:flex-row items-start gap-8 md:gap-16'}`}>
           {/* ── COLUMNA IZQUIERDA: MENÚ PRIMARIO (SIN CAJAS) ── */}
-          <div className="flex flex-col items-start gap-4 sm:gap-6">
+          <div className={`flex flex-col items-start ${isMobile ? 'gap-2.5' : 'gap-4 sm:gap-6'}`}>
             {primaryOptions.map((opt, idx) => {
               const isSelected = activePrimaryIdx === idx;
               const isFocusedCol = !isSubMenuFocused && isSelected;
@@ -558,7 +558,9 @@ export const ModeSelectScreen: React.FC<ModeSelectScreenProps> = ({
 
                   {/* Título de la opción sin recuadros ni cajas */}
                   <span
-                    className={`text-base sm:text-xl md:text-2xl font-pixel font-bold tracking-[0.2em] uppercase transition-colors duration-100 ${
+                    className={`font-pixel font-bold tracking-[0.2em] uppercase transition-colors duration-100 ${
+                      isMobile ? 'text-sm' : 'text-base sm:text-xl md:text-2xl'
+                    } ${
                       isSelected
                         ? 'text-yellow-300 drop-shadow-[0_0_12px_rgba(250,204,21,0.7)]'
                         : 'text-neutral-400 group-hover:text-white'
@@ -591,7 +593,7 @@ export const ModeSelectScreen: React.FC<ModeSelectScreenProps> = ({
 
           {/* ── COLUMNA DERECHA: SUB-OPCIONES FLOTANTES (CONTEXTUALES) ── */}
           {currentPrimary && currentPrimary.subOptions && currentPrimary.subOptions.length > 0 && (
-            <div className="flex flex-col items-start gap-3 sm:gap-4 pl-0 md:pl-8 md:border-l md:border-white/10 animate-landing-enter">
+            <div className={`flex flex-col items-start animate-landing-enter ${isMobile ? 'gap-2 pl-5 border-l border-white/15' : 'gap-3 sm:gap-4 pl-0 md:pl-8 md:border-l md:border-white/10'}`}>
               <div className="text-[9px] sm:text-[10px] text-neutral-400 tracking-[0.25em] font-pixel uppercase pb-1 flex items-center gap-1.5">
                 <span>SUB-MODO</span>
                 <ChevronRight className="w-3 h-3 text-yellow-400" />
@@ -652,14 +654,15 @@ export const ModeSelectScreen: React.FC<ModeSelectScreenProps> = ({
       {/* ─────────────────────────────────────────────────────────────
           BARRA INFERIOR DE NAVEGACIÓN Y CRÉDITOS (ESTILO DUCK GAME)
           ───────────────────────────────────────────────────────────── */}
-      <footer className="relative z-30 w-full px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-3 border-t border-white/10 bg-black/60 backdrop-blur-sm shrink-0">
+      <footer className={`relative z-30 w-full flex flex-col sm:flex-row items-center justify-between gap-2 border-t border-white/10 bg-black/60 backdrop-blur-sm shrink-0 ${isMobile ? 'px-4 py-1.5' : 'px-6 py-4 gap-3'}`}>
         {/* Esquina Inferior Izquierda: Créditos sutiles */}
-        <div className="text-[9px] text-neutral-500 font-pixel tracking-wider">
-          superN v0.1 • DESIGN, CODE & SFX • RETRO NOIR
+        <div className="text-[8px] sm:text-[9px] text-neutral-500 font-pixel tracking-wider">
+          superN v0.1 • {isMobile ? 'MODO TÁCTIL PSP (1 JUGADOR)' : 'DESIGN, CODE & SFX • RETRO NOIR'}
         </div>
 
-        {/* Parte Inferior Derecha: 3 Indicadores visuales pixelados */}
-        <div className="flex items-center gap-3 sm:gap-5 text-[9px] font-pixel tracking-wider">
+        {/* Parte Inferior Derecha: 3 Indicadores visuales pixelados (solo escritorio) */}
+        {!isMobile && (
+          <div className="flex items-center gap-3 sm:gap-5 text-[9px] font-pixel tracking-wider">
           {/* NAVEGAR */}
           <div className="flex items-center gap-1.5">
             <span className="border border-yellow-400 bg-black text-yellow-300 px-1.5 py-0.5 font-bold shadow-[0_0_4px_rgba(250,204,21,0.4)]">
@@ -684,14 +687,15 @@ export const ModeSelectScreen: React.FC<ModeSelectScreenProps> = ({
             <span className="text-neutral-400 uppercase">VOLVER</span>
           </div>
         </div>
+        )}
       </footer>
 
       {/* ─────────────────────────────────────────────────────────────
           MODAL RETRO: TUTORIAL Y CONTROLES
           ───────────────────────────────────────────────────────────── */}
       {activeModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-landing-enter">
-          <div className="relative w-full max-w-lg bg-neutral-950 border-2 border-white p-5 shadow-[0_0_30px_rgba(0,0,0,0.9)] font-pixel text-left">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/85 backdrop-blur-md animate-landing-enter">
+          <div className="relative w-full max-w-lg max-h-[90dvh] overflow-y-auto bg-neutral-950 border-2 border-white p-3.5 sm:p-5 shadow-[0_0_30px_rgba(0,0,0,0.9)] font-pixel text-left">
             {/* Cabecera del modal */}
             <div className="flex items-center justify-between border-b-2 border-white/20 pb-3 mb-4">
               <div className="flex items-center gap-2">

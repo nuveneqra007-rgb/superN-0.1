@@ -45,9 +45,10 @@ export interface FighterBarData {
 
 interface FighterBarProps {
   fighters: FighterBarData[];
+  compactMobile?: boolean;
 }
 
-export const FighterBar: React.FC<FighterBarProps> = ({ fighters }) => {
+export const FighterBar: React.FC<FighterBarProps> = ({ fighters, compactMobile = false }) => {
   if (!fighters || fighters.length === 0) return null;
 
   // Si hay más de 3 luchadores, los bots pasan a modo compacto para caber en la pantalla
@@ -76,7 +77,9 @@ export const FighterBar: React.FC<FighterBarProps> = ({ fighters }) => {
     return (
       <div
         key={slotKey}
-        className={`relative flex flex-col items-center justify-between w-[32px] h-[34px] rounded-none transition-all ${
+        className={`relative flex flex-col items-center justify-between rounded-none transition-all ${
+          compactMobile ? 'w-[22px] h-[22px]' : 'w-[32px] h-[34px]'
+        } ${
           empty
             ? 'bg-[#2b0808] border border-[#521313]'
             : 'bg-neutral-900 border border-neutral-600'
@@ -88,28 +91,38 @@ export const FighterBar: React.FC<FighterBarProps> = ({ fighters }) => {
         title={`Ranura ${slotNumber}: ${slotKey}`}
       >
         {/* Número de ranura sutil en la esquina superior izquierda */}
-        <span className="absolute top-[1px] left-[2px] text-[7px] text-neutral-500 font-pixel leading-none pointer-events-none">
+        <span
+          className={`absolute top-[1px] left-[1px] text-neutral-500 font-pixel leading-none pointer-events-none ${
+            compactMobile ? 'text-[5px]' : 'text-[7px]'
+          }`}
+        >
           {slotNumber}
         </span>
 
         {/* Icono del arma */}
-        <div className="w-full h-[22px] flex items-center justify-center pt-1 overflow-hidden">
+        <div
+          className={`w-full flex items-center justify-center overflow-hidden ${
+            compactMobile ? 'h-[14px] pt-0.5' : 'h-[22px] pt-1'
+          }`}
+        >
           {hasIcon ? (
             <img
               src={slotInfo.iconUrl}
               alt={slotKey}
-              className="max-h-[18px] max-w-[26px] object-contain"
+              className={`object-contain ${compactMobile ? 'max-h-[12px] max-w-[18px]' : 'max-h-[18px] max-w-[26px]'}`}
               style={{ imageRendering: 'pixelated' }}
             />
           ) : (
-            <div className="w-2.5 h-1 bg-red-900/40 rounded-none" />
+            <div className="w-2 h-0.5 bg-red-900/40 rounded-none" />
           )}
         </div>
 
         {/* Contador inferior */}
         <div className="w-full text-center pb-[1px] bg-black/60 leading-none">
           <span
-            className={`font-pixel text-[8px] font-bold ${
+            className={`font-pixel font-bold ${
+              compactMobile ? 'text-[6px]' : 'text-[8px]'
+            } ${
               counterText !== null ? (counterText === '00' ? 'text-red-400' : 'text-yellow-300') : 'text-transparent'
             }`}
           >
@@ -121,7 +134,13 @@ export const FighterBar: React.FC<FighterBarProps> = ({ fighters }) => {
   };
 
   return (
-    <div className="w-full max-w-[1240px] bg-black/95 border-2 border-blue-600 px-3 py-2 flex items-center justify-between gap-2.5 font-pixel shadow-[0_4px_20px_rgba(0,0,0,0.8)] overflow-x-auto select-none">
+    <div
+      className={`w-full max-w-[1240px] flex items-center justify-between font-pixel overflow-x-auto select-none ${
+        compactMobile
+          ? 'bg-transparent border-0 px-0 py-0 gap-1.5 shadow-none'
+          : 'bg-black/95 border-2 border-blue-600 px-3 py-2 gap-2.5 shadow-[0_4px_20px_rgba(0,0,0,0.8)]'
+      }`}
+    >
       {fighters.map((f, idx) => {
         const isPlayer = idx === 0;
         const useCompact = isCompactMode && !isPlayer;
@@ -134,14 +153,18 @@ export const FighterBar: React.FC<FighterBarProps> = ({ fighters }) => {
         return (
           <div
             key={f.id}
-            className={`flex items-center gap-2 px-2 py-1.5 border border-white/20 bg-neutral-950/80 transition-all flex-1 min-w-0 ${
+            className={`flex items-center border border-white/20 bg-neutral-950/85 transition-all flex-1 min-w-0 ${
+              compactMobile ? 'gap-1.5 px-1.5 py-0.5' : 'gap-2 px-2 py-1.5'
+            } ${
               !f.isAlive ? 'opacity-35 grayscale border-red-900/40' : ''
             }`}
-            style={{ maxWidth: useCompact ? '180px' : undefined }}
+            style={{ maxWidth: useCompact ? (compactMobile ? '120px' : '180px') : undefined }}
           >
             {/* Retrato */}
             <div
-              className="relative w-9 h-9 shrink-0 border border-white bg-neutral-900 flex items-center justify-center overflow-hidden"
+              className={`relative shrink-0 border border-white bg-neutral-900 flex items-center justify-center overflow-hidden ${
+                compactMobile ? 'w-7 h-7' : 'w-9 h-9'
+              }`}
               style={{ borderColor: f.color }}
             >
               {f.portrait ? (
